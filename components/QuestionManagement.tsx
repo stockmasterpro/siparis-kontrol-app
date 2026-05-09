@@ -14,7 +14,7 @@ interface QuestionManagementProps {
 }
 
 export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUpdateDB, onSyncNow, setNotification }) => {
-    const [activeTab, setActiveTab] = useState<'questions' | 'quick-answers'>('questions');
+    const [activeTab, setActiveTab] = useState<'questions' | 'answered' | 'quick-answers'>('questions');
     const [searchTerm, setSearchTerm] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
     const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'createdDate', direction: 'desc' });
@@ -79,8 +79,16 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
 
     // Filter and Sort questions
     const filteredQuestions = useMemo(() => {
-        return (db.questions || [])
-            .filter(q => q.status === QuestionStatus.WAITING_FOR_ANSWER)
+        const questions = db.questions || [];
+        
+        // Filter by tab
+        const tabFiltered = questions.filter(q => {
+            if (activeTab === 'questions') return q.status === QuestionStatus.WAITING_FOR_ANSWER;
+            if (activeTab === 'answered') return q.status === QuestionStatus.ANSWERED;
+            return true; // quick-answers tab shows all
+        });
+        
+        return tabFiltered
             .filter(q =>
                 (q.text || '').toLowerCase().includes(searchTerm.toLowerCase())
             )
@@ -259,8 +267,20 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                     </div>
                 </button>
                 <button
+                    onClick={() => setActiveTab('answered')}
+                    className={`px-6 py-2.5 text-xs font-extrabold uppercase tracking-tight transition-all duration-200 border-r ${activeTab === 'answered' ? 'bg-white text-blue-700 border-t-2 border-t-blue-600' : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border-t-2 border-t-transparent'}`}
+                >
+                    <div className="flex items-center gap-2">
+                        <CheckCircle size={14} />
+                        Cevaplanan Sorular
+                        <span className="bg-green-100 text-green-700 text-[10px] px-1.5 py-0.5 rounded-full">
+                            {(db.questions || []).filter(q => q.status === QuestionStatus.ANSWERED).length}
+                        </span>
+                    </div>
+                </button>
+                <button
                     onClick={() => setActiveTab('quick-answers')}
-                    className={`px-6 py-2.5 text-xs font-extrabold uppercase tracking-tight transition-all duration-200 border-r ${activeTab === 'quick-answers' ? 'bg-white text-blue-700 border-t-2 border-t-blue-600' : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border-t-2 border-t-transparent'}`}
+                    className={`px-6 py-2.5 text-xs font-extrabold uppercase tracking-tight transition-all duration-200 ${activeTab === 'quick-answers' ? 'bg-white text-blue-700 border-t-2 border-t-blue-600' : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border-t-2 border-t-transparent'}`}
                 >
                     <div className="flex items-center gap-2">
                         <Clock size={14} />
@@ -503,6 +523,176 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                 </button>
                             </div>
                         </div>
+                    )}
+
+                    {/* Answered Questions Tab Content */}
+                    {activeTab === 'answered' && (
+                        <>
+                            {/* Header Area */}
+                            <div className="flex items-center justify-between bg-gray-50 p-4 border-b">
+                                <div className="flex items-center gap-4">
+                                    <h2 className="text-lg font-bold text-gray-800 flex items-center">
+                                        <CheckCircle className="w-5 h-5 mr-2 text-green-600" />
+                                        Cevaplanan Sorular
+                                        <span className="ml-3 bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full border border-green-200">
+                                            {(db.questions || []).filter(q => q.status === QuestionStatus.ANSWERED).length} Soru Cevaplandı
+                                        </span>
+                                    </h2>
+                                </div>
+
+                                <div className="flex items-center space-x-3">
+                                    <div className="relative">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+                                        <input
+                                            type="text"
+                                            placeholder="Cevaplanan Sorularda Ara..."
+                                            className="pl-10 pr-4 py-2 border rounded-lg text-sm w-48 focus:ring-2 focus:ring-green-500 outline-none"
+                                            value={searchTerm}
+                                            onChange={(e) => setSearchTerm(e.target.value)}
+                                        />
+                                    </div>
+
+                                    <select
+                                        className="border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                                        value={storeFilter}
+                                        onChange={(e) => { setStoreFilter(e.target.value); setCurrentPage(1); }}
+                                    >
+                                        <option value="all">Tüm Mağazalar</option>
+                                        {availableStores.map(store => (
+                                            <option key={store} value={store}>{store}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+
+                            {/* Answered Questions Table */}
+                            <div className="flex-1 overflow-auto px-4">
+                                <table className="w-full text-left border-collapse bg-white rounded-lg shadow-sm">
+                                    <thead className="bg-gray-100 border-b sticky top-0 z-10">
+                                        <tr>
+                                            <th
+                                                className="px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider cursor-pointer hover:bg-gray-200 transition-colors"
+                                                onClick={() => setSortConfig(prev => ({ key: 'storeName', direction: prev.key === 'storeName' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                                            >
+                                                <div className="flex items-center gap-1">
+                                                    Mağaza / Müşteri
+                                                    {sortConfig.key === 'storeName' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="opacity-30" />}
+                                                </div>
+                                            </th>
+                                            <th
+                                                className="px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider cursor-pointer hover:bg-gray-200 transition-colors"
+                                                onClick={() => setSortConfig(prev => ({ key: 'productName', direction: prev.key === 'productName' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                                            >
+                                                <div className="flex items-center gap-1">
+                                                    Ürün Görseli / Bilgisi
+                                                    {sortConfig.key === 'productName' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="opacity-30" />}
+                                                </div>
+                                            </th>
+                                            <th className="px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider w-1/3">Soru</th>
+                                            <th className="px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider w-1/3">Cevap</th>
+                                            <th
+                                                className="px-4 py-3 text-xs font-bold text-gray-600 uppercase tracking-wider cursor-pointer hover:bg-gray-200 transition-colors"
+                                                onClick={() => setSortConfig(prev => ({ key: 'createdDate', direction: prev.key === 'createdDate' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                                            >
+                                                <div className="flex items-center gap-1">
+                                                    Cevap Tarihi
+                                                    {sortConfig.key === 'createdDate' ? (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ArrowUpDown size={12} className="opacity-30" />}
+                                                </div>
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200">
+                                        {paginatedQuestions.map((q) => (
+                                            <tr key={q.id} className="hover:bg-gray-50 transition-colors">
+                                                <td className="px-4 py-4">
+                                                    <div className="flex flex-col">
+                                                        <span className="font-bold text-gray-700">{q.storeName}</span>
+                                                        <span className="text-xs text-gray-500">{q.userName}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-4">
+                                                    <div className="flex items-center space-x-3">
+                                                        <div className="flex gap-2">
+                                                            {q.productImageUrl && (
+                                                                <div className="relative group">
+                                                                    <img src={q.productImageUrl} alt="" className="w-12 h-12 object-cover rounded border bg-white shadow-sm" />
+                                                                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded">
+                                                                        <span className="text-[8px] text-white font-bold">Ürün</span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex flex-col">
+                                                            <span className="text-xs font-medium text-gray-800 line-clamp-1">{q.productName}</span>
+                                                            {q.productUrl && (
+                                                                <a href={q.productUrl} target="_blank" rel="noreferrer" className="text-[10px] text-blue-600 hover:underline flex items-center">
+                                                                    Görüntüle <ExternalLink size={8} className="ml-1" />
+                                                                </a>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-4">
+                                                    <p className="text-sm text-gray-700 line-clamp-2 italic">"{q.text}"</p>
+                                                </td>
+                                                <td className="px-4 py-4">
+                                                    <div className="bg-green-50 p-2 rounded-md border border-green-100">
+                                                        <p className="text-xs text-green-800 font-medium">{q.answer}</p>
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-4 whitespace-nowrap text-xs text-gray-500">
+                                                    {safeFormatDate(q.createdDate)}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+
+                                {paginatedQuestions.length === 0 && (
+                                    <div className="flex flex-col items-center justify-center py-20 bg-white rounded-lg border border-dashed text-gray-400">
+                                        <CheckCircle size={48} className="mb-4 opacity-20" />
+                                        <p className="text-lg font-medium">Cevaplanan soru bulunamadı</p>
+                                        <p className="text-sm">Henüz cevaplanmış soru bulunmuyor.</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Pagination Component */}
+                            {totalPages > 1 && (
+                                <div className="flex items-center justify-between bg-white px-4 py-3 border-t">
+                                    <div className="text-xs text-gray-500">
+                                        Toplam <strong>{filteredQuestions.length}</strong> sorudan <strong>{(currentPage - 1) * itemsPerPage + 1}-{Math.min(currentPage * itemsPerPage, filteredQuestions.length)}</strong> arası gösteriliyor
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                        <button
+                                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                            disabled={currentPage === 1}
+                                            className="p-1 rounded border hover:bg-gray-100 disabled:opacity-50"
+                                        >
+                                            <ChevronLeft size={18} />
+                                        </button>
+                                        <div className="flex items-center space-x-1">
+                                            {Array.from({ length: totalPages }, (_, i) => i + 1).map(p => (
+                                                <button
+                                                    key={p}
+                                                    onClick={() => setCurrentPage(p)}
+                                                    className={`w-8 h-8 rounded text-xs transition-colors ${currentPage === p ? 'bg-green-600 text-white' : 'hover:bg-gray-100 border'}`}
+                                                >
+                                                    {p}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <button
+                                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                            disabled={currentPage === totalPages}
+                                            className="p-1 rounded border hover:bg-gray-100 disabled:opacity-50"
+                                        >
+                                            <ChevronRight size={18} />
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     )}
 
                     {/* Answer Modal */}
