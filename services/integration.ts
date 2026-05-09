@@ -1221,6 +1221,17 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
 
       const questions = items.map((item: any) => {
         const questionImageUrl = item.imageUrl || (item.imageUrls && item.imageUrls.length > 0 ? item.imageUrls[0] : '');
+        
+        // Try to get product image from product URL if main image is empty
+        let productImageUrl = item.productMainImageUrl || '';
+        if (!productImageUrl && item.productUrl) {
+          // Extract product ID from URL to construct image URL
+          const urlMatch = item.productUrl.match(/\/p-(\d+)/);
+          if (urlMatch && urlMatch[1]) {
+            const productId = urlMatch[1];
+            productImageUrl = `https://cdn.dsmcdn.com/mnresize/1200/1800/ty${productId}/product_main_images/${productId}_1.jpg`;
+          }
+        }
 
         return {
           id: `${config.storeName}_${item.id}`,
@@ -1231,7 +1242,7 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
           userName: item.userName || 'Müşteri',
           createdDate: item.createdDate ? new Date(item.createdDate).toISOString() : new Date().toISOString(), // Trendyol returns timestamp in ms
           productName: item.productName || 'Bilinmeyen Ürün',
-          productImageUrl: item.productMainImageUrl || '',
+          productImageUrl: productImageUrl,
           productUrl: item.productUrl || '',
           storeName: config.storeName,
           isPublic: item.public || false,

@@ -555,13 +555,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                                 <div className="flex items-start justify-between gap-3 mb-1">
                                                     <h4 className="text-base font-extrabold text-gray-900 leading-tight">{selectedQuestion.productName}</h4>
                                                     <button
-                                                            onClick={() => {
-                                                                if (selectedQuestion.productUrl) {
-                                                                    openProductLink(selectedQuestion.productUrl);
-                                                                } else {
-                                                                    alert('Bu soru için ürün linki bulunmuyor.');
-                                                                }
-                                                            }}
+                                                            onClick={() => openProductLink(selectedQuestion.productUrl)}
                                                             className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-blue-200 text-blue-700 text-xs font-extrabold hover:bg-blue-50 transition-colors shadow-sm"
                                                             title="Ürün sayfasını tarayıcıda aç"
                                                         >
