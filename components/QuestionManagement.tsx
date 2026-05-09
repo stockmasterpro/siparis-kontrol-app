@@ -81,12 +81,19 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
     const filteredQuestions = useMemo(() => {
         const questions = db.questions || [];
         
+        console.log(`[DEBUG] Active tab: ${activeTab}`);
+        console.log(`[DEBUG] Total questions: ${questions.length}`);
+        console.log(`[DEBUG] Answered questions: ${questions.filter(q => q.status === QuestionStatus.ANSWERED).length}`);
+        console.log(`[DEBUG] Waiting questions: ${questions.filter(q => q.status === QuestionStatus.WAITING_FOR_ANSWER).length}`);
+        
         // Filter by tab
         const tabFiltered = questions.filter(q => {
             if (activeTab === 'questions') return q.status === QuestionStatus.WAITING_FOR_ANSWER;
             if (activeTab === 'answered') return q.status === QuestionStatus.ANSWERED;
             return true; // quick-answers tab shows all
         });
+        
+        console.log(`[DEBUG] Tab filtered questions: ${tabFiltered.length}`);
         
         return tabFiltered
             .filter(q =>
@@ -430,15 +437,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                                             </div>
                                                         </div>
                                                     )}
-                                                    {q.questionImageUrl && (
-                                                        <div className="relative group">
-                                                            <img src={q.questionImageUrl} alt="" className="w-12 h-12 object-cover rounded border border-orange-200 bg-white shadow-sm" />
-                                                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded">
-                                                                <span className="text-[8px] text-white font-bold">Soru</span>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
+                                                                                                    </div>
                                                 <div className="flex flex-col">
                                                     <span className="text-xs font-medium text-gray-800 line-clamp-1">{q.productName}</span>
                                                     {q.productUrl && (
@@ -728,19 +727,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                                         <div className="absolute top-2 left-2 bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg">ÜRÜN</div>
                                                     </div>
                                                 )}
-                                                {selectedQuestion.questionImageUrl && (
-                                                    <div className="relative group shrink-0">
-                                                        <div className="absolute -inset-1 bg-gradient-to-r from-orange-600 to-yellow-500 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
-                                                        <img
-                                                            src={selectedQuestion.questionImageUrl}
-                                                            alt=""
-                                                            className="relative w-40 h-40 object-cover rounded-2xl border-4 border-white shadow-xl bg-white cursor-zoom-in hover:scale-105 transition-transform duration-300"
-                                                            onClick={() => window.open(selectedQuestion.questionImageUrl, '_blank')}
-                                                        />
-                                                        <div className="absolute top-2 left-2 bg-orange-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg">SORU GÖRSELİ</div>
-                                                    </div>
-                                                )}
-                                                {!selectedQuestion.productImageUrl && !selectedQuestion.questionImageUrl && (
+                                                                                                {!selectedQuestion.productImageUrl && (
                                                     <div className="w-40 h-40 bg-gray-200 rounded-2xl flex flex-col items-center justify-center text-gray-400 border-2 border-dashed">
                                                         <ImageIcon size={40} className="mb-2 opacity-20" />
                                                         <span className="text-[10px] font-bold">Görsel Yok</span>
