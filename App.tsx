@@ -1222,9 +1222,9 @@ const App: React.FC = () => {
       {page === 'questions' && <QuestionManagement
         db={db}
         onUpdateDB={handleUpdateDB}
+        setNotification={setNotification}
         initialTab={questionTab}
         onSyncNow={handleSyncQuestions}
-        setNotification={setNotification}
       />}
       {page === 'return-management' && <ReturnManagement
         db={db}

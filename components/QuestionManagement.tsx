@@ -10,9 +10,10 @@ interface QuestionManagementProps {
     db: Database;
     onUpdateDB: (newDB: Database | ((prev: Database) => Database)) => void;
     onSyncNow?: () => Promise<void>;
+    setNotification?: (notification: { type: 'success' | 'error' | 'info', message: string }) => void;
 }
 
-export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUpdateDB, onSyncNow }) => {
+export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUpdateDB, onSyncNow, setNotification }) => {
     const [activeTab, setActiveTab] = useState<'questions' | 'quick-answers'>('questions');
     const [searchTerm, setSearchTerm] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
@@ -21,7 +22,6 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
     const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
     const [answerText, setAnswerText] = useState('');
     const [isAnswering, setIsAnswering] = useState(false);
-    const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
     const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
     const [storeFilter, setStoreFilter] = useState<string>('all');
     const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
@@ -54,8 +54,10 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
         console.log('openProductLink called with:', target);
         
         if (!target) {
-            console.log('No URL provided, showing alert');
-            alert('Bu soru için ürün linki bulunmuyor.');
+            console.log('No URL provided, showing notification');
+            if (setNotification) {
+                setNotification({ type: 'error', message: 'Bu soru için ürün linki bulunmuyor.' });
+            }
             return;
         }
         

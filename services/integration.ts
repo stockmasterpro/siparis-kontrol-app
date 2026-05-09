@@ -1243,7 +1243,7 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
           createdDate: item.createdDate ? new Date(item.createdDate).toISOString() : new Date().toISOString(), // Trendyol returns timestamp in ms
           productName: item.productName || 'Bilinmeyen Ürün',
           productImageUrl: productImageUrl,
-          productUrl: item.productUrl || '',
+          productUrl: item.webUrl || item.productUrl || '',
           storeName: config.storeName,
           isPublic: item.public || false,
           questionImageUrl: questionImageUrl
