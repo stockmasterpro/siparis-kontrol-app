@@ -657,15 +657,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                         </div>
                     )}
 
-                    {notification && (
-                        <div className={`fixed bottom-4 right-4 p-4 rounded-xl shadow-xl z-50 animate-in slide-in-from-right duration-300 ${notification.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
-                            <div className="flex items-center space-x-2">
-                                {notification.type === 'success' ? <CheckCircle size={20} /> : <AlertTriangle size={20} />}
-                                <span className="text-sm font-bold">{notification.message}</span>
-                            </div>
-                        </div>
-                    )}
-
+                    
                     {/* Bulk Answer Modal */}
                     {isBulkModalOpen && (
                         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">
