@@ -1,0 +1,1018 @@
+import { Database, ApiConfig, Product, Variant, Order, OrderStatus } from '../types';
+
+/**
+ * Trendyol Ürün Aktarma (Create/Update Products)
+ * POST /suppliers/{supplierId}/v2/products
+ */
+export const syncProductsToTrendyol = async (config: ApiConfig, products: Product[]): Promise<{ batchRequestId: string } | null> => {
+  try {
+    const url = `https://api.trendyol.com/sapigw/suppliers/${config.supplierId}/v2/products`;
+
+    // Not: Trendyol API'si çok detaylı veri bekler (brandId, categoryId vb.)
+    // Bu basitleştirilmiş bir örnektir.
+    const items = products.flatMap(product =>
+      product.variants.map(variant => ({
+        barcode: variant.barcode,
+        title: product.name,
+        productMainId: product.productCode,
+        brandId: 0, // Kullanıcı tarafından seçilmeli
+        categoryId: 0, // Kullanıcı tarafından seçilmeli
+        quantity: Object.values(variant.stocks).reduce((a, b) => a + b, 0),
+        stockCode: variant.barcode,
+        dimensionalWeight: 1,
+        description: product.name,
+        currencyType: "TRY",
+        listPrice: product.price,
+        salePrice: product.price,
+        vatRate: 20,
+        cargoCompanyId: 1, // Varsayılan Şirket
+        images: [],
+        attributes: []
+      }))
+    );
+
+    if (items.length === 0) return null;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: getTrendyolHeaders(config),
+      body: JSON.stringify({ items })
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return { batchRequestId: data.batchRequestId };
+    } else {
+      const errorMsg = await handleTrendyolError(response);
+      throw new Error(`Ürün aktarma hatası: ${errorMsg}`);
+    }
+  } catch (error) {
+    console.error('syncProductsToTrendyol error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Toplu İşlem Durumu Sorgulama
+ * GET /suppliers/{supplierId}/products/batch-requests/{batchRequestId}
+ */
+export const checkBatchStatus = async (config: ApiConfig, batchRequestId: string): Promise<any> => {
+  try {
+    const url = `https://api.trendyol.com/sapigw/suppliers/${config.supplierId}/products/batch-requests/${batchRequestId}`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: getTrendyolHeaders(config)
+    });
+
+    if (response.ok) {
+      return await response.json();
+    } else {
+      const errorMsg = await handleTrendyolError(response);
+      throw new Error(`İşlem takibi hatası: ${errorMsg}`);
+    }
+  } catch (error) {
+    console.error('checkBatchStatus error:', error);
+    throw error;
+  }
+};
+
+/**
+ * Ürün Silme / Arşivleme (Trendyol'da silme yerine stok 0 yapılır veya satıştan kaldırılır)
+ */
+export const deleteProductFromTrendyol = async (config: ApiConfig, barcode: string): Promise<boolean> => {
+  // Trendyol'da direkt silme yoktur, ürün pasife çekilir veya stok 0 yapılır.
+  return await syncSingleBarcodeStock(config, barcode, 0);
+};
+
+
+/**
+ * Helper to get Trendyol API headers
+ */
+const getTrendyolHeaders = (config: ApiConfig) => {
+  const auth = btoa(`${config.apiKey}:${config.apiSecret}`);
+  return {
+    'Authorization': `Basic ${auth}`,
+    'Content-Type': 'application/json',
+    'User-Agent': `${config.supplierId} - SelfIntegration`
+  };
+};
+
+/**
+ * Helper to handle Trendyol API errors with Turkish descriptions
+ */
+const handleTrendyolError = async (response: Response): Promise<string> => {
+  // Clone response to prevent "body stream already read" error
+  const clonedResponse = response.clone();
+  let errorText = '';
+  try {
+    const errorData = await clonedResponse.json();
+    errorText = JSON.stringify(errorData);
+  } catch {
+    try {
+      errorText = await response.text();
+    } catch {
+      errorText = 'Bilinmeyen hata';
+    }
+  }
+
+  switch (response.status) {
+    case 401: return "Yetkisiz Erişim: API Key veya Secret hatalı.";
+    case 403: return "Erişim Engellendi: Bu işlem için yetkiniz yok.";
+    case 404: return "Bulunamadı: İstediğiniz kaynak mevcut değil.";
+    case 429: return "Çok Fazla İstek: Trendyol hız sınırına takıldınız, lütfen biraz bekleyin.";
+    case 500: return "Sunucu Hatası: Trendyol sistemlerinde bir sorun oluştu.";
+    default: return `Hata (${response.status}): ${errorText}`;
+  }
+};
+
+/**
+ * Rate Limiting Delay
+ * Trendyol: 10 saniyede max 50 istek (saniyede 5 istek)
+ * Güvenli tarafta kalmak için her istek arasına 200ms koyuyoruz.
+ */
+const rateLimitDelay = () => new Promise(resolve => setTimeout(resolve, 200));
+
+/**
+ * Sends updated stock quantity to Trendyol for a single barcode.
+ */
+export const syncSingleBarcodeStock = async (
+  config: ApiConfig,
+  barcode: string,
+  quantity: number
+): Promise<boolean> => {
+  if (!barcode || !config) return false;
+
+  try {
+    await rateLimitDelay();
+    const url = `https://api.trendyol.com/sapigw/suppliers/${config.supplierId}/products/price-and-inventory`;
+
+    const payload = {
+      items: [
+        {
+          barcode: barcode,
+          quantity: Math.max(0, Math.floor(quantity))
+        }
+      ]
+    };
+
+    if (config.mode === 'TEST') {
+      console.log(`[TEST-SYNC] ${config.storeName} | Barkod: ${barcode} -> Stok: ${quantity}`);
+      return true;
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: getTrendyolHeaders(config),
+      body: JSON.stringify(payload)
+    });
+
+    if (response.ok) {
+      console.log(`[SYNC-SUCCESS] ${config.storeName} | Barkod: ${barcode} -> Stok: ${quantity} güncellendi.`);
+      return true;
+    } else {
+      const errorMsg = await handleTrendyolError(response);
+      console.error(`[SYNC-ERROR] ${config.storeName} | Barkod: ${barcode} | Hata: ${errorMsg}`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`[SYNC-ERROR] ${config.storeName} | Barkod: ${barcode} | Exception:`, error);
+    return false;
+  }
+};
+
+/**
+ * Sends updated stock quantity to all connected marketplaces.
+ */
+export const syncStockToMarketplaces = async (
+  apiConfigs: ApiConfig[],
+  barcodes: string[],
+  newQuantity: number
+) => {
+  if (barcodes.length === 0 || apiConfigs.length === 0) return;
+
+  for (const config of apiConfigs) {
+    for (const barcode of barcodes) {
+      await syncSingleBarcodeStock(config, barcode, newQuantity);
+    }
+  }
+};
+
+/**
+ * Sends stock for a single barcode to all marketplaces.
+ */
+export const syncBarcodeStock = async (
+  apiConfigs: ApiConfig[],
+  barcode: string,
+  quantity: number
+) => {
+  if (!barcode || apiConfigs.length === 0) return;
+
+  for (const config of apiConfigs) {
+    await syncSingleBarcodeStock(config, barcode, quantity);
+  }
+};
+
+/**
+ * Sends order status update to marketplaces.
+ * Trendyol: PUT /order/sellers/{sellerId}/shipment-packages/{packageId}
+ */
+export const syncOrderStatusToMarketplaces = async (
+  apiConfigs: ApiConfig[],
+  orders: Order[],
+  newStatus: OrderStatus,
+  invoiceNumber?: string
+) => {
+  if (orders.length === 0 || apiConfigs.length === 0) return;
+
+  for (const order of orders) {
+    const config = apiConfigs.find(c => c.storeName === order.storeName);
+    if (!config) continue;
+
+    try {
+      console.log(`[SYNC-STATUS] Sipariş: ${order.marketplaceOrderId} -> Durum: ${newStatus} iletiliyor...`);
+
+      if (config.mode === 'TEST') {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        console.log(`[TEST-SYNC-STATUS] ${order.marketplaceOrderId} durumu güncellendi (TEST MODE).`);
+        continue;
+      }
+
+      // Map local status to Trendyol status
+      let trendyolStatus = '';
+      if (newStatus === OrderStatus.PROCESSING) {
+        trendyolStatus = 'Picking';
+      } else if (newStatus === OrderStatus.DELIVERED) {
+        trendyolStatus = 'Invoiced';
+      }
+
+      // Eğer statü desteklenmiyorsa veya paket ID yoksa atla
+      if (!trendyolStatus || !order.shipmentPackageId) {
+        console.warn(`[SYNC-STATUS-SKIP] Sipariş: ${order.marketplaceOrderId} | Statü: ${newStatus} veya Paket ID eksik.`);
+        continue;
+      }
+
+      await rateLimitDelay();
+
+      // User specifies: PUT /order/sellers/{sellerId}/shipment-packages/{packageId}
+      // Note: sapigw is often needed, but following user spec:
+      const url = `https://api.trendyol.com/sapigw/suppliers/${config.supplierId}/shipment-packages/${order.shipmentPackageId}`;
+
+      const payload: any = {
+        lines: order.items.map(item => ({
+          lineId: parseInt(String(item.orderItemId)),
+          quantity: item.quantity
+        })),
+        params: {},
+        status: trendyolStatus
+      };
+
+      if (trendyolStatus === 'Invoiced' && invoiceNumber) {
+        payload.invoiceNumber = invoiceNumber;
+      }
+
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: getTrendyolHeaders(config),
+        body: JSON.stringify(payload)
+      });
+
+      if (response.ok) {
+        console.log(`[SYNC-STATUS-SUCCESS] ${order.marketplaceOrderId} durumu Trendyol'da ${trendyolStatus} olarak güncellendi.`);
+      } else {
+        const errorMsg = await handleTrendyolError(response);
+        console.error(`[SYNC-STATUS-ERROR] ${order.marketplaceOrderId} | Hata: ${errorMsg}`);
+        throw new Error(`${order.marketplaceOrderId}: ${errorMsg}`);
+      }
+    } catch (error) {
+      console.error(`[SYNC-ERROR] Sipariş durum güncelleme hatası:`, error);
+      throw error;
+    }
+  }
+};
+
+/**
+ * Fetches orders from Trendyol API with specified filters.
+ * GET /order/sellers/{sellerId}/orders
+ */
+export const fetchOrdersFromTrendyol = async (
+  config: ApiConfig,
+  filters: {
+    status?: string;
+    startDate?: number;
+    endDate?: number;
+    page?: number;
+    size?: number;
+  }
+): Promise<any[]> => {
+  try {
+    await rateLimitDelay();
+
+    const params = new URLSearchParams();
+    if (filters.status) params.append('status', filters.status);
+    if (filters.startDate) params.append('startDate', filters.startDate.toString());
+    if (filters.endDate) params.append('endDate', filters.endDate.toString());
+    if (filters.page !== undefined) params.append('page', filters.page.toString());
+    if (filters.size !== undefined) params.append('size', filters.size.toString());
+    params.append('orderBy', 'LastUpdateDate');
+    params.append('order', 'DESC');
+
+    // User specifies: GET /order/sellers/{sellerId}/orders
+    // Standard is often sapigw/suppliers/{sellerId}/orders
+    const url = `https://api.trendyol.com/sapigw/suppliers/${config.supplierId}/orders?${params.toString()}`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: getTrendyolHeaders(config)
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return data.content || [];
+    } else {
+      const errorMsg = await handleTrendyolError(response);
+      console.error(`[FETCH-ORDERS-ERROR] ${config.storeName} | Hata: ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+  } catch (error) {
+    console.error(`[FETCH-ORDERS-EXCEPTION] ${config.storeName} |`, error);
+    throw error;
+  }
+};
+
+
+/**
+ * Updates the product list ensuring that all variants with the same Color and Size
+ * share the exact same stock quantity across all warehouses.
+ * 
+ * @param products Current list of products
+ * @param productId ID of the product being updated
+ * @param targetColor The color of the variant being updated
+ * @param targetSize The size of the variant being updated
+ * @param warehouseId The warehouse ID
+ * @param newStock The new stock value
+ * @returns Updated list of products and the list of affected barcodes
+ */
+export const updateLocalStockWithConsistency = (
+  products: Product[],
+  productId: string,
+  targetColor: string,
+  targetSize: string,
+  warehouseId: string,
+  newStock: number
+): { updatedProducts: Product[], affectedBarcodes: string[] } => {
+
+  let affectedBarcodes: string[] = [];
+
+  const updatedProducts = products.map(p => {
+    if (p.id !== productId) return p;
+
+    // Found the product, now iterate variants
+    const newVariants = p.variants.map(v => {
+      // Check if this variant matches the physical item (Same Color & Size)
+      // "Bir ürünün bir renginin bir bedenin birden fazla barkodu olabilir ama stoğu tektir."
+      if (v.color === targetColor && v.size === targetSize) {
+        if (v.barcode) affectedBarcodes.push(v.barcode);
+
+        return {
+          ...v,
+          stocks: {
+            ...v.stocks,
+            [warehouseId]: newStock
+          }
+        };
+      }
+      return v;
+    });
+
+    return { ...p, variants: newVariants };
+  });
+
+  return { updatedProducts, affectedBarcodes };
+};
+
+/**
+ * Creates a test order in Trendyol STAGE environment
+ * Trendyol STAGE ortamında test siparişi oluşturur
+ */
+export const createTestOrder = async (
+  config: ApiConfig,
+  orderData: {
+    customerFirstName: string;
+    customerLastName: string;
+    addressText: string;
+    city: string;
+    district: string;
+    phone: string;
+    email: string;
+    barcode: string;
+    quantity: number;
+    discountPercentage?: number;
+    commercial?: boolean;
+    company?: string;
+    invoiceTaxNumber?: string;
+    invoiceTaxOffice?: string;
+    microRegion?: string;
+  }
+): Promise<{ success: boolean; orderNumber?: string; error?: string }> => {
+  try {
+    const auth = btoa(`${config.apiKey}:${config.apiSecret}`);
+    const url = 'https://stageapigw.trendyol.com/integration/test/order/orders/core';
+
+    const payload = {
+      customer: {
+        customerFirstName: orderData.customerFirstName,
+        customerLastName: orderData.customerLastName
+      },
+      invoiceAddress: {
+        addressText: orderData.addressText,
+        city: orderData.city,
+        company: orderData.company || '',
+        district: orderData.district,
+        invoiceFirstName: orderData.customerFirstName,
+        invoiceLastName: orderData.customerLastName,
+        latitude: "string",
+        longitude: "string",
+        neighborhood: "",
+        phone: orderData.phone,
+        postalCode: "",
+        email: orderData.email,
+        invoiceTaxNumber: orderData.invoiceTaxNumber || '',
+        invoiceTaxOffice: orderData.invoiceTaxOffice || ''
+      },
+      lines: [
+        {
+          barcode: orderData.barcode,
+          quantity: orderData.quantity,
+          discountPercentage: orderData.discountPercentage || 0
+        }
+      ],
+      seller: {
+        sellerId: parseInt(config.supplierId)
+      },
+      shippingAddress: {
+        addressText: orderData.addressText,
+        city: orderData.city,
+        company: orderData.company || '',
+        district: orderData.district,
+        latitude: "string",
+        longitude: "string",
+        neighborhood: "",
+        phone: orderData.phone,
+        postalCode: "",
+        shippingFirstName: orderData.customerFirstName,
+        shippingLastName: orderData.customerLastName,
+        email: orderData.email
+      },
+      commercial: orderData.commercial || false,
+      microRegion: orderData.microRegion || ''
+    };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json',
+        'User-Agent': `${config.supplierId} - SelfIntegration`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Test siparişi oluşturma hatası:', errorText);
+      return {
+        success: false,
+        error: `HTTP ${response.status}: ${errorText}`
+      };
+    }
+
+    const result = await response.json();
+
+    if (result.orderNumber) {
+      console.log(`Test siparişi başarıyla oluşturuldu. Sipariş No: ${result.orderNumber}`);
+      return {
+        success: true,
+        orderNumber: result.orderNumber
+      };
+    } else {
+      return {
+        success: false,
+        error: 'Sipariş numarası alınamadı'
+      };
+    }
+
+  } catch (error) {
+    console.error('Test siparişi oluşturma hatası:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Bilinmeyen hata'
+    };
+  }
+};
+
+/**
+ * Creates a real order in Trendyol LIVE environment
+ * Trendyol LIVE ortamında gerçek sipariş oluşturur
+ */
+export const createRealOrder = async (
+  config: ApiConfig,
+  orderData: {
+    customerFirstName: string;
+    customerLastName: string;
+    addressText: string;
+    city: string;
+    district: string;
+    phone: string;
+    email: string;
+    barcode: string;
+    quantity: number;
+    discountPercentage?: number;
+    commercial?: boolean;
+    company?: string;
+    invoiceTaxNumber?: string;
+    invoiceTaxOffice?: string;
+    microRegion?: string;
+  }
+): Promise<{ success: boolean; orderNumber?: string; error?: string }> => {
+  try {
+    const auth = btoa(`${config.apiKey}:${config.apiSecret}`);
+    const url = 'https://apigw.trendyol.com/integration/order/orders/core';
+
+    const payload = {
+      customer: {
+        customerFirstName: orderData.customerFirstName,
+        customerLastName: orderData.customerLastName
+      },
+      invoiceAddress: {
+        addressText: orderData.addressText,
+        city: orderData.city,
+        company: orderData.company || '',
+        district: orderData.district,
+        invoiceFirstName: orderData.customerFirstName,
+        invoiceLastName: orderData.customerLastName,
+        latitude: "string",
+        longitude: "string",
+        neighborhood: "",
+        phone: orderData.phone,
+        postalCode: "",
+        email: orderData.email,
+        invoiceTaxNumber: orderData.invoiceTaxNumber || '',
+        invoiceTaxOffice: orderData.invoiceTaxOffice || ''
+      },
+      lines: [
+        {
+          barcode: orderData.barcode,
+          quantity: orderData.quantity,
+          discountPercentage: orderData.discountPercentage || 0
+        }
+      ],
+      seller: {
+        sellerId: parseInt(config.supplierId)
+      },
+      shippingAddress: {
+        addressText: orderData.addressText,
+        city: orderData.city,
+        company: orderData.company || '',
+        district: orderData.district,
+        latitude: "string",
+        longitude: "string",
+        neighborhood: "",
+        phone: orderData.phone,
+        postalCode: "",
+        shippingFirstName: orderData.customerFirstName,
+        shippingLastName: orderData.customerLastName,
+        email: orderData.email
+      },
+      commercial: orderData.commercial || false,
+      microRegion: orderData.microRegion || ''
+    };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/json',
+        'User-Agent': `${config.supplierId} - SelfIntegration`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Gerçek sipariş oluşturma hatası:', errorText);
+      return {
+        success: false,
+        error: `HTTP ${response.status}: ${errorText}`
+      };
+    }
+
+    const result = await response.json();
+
+    if (result.orderNumber) {
+      console.log(`Gerçek sipariş başarıyla oluşturuldu. Sipariş No: ${result.orderNumber}`);
+      return {
+        success: true,
+        orderNumber: result.orderNumber
+      };
+    } else {
+      return {
+        success: false,
+        error: 'Sipariş numarası alınamadı'
+      };
+    }
+
+  } catch (error) {
+    console.error('Gerçek sipariş oluşturma hatası:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Bilinmeyen hata'
+    };
+  }
+};
+
+/**
+ * Centralized sync logic for marketplace orders.
+ * Fetches new orders, updates statuses, and reconciles stock.
+ * 
+ * @param db Current database state
+ * @returns Updated products and orders, and counts of new items
+ */
+export const syncMarketplaceOrders = async (
+  db: Database,
+  isManual = false
+): Promise<{
+  updatedProducts: Product[],
+  updatedOrders: Order[],
+  newOrdersAddedCount: number,
+  barcodesToSync: { [key: string]: number }
+}> => {
+  if (db.apiConfigs.length === 0) {
+    return {
+      updatedProducts: db.products,
+      updatedOrders: db.orders,
+      newOrdersAddedCount: 0,
+      barcodesToSync: {}
+    };
+  }
+
+  let newOrdersAddedCount = 0;
+  let currentDbProducts = [...db.products];
+  let currentDbOrders = [...db.orders];
+  const barcodesToSync: { [key: string]: number } = {};
+
+  for (const config of db.apiConfigs) {
+    let content: any[] = [];
+
+    if (config.mode === 'TEST') {
+      // Mock order for testing
+      if (isManual || Math.random() > 0.7) {
+        let mockVariant = { barcode: 'TEST-BARCODE', color: 'X', size: 'L' };
+        let mockProductName = "Test Ürünü";
+        let mockPrice = 100;
+
+        if (currentDbProducts.length > 0) {
+          const randomProduct = currentDbProducts[Math.floor(Math.random() * currentDbProducts.length)];
+          const randomVariant = randomProduct.variants.find(v => v.barcode && v.barcode.length > 0) || randomProduct.variants[0];
+          if (randomVariant) {
+            mockVariant = randomVariant;
+            mockProductName = randomProduct.name;
+            mockPrice = randomProduct.price;
+          }
+        }
+
+        content = [{
+          orderNumber: `TEST-${Math.floor(Math.random() * 1000000)}`,
+          customerFirstName: "Test",
+          customerLastName: "Müşteri",
+          cargoTrackingNumber: `${Math.floor(Math.random() * 10000000)}`,
+          orderDate: Date.now(),
+          status: 'Created',
+          lines: [{
+            orderItemId: Math.random().toString(36).substr(2, 9),
+            barcode: mockVariant.barcode,
+            productName: mockProductName,
+            merchantSku: `${mockVariant.color}-${mockVariant.size}`,
+            quantity: 1,
+            price: mockPrice
+          }]
+        }];
+      }
+    } else {
+      try {
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - (db.settings.orderFetchDays || 2));
+        const startDateParams = startDate.getTime();
+
+        let page = 0;
+        const size = 100;
+
+        while (true) {
+          const pageOrders = await fetchOrdersFromTrendyol(config, {
+            startDate: startDateParams,
+            page: page,
+            size: size
+          });
+
+          if (pageOrders.length === 0) break;
+          content = content.concat(pageOrders);
+          if (pageOrders.length < size) break;
+          page++;
+        }
+      } catch (error) {
+        console.error(`[SYNC-ERROR] ${config.storeName} |`, error);
+      }
+    }
+
+    for (const apiOrder of content) {
+      // 3 Saatlik zaman kayması düzeltmesi (Trendyol API zaman zaman UTC yerine TRT timestamp gönderiyor, browser bunu UTC sayıp +3 ekliyor)
+      // Kullanıcının "3 saat ilerde" şikayeti üzerine 3 saat (180 dk) geri çekiyoruz.
+      const apiOrderDate = apiOrder.orderDate || apiOrder.createdDate || Date.now();
+      const orderDate = new Date(apiOrderDate - (3 * 60 * 60 * 1000));
+
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - (db.settings.orderFetchDays || 2));
+
+      if (orderDate < cutoffDate) continue;
+
+      let mappedStatus = OrderStatus.NEW;
+      const status = (apiOrder.status || '').toString().toLowerCase().trim();
+
+      if (status === 'shipped' || status === 'shipping') mappedStatus = OrderStatus.SHIPPING;
+      else if (status === 'delivered' || status === 'completed') mappedStatus = OrderStatus.DELIVERED;
+      else if (status === 'cancelled' || status === 'canceled') mappedStatus = OrderStatus.CANCELLED;
+      else if (status === 'created' || status === 'new' || status === 'pending') mappedStatus = OrderStatus.NEW;
+      else if (status === 'picking' || status === 'processing' || status === 'approved') mappedStatus = OrderStatus.PROCESSING;
+
+      const existingOrderIndex = currentDbOrders.findIndex(o => o.marketplaceOrderId === apiOrder.orderNumber);
+
+      if (existingOrderIndex > -1) {
+        const existingOrder = currentDbOrders[existingOrderIndex];
+
+        // Don't update fully cancelled orders
+        if (existingOrder.status === OrderStatus.CANCELLED && existingOrder.items.length === 0) {
+          continue;
+        }
+
+        // UPDATE ITEM NAMES/DETAILS AND DETECT QUANTITY CHANGES FOR EXISTING ORDERS
+        const apiItemMap = new Map();
+        apiOrder.lines.forEach((line: any) => {
+          apiItemMap.set(line.barcode || 'NO-BARCODE', line);
+        });
+
+        currentDbOrders[existingOrderIndex].items = existingOrder.items.map(item => {
+          const apiLine = apiItemMap.get(item.barcode);
+          if (apiLine) {
+            // DETECT QUANTITY DECREASE (Partial Return for a single line)
+            if (apiLine.quantity < item.quantity) {
+              const diff = item.quantity - apiLine.quantity;
+              console.log(`[DIFF-RETURN] Sipariş ${apiOrder.orderNumber}: ${item.barcode} barkodundan ${diff} adet iade algılandı. Stok iade ediliyor...`);
+
+              const productIndex = currentDbProducts.findIndex(p => p.variants.some(v => v.barcode === item.barcode));
+              if (productIndex > -1) {
+                const product = currentDbProducts[productIndex];
+                const variant = product.variants.find(v => v.barcode === item.barcode);
+                if (variant) {
+                  const whId = Object.keys(variant.stocks)[0] || 'wh1';
+                  const currentStock = variant.stocks[whId] || 0;
+                  const newStock = currentStock + diff;
+
+                  const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, whId, newStock);
+                  currentDbProducts = result.updatedProducts;
+
+                  // Mark for sync
+                  product.variants.forEach(pv => {
+                    if (pv.barcode) barcodesToSync[pv.barcode] = Object.values(pv.stocks).reduce((a: any, b: any) => a + b, 0) as number;
+                  });
+                }
+              }
+            }
+
+            return {
+              ...item,
+              productName: apiLine.productName || apiLine.name || item.productName,
+              quantity: apiLine.quantity, // Update quantity to match API (reduced)
+              totalPrice: (apiLine.price || item.unitPrice) * apiLine.quantity
+            };
+          }
+          return item;
+        });
+
+        // PARTIAL CANCELLATION DETECTION AND STOCK RETURN
+        const apiItemBarcodes = new Set(apiOrder.lines.map((line: any) => line.barcode || 'NO-BARCODE'));
+        const cancelledItems = existingOrder.items.filter(item => !apiItemBarcodes.has(item.barcode));
+
+        if (cancelledItems.length > 0) {
+          console.log(`[PARTIAL-CANCEL] Sipariş ${apiOrder.orderNumber}: ${cancelledItems.length} ürün iptal edildi. Stoklar iade ediliyor...`);
+
+          // RETURN STOCK FOR CANCELLED ITEMS
+          cancelledItems.forEach(item => {
+            const productIndex = currentDbProducts.findIndex(p => p.variants.some(v => v.barcode === item.barcode));
+            if (productIndex > -1) {
+              const product = currentDbProducts[productIndex];
+              const variant = product.variants.find(v => v.barcode === item.barcode);
+              if (variant) {
+                const whId = Object.keys(variant.stocks)[0] || 'wh1';
+                const currentStock = variant.stocks[whId] || 0;
+                const newStock = currentStock + item.quantity;
+
+                const result = updateLocalStockWithConsistency(
+                  currentDbProducts,
+                  product.id,
+                  variant.color,
+                  variant.size,
+                  whId,
+                  newStock
+                );
+                currentDbProducts = result.updatedProducts;
+
+                // Sync new stock level
+                if (db.settings.enableAutoStockSync) {
+                  product.variants.forEach(pv => {
+                    if (pv.barcode) {
+                      const totalStock = Object.values(pv.stocks).reduce((a: any, b: any) => a + b, 0);
+                      barcodesToSync[pv.barcode] = totalStock as number;
+                    }
+                  });
+                }
+              }
+            }
+          });
+
+          const existingCancelledItems = existingOrder.cancelledItems || [];
+          currentDbOrders[existingOrderIndex].cancelledItems = [...existingCancelledItems, ...cancelledItems];
+          currentDbOrders[existingOrderIndex].items = currentDbOrders[existingOrderIndex].items.filter(item => apiItemBarcodes.has(item.barcode));
+
+          if (currentDbOrders[existingOrderIndex].items.length === 0) {
+            currentDbOrders[existingOrderIndex].status = OrderStatus.CANCELLED;
+          }
+        }
+
+        // FULL CANCELLATION CHECK (Status change from active to cancelled)
+        if (mappedStatus === OrderStatus.CANCELLED && existingOrder.status !== OrderStatus.CANCELLED) {
+          console.log(`[FULL-CANCEL] Sipariş ${apiOrder.orderNumber}: Sipariş tamamen iptal edildi. Tüm stoklar iade ediliyor...`);
+          existingOrder.items.forEach(item => {
+            const productIndex = currentDbProducts.findIndex(p => p.variants.some(v => v.barcode === item.barcode));
+            if (productIndex > -1) {
+              const product = currentDbProducts[productIndex];
+              const variant = product.variants.find(v => v.barcode === item.barcode);
+              if (variant) {
+                const whId = Object.keys(variant.stocks)[0] || 'wh1';
+                const currentStock = variant.stocks[whId] || 0;
+                const newStock = currentStock + item.quantity;
+
+                const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, whId, newStock);
+                currentDbProducts = result.updatedProducts;
+
+                product.variants.forEach(pv => { if (pv.barcode) barcodesToSync[pv.barcode] = Object.values(pv.stocks).reduce((a: any, b: any) => a + b, 0) as number; });
+              }
+            }
+          });
+
+          const existingCancelledItems = existingOrder.cancelledItems || [];
+          currentDbOrders[existingOrderIndex].cancelledItems = [...existingCancelledItems, ...existingOrder.items];
+          currentDbOrders[existingOrderIndex].items = [];
+          currentDbOrders[existingOrderIndex].status = OrderStatus.CANCELLED;
+        }
+
+        // Update cargo code if changed
+        const newCargoCode = String(apiOrder.cargoTrackingNumber || apiOrder.trackingNumber || '-');
+        if (existingOrder.cargoCode !== newCargoCode) {
+          currentDbOrders[existingOrderIndex].cargoCode = newCargoCode;
+        }
+
+        // Update status if not suspended and NOT already handled by cancellation
+        if (!existingOrder.isSuspended && existingOrder.status !== mappedStatus && existingOrder.status !== OrderStatus.CANCELLED) {
+          currentDbOrders[existingOrderIndex].status = mappedStatus;
+        }
+
+        continue;
+      }
+
+      // Skip cancelled orders from being added as new
+      if (mappedStatus === OrderStatus.CANCELLED) continue;
+
+      if (mappedStatus !== OrderStatus.NEW && mappedStatus !== OrderStatus.PROCESSING) continue;
+
+      let isSuspended = false;
+      const orderItems: any[] = apiOrder.lines.map((line: any) => {
+        // ALWAYS use Trendyol names
+        const productName = line.productName || line.name || line.merchantSku || 'Ürün adı mevcut değil';
+
+        // Get color from Trendyol first
+        let color = line.attributes?.find((attr: any) => ['Renk', 'Color', 'RENK'].includes(attr.attributeName))?.attributeValue || line.color || '';
+
+        // Only fallback to DB for color if empty, but NOT for productName
+        if (!color && line.barcode && line.barcode !== 'NO-BARCODE') {
+          const product = db.products.find(p => p.variants.some(v => v.barcode === line.barcode));
+          if (product) {
+            const variant = product.variants.find(v => v.barcode === line.barcode);
+            if (variant) color = variant.color;
+          }
+        }
+
+        return {
+          orderItemId: String(line.orderItemId || line.id),
+          barcode: line.barcode || 'NO-BARCODE',
+          productName: productName,
+          sku: line.merchantSku,
+          color: color,
+          size: line.attributes?.find((attr: any) => ['Beden', 'Size', 'BEDEN'].includes(attr.attributeName))?.attributeValue || line.size || '',
+          quantity: line.quantity,
+          unitPrice: line.price,
+          totalPrice: line.price * line.quantity
+        };
+      });
+
+      // Stock Reconcilliation
+      let finalItems = orderItems.map(item => {
+        const productIndex = currentDbProducts.findIndex(p => p.variants.some(v => v.barcode === item.barcode));
+
+        if (productIndex > -1) {
+          const product = currentDbProducts[productIndex];
+          const variant = product.variants.find(v => v.barcode === item.barcode);
+
+          if (variant) {
+            // NEVER override productName here anymore
+            if (db.settings.enableAutoStockSync) {
+              const whId = Object.keys(variant.stocks)[0] || 'wh1';
+              const currentStock = variant.stocks[whId] || 0;
+
+              // STOK DÜŞÜM MANTIĞI: Miktar ne olursa olsun, eldeki stoktan düşer. 
+              // Stok 0'ın altına inmez.
+              let amountToSubtract = item.quantity;
+              let newStock = Math.max(0, currentStock - amountToSubtract);
+
+              const result = updateLocalStockWithConsistency(
+                currentDbProducts,
+                product.id,
+                variant.color,
+                variant.size,
+                whId,
+                newStock
+              );
+
+              currentDbProducts = result.updatedProducts;
+
+              // Ürün kartındaki TÜM barkodları senkronizasyon listesine ekle
+              product.variants.forEach(pv => {
+                if (pv.barcode) {
+                  const totalStock = Object.values(pv.stocks).reduce((a: any, b: any) => a + b, 0);
+                  barcodesToSync[pv.barcode] = totalStock as number;
+                }
+              });
+            }
+          }
+        } else {
+          isSuspended = true;
+        }
+        return item;
+      });
+
+      let deliveryAddress = '';
+      if (apiOrder.shipmentAddress) {
+        deliveryAddress = [
+          apiOrder.shipmentAddress.address1,
+          apiOrder.shipmentAddress.address2,
+          apiOrder.shipmentAddress.district,
+          apiOrder.shipmentAddress.city,
+          apiOrder.shipmentAddress.country
+        ].filter(Boolean).join(', ');
+      }
+
+      const newOrder: Order = {
+        id: Math.random().toString(36).substr(2, 9), // Simple ID generator for service
+        marketplaceOrderId: apiOrder.orderNumber,
+        storeName: config.storeName,
+        status: mappedStatus,
+        customerName: `${apiOrder.customerFirstName || ''} ${apiOrder.customerLastName || ''}`.trim(),
+        deliveryAddress: deliveryAddress || undefined,
+        cargoCode: String(apiOrder.cargoTrackingNumber || apiOrder.trackingNumber || '-'),
+        orderDate: orderDate.toISOString(),
+        items: finalItems,
+        isSuspended: isSuspended,
+        shipmentPackageId: apiOrder.id ? String(apiOrder.id) : undefined
+      };
+
+      // Auto Process Logic if enabled
+      if (db.settings.enableAutoProcessOrders && !isSuspended && mappedStatus === OrderStatus.NEW) {
+        newOrder.status = OrderStatus.PROCESSING;
+        try {
+          await syncOrderStatusToMarketplaces([config], [newOrder], OrderStatus.PROCESSING);
+        } catch (error) {
+          console.error('[AUTO-PROCESS-ERROR]', error);
+        }
+      }
+
+      currentDbOrders.unshift(newOrder);
+      newOrdersAddedCount++;
+    }
+  }
+
+  return {
+    updatedProducts: currentDbProducts,
+    updatedOrders: currentDbOrders,
+    newOrdersAddedCount,
+    barcodesToSync
+  };
+};

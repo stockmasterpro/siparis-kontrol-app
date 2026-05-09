@@ -1,0 +1,5 @@
+{
+  "name": "E-Ticaret Masaüstü Yönetim Paneli",
+  "description": "Windows tabanlı çalışacak, ürün, stok, sipariş ve entegrasyon yönetimini sağlayan masaüstü uygulaması.",
+  "requestFramePermissions": []
+}

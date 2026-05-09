@@ -1,0 +1,99 @@
+{
+  "name": "e-ticaret-yonetim-paneli",
+  "private": true,
+  "version": "1.4.3",
+  "main": "dist-electron/main.js",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "node scripts/build-electron.js && electron-builder",
+    "build:vite": "node scripts/build-electron.js",
+    "build:win": "npm run build:vite && electron-builder --win",
+    "build:dir": "npm run build:vite && electron-builder --dir",
+    "build:exe": "npm run build:vite && electron-builder --win",
+    "build:portable": "npm run build:vite && electron-builder --win --x64 -c.win.target=portable",
+    "electron:dev": "npm run build:vite && electron .",
+    "preview": "vite preview",
+    "publish": "npm run build:vite && electron-builder --win -p always"
+  },
+  "build": {
+    "appId": "com.eticaret.desktop",
+    "productName": "E- Ticaret ve Perakende Yönetim",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "build/**/*",
+      "assets/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "sign": false,
+      "publisherName": "",
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": true,
+      "artifactName": "${name}-setup-${version}.${ext}"
+    },
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      },
+      {
+        "from": "assets/",
+        "to": "assets/"
+      }
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "stockmasterpro",
+      "repo": "siparis-kontrol-app"
+    }
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "date-fns": "^4.1.0",
+    "electron-updater": "^6.8.3",
+    "jsbarcode": "3.11.6",
+    "lucide-react": "^0.562.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "recharts": "^3.6.0",
+    "uuid": "^13.0.0",
+    "xlsx": "0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.2",
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.27",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "electron-packager": "^17.1.2",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.2",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
