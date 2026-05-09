@@ -13,6 +13,14 @@ const { autoUpdater } = require('electron-updater');
 autoUpdater.autoDownload = true; // Automatically download updates
 autoUpdater.autoInstallOnAppQuit = true; // Install when app quits
 
+// Set feed URL for GitHub releases
+autoUpdater.setFeedURL({
+  provider: 'github',
+  owner: 'stockmasterpro',
+  repo: 'siparis-kontrol-app',
+  private: false
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -104,7 +112,15 @@ function setupAutoUpdater() {
 
 // IPC Handlers for Updates
 ipcMain.handle('check-for-updates', async () => {
-  return autoUpdater.checkForUpdates();
+  try {
+    console.log('[UPDATE] Manual update check initiated...');
+    const result = await autoUpdater.checkForUpdates();
+    console.log('[UPDATE] Check result:', result);
+    return result;
+  } catch (error) {
+    console.error('[UPDATE] Check failed:', error);
+    throw error;
+  }
 });
 
 ipcMain.handle('quit-and-install', async () => {

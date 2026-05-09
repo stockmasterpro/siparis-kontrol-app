@@ -532,12 +532,22 @@ const App: React.FC = () => {
     handleUpdateDB(prev => {
       const prevQuestions = prev.questions || [];
       const updatedQuestions = allLatestQuestions.map(newQ => {
-        // If we have THIS specific question answered locally, keep it as answered
-        const localMatched = prevQuestions.find(pq =>
-          pq.marketplaceQuestionId === newQ.marketplaceQuestionId &&
-          pq.status === QuestionStatus.ANSWERED
+        // Find existing question
+        const existingQuestion = prevQuestions.find(pq =>
+          pq.marketplaceQuestionId === newQ.marketplaceQuestionId
         );
-        return localMatched ? localMatched : newQ;
+        
+        if (existingQuestion) {
+          // Keep original createdDate and other fields, only update status and answer if needed
+          return {
+            ...newQ,
+            createdDate: existingQuestion.createdDate, // Preserve original date
+            status: existingQuestion.status === QuestionStatus.ANSWERED ? QuestionStatus.ANSWERED : newQ.status
+          };
+        }
+        
+        // New question - use API date
+        return newQ;
       });
       return { ...prev, questions: updatedQuestions };
     });
