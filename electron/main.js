@@ -68,10 +68,16 @@ function setupAutoUpdater() {
 
   autoUpdater.on('error', (err) => {
     console.error('[UPDATE] Error:', err);
+    console.error('[UPDATE] Error details:', {
+      message: err.message,
+      stack: err.stack,
+      code: err.code,
+      name: err.name
+    });
     if (mainWindow) {
       mainWindow.webContents.send('update-message', {
         type: 'error',
-        message: 'Güncelleme kontrolü sırasında hata oluştu.'
+        message: `Güncelleme hatası: ${err.message || 'Bilinmeyen hata'}`
       });
     }
   });
@@ -114,11 +120,19 @@ function setupAutoUpdater() {
 ipcMain.handle('check-for-updates', async () => {
   try {
     console.log('[UPDATE] Manual update check initiated...');
+    console.log('[UPDATE] Current version:', app.getVersion());
+    console.log('[UPDATE] Feed URL configured:', autoUpdater.getFeedURL());
     const result = await autoUpdater.checkForUpdates();
     console.log('[UPDATE] Check result:', result);
     return result;
   } catch (error) {
     console.error('[UPDATE] Check failed:', error);
+    console.error('[UPDATE] Check failed details:', {
+      message: error.message,
+      stack: error.stack,
+      code: error.code,
+      name: error.name
+    });
     throw error;
   }
 });
