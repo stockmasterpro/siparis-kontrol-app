@@ -51,14 +51,24 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
 
     const openProductLink = async (url?: string) => {
         const target = (url || '').trim();
-        if (!target) return;
+        console.log('openProductLink called with:', target);
+        
+        if (!target) {
+            console.log('No URL provided, showing alert');
+            alert('Bu soru için ürün linki bulunmuyor.');
+            return;
+        }
+        
         try {
             if (window.electron?.openExternal) {
+                console.log('Using electron.openExternal for:', target);
                 await window.electron.openExternal(target);
             } else {
+                console.log('Using window.open for:', target);
                 window.open(target, '_blank', 'noreferrer');
             }
-        } catch {
+        } catch (error) {
+            console.error('Error opening product link:', error);
             window.open(target, '_blank', 'noreferrer');
         }
     };
