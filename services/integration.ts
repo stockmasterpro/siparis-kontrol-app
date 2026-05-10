@@ -1220,7 +1220,7 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
       const items = data.content || [];
 
       const questions = items.map((item: any) => {
-        const questionImageUrl = item.imageUrl || ''; // Use product image instead of question image
+        const questionImageUrl = item.imageUrl || (item.imageUrls && item.imageUrls.length > 0 ? item.imageUrls[0] : '');
         
         // Try to get product image from product URL if main image is empty
         let productImageUrl = item.productMainImageUrl || '';

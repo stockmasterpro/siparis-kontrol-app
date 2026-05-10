@@ -521,10 +521,8 @@ const App: React.FC = () => {
 
     for (const config of currentDb.apiConfigs) {
       try {
-        // Hem cevap bekleyenleri hem de cevaplananları çekelim
-        const fetchedWaiting = await syncMarketplaceQuestions(config, QuestionStatus.WAITING_FOR_ANSWER);
-        const fetchedAnswered = await syncMarketplaceQuestions(config, QuestionStatus.ANSWERED);
-        const fetched = [...fetchedWaiting, ...fetchedAnswered];
+        // Sadece cevap bekleyenleri çekip listeyi tamamen yeniliyoruz.
+        const fetched = await syncMarketplaceQuestions(config, QuestionStatus.WAITING_FOR_ANSWER);
         allLatestQuestions = [...allLatestQuestions, ...fetched];
       } catch (err) {
         console.error(`[SYNC-ERROR] ${config.storeName} soruları çekilemedi:`, err);
