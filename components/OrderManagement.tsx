@@ -642,19 +642,11 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             list = list.filter(o => selectedStatuses.includes(o.status));
         }
 
-        // Ülke filtresi: aktif, askıda ve iptal sekmelerinde geçerli (iade sekmesi ayrı)
+        // Ülke filtresi: yalnızca countryCode eşleşmesi (API / fullData ile tutarlı)
         if (activeTab !== 'returned' && selectedCountries.length > 0) {
             list = list.filter(o => {
-                const codeUpper = getEffectiveOrderCountryCode(o);
-                const address = `${o.deliveryAddress || ''} ${o.invoiceAddress || ''}`.toLowerCase();
-
-                return selectedCountries.some(code => {
-                    const codeNorm = code.toUpperCase();
-                    if (codeUpper === codeNorm) return true;
-                    const countryObj = PRIORITY_COUNTRIES.find(c => c.code === codeNorm);
-                    const countryName = countryObj ? countryObj.name.toLowerCase() : code.toLowerCase();
-                    return address.includes(countryName);
-                });
+                const codeUpper = getEffectiveOrderCountryCode(o).toUpperCase();
+                return selectedCountries.some(code => codeUpper === code.toUpperCase());
             });
         }
 

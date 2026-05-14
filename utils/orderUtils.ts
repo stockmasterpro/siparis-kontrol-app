@@ -11,93 +11,6 @@ export function pickIsoCountryCode(value: unknown): string | undefined {
   return undefined;
 }
 
-const PHONE_PREFIX_TO_COUNTRY: [string, string][] = [
-  ['966', 'SA'],
-  ['971', 'AE'],
-  ['974', 'QA'],
-  ['965', 'KW'],
-  ['968', 'OM'],
-  ['973', 'BH'],
-  ['994', 'AZ'],
-  ['420', 'CZ'],
-  ['421', 'SK'],
-  ['40', 'RO'],
-  ['359', 'BG'],
-  ['380', 'UA'],
-  ['30', 'GR'],
-  ['90', 'TR']
-].sort((a, b) => b[0].length - a[0].length);
-
-export function inferCountryFromPhoneDigits(digits: string): string | undefined {
-  const d = digits.replace(/\D/g, '');
-  if (!d || d.length < 10) return undefined;
-  const normalized = d.startsWith('00') ? d.slice(2) : d;
-  for (const [prefix, code] of PHONE_PREFIX_TO_COUNTRY) {
-    if (normalized.startsWith(prefix)) return code;
-  }
-  return undefined;
-}
-
-/** Paket/satır para birimi → teslim ülkesi (TRY = bilgi yok) */
-export function inferCountryFromTrendyolCurrency(currencyCode: unknown): string | undefined {
-  const c = String(currencyCode || '')
-    .trim()
-    .toUpperCase();
-  if (!c || c === 'TRY') return undefined;
-  const map: Record<string, string> = {
-    RON: 'RO',
-    SAR: 'SA',
-    AED: 'AE',
-    QAR: 'QA',
-    KWD: 'KW',
-    OMR: 'OM',
-    BHD: 'BH',
-    AZN: 'AZ',
-    CZK: 'CZ',
-    BGN: 'BG',
-    PLN: 'PL',
-    HUF: 'HU'
-  };
-  return map[c];
-}
-
-function packLevelCurrencyCountry(fd: any): string | undefined {
-  const fromPack = inferCountryFromTrendyolCurrency(fd.currencyCode);
-  if (fromPack) return fromPack;
-  if (Array.isArray(fd.lines)) {
-    for (const line of fd.lines) {
-      const x = inferCountryFromTrendyolCurrency(line?.currencyCode);
-      if (x) return x;
-    }
-  }
-  return undefined;
-}
-
-const EXTRA_ROOT_COUNTRY_KEYS = [
-  'deliveryCountryCode',
-  'exportCountryCode',
-  'destinationCountryCode',
-  'buyerCountryCode',
-  'receiverCountryCode',
-  'microExportCountryCode'
-];
-
-function pickFirstNonTrCountryFromObject(obj: any): string | undefined {
-  if (!obj || typeof obj !== 'object') return undefined;
-  for (const k of EXTRA_ROOT_COUNTRY_KEYS) {
-    const c = pickIsoCountryCode(obj[k]);
-    if (c && c !== 'TR') return c;
-  }
-  return undefined;
-}
-
-function inferFromCountyNameText(...parts: unknown[]): string | undefined {
-  const blob = parts.map(p => String(p || '').toLowerCase()).join(' ');
-  if (!blob) return undefined;
-  if (/bucure|bucharest|cluj|timiso|constan|iasi|brasov|sibiu|craiova|romania|românia|romanya/.test(blob)) return 'RO';
-  return undefined;
-}
-
 /** Senkron tekrar içe almayı engellemek için anahtar (mağaza::pazaryeriSiparişNo::paketId) */
 export function orderImportDismissKey(
   storeName: string,
@@ -111,14 +24,6 @@ export function orderImportDismissKey(
   return `${storeName}::${String(marketplaceOrderId || '')}::${pkg}`;
 }
 
-/** Mikro ihracat / yurt dışı aracılık: invoiceAddress çoğu zaman DSM İstanbul + TR (Trendyol dokümantasyonu) */
-function isTrendyolCrossBorderHubInvoice(fd: any, inv: any): boolean {
-  if (!inv && !fd) return false;
-  if (fd?.micro === true || fd?.is4P === true || fd?.['3pByTrendyol'] === true) return true;
-  const blob = `${inv?.fullAddress || ''} ${inv?.address1 || ''} ${inv?.company || ''}`.toUpperCase();
-  return blob.includes('DSM') && (pickIsoCountryCode(inv?.countryCode) === 'TR' || !inv?.countryCode);
-}
-
 type CountryResolvePayload = {
   countryCode?: string;
   fullData?: any;
@@ -128,25 +33,18 @@ type CountryResolvePayload = {
 };
 
 /**
- * Trendyol getShipmentPackages cevabı: countryCode öncelikli.
- * micro / is4P / 3pByTrendyol siparişlerde sevkiyat+fatura genelde TR (DSM); gerçek ülke için
- * kök ek alanlar, satır para birimi (RON vb.), CEE countyName ve telefon kullanılır.
+ * Yalnızca Trendyol yanıtındaki countryCode / country alanları (tahmin yok).
+ * Öncelik: shipmentAddress → lines[].shipmentAddress → invoiceAddress → paket kökü → kayıtlı order.countryCode.
+ * Mikro ihracatta API çoğu zaman sevkiyat countryCode = TR döner; bu da API ile aynı kalır.
  */
 export function resolveCountryCodeFromPayload(p: CountryResolvePayload): string {
   const fd = p.fullData || {};
   const ship = fd.shipmentAddress;
   const inv = fd.invoiceAddress;
-  const hubInvoice = isTrendyolCrossBorderHubInvoice(fd, inv);
 
-  const rootCode = pickIsoCountryCode(fd.countryCode);
-  const shipCode = pickIsoCountryCode(ship?.countryCode) || pickIsoCountryCode(ship?.country);
-  const invCode = pickIsoCountryCode(inv?.countryCode) || pickIsoCountryCode(inv?.country);
-  const stored = pickIsoCountryCode(p.countryCode);
-
-  const firstLineCountryCode = (): string | undefined => {
-    const lines = fd.lines;
-    if (!Array.isArray(lines)) return undefined;
-    for (const line of lines) {
+  const fromLines = (): string | undefined => {
+    if (!Array.isArray(fd.lines)) return undefined;
+    for (const line of fd.lines) {
       const c =
         pickIsoCountryCode(line?.shipmentAddress?.countryCode) ||
         pickIsoCountryCode(line?.countryCode) ||
@@ -156,42 +54,13 @@ export function resolveCountryCodeFromPayload(p: CountryResolvePayload): string 
     return undefined;
   };
 
-  const lineCode = firstLineCountryCode();
-  const extraRoot = pickFirstNonTrCountryFromObject(fd);
-  const countyHint = inferFromCountyNameText(ship?.countyName, inv?.countyName, ship?.city, inv?.city);
+  const shipCode = pickIsoCountryCode(ship?.countryCode) || pickIsoCountryCode(ship?.country);
+  const lineCode = fromLines();
+  const invCode = pickIsoCountryCode(inv?.countryCode) || pickIsoCountryCode(inv?.country);
+  const rootCode = pickIsoCountryCode(fd.countryCode);
+  const stored = pickIsoCountryCode(p.countryCode);
 
-  if (extraRoot) return extraRoot;
-
-  if (shipCode && shipCode !== 'TR') return shipCode;
-  if (lineCode && lineCode !== 'TR') return lineCode;
-  if (rootCode && rootCode !== 'TR') return rootCode;
-
-  if (hubInvoice) {
-    const curCountry = packLevelCurrencyCountry(fd);
-    if (curCountry) return curCountry;
-    if (countyHint) return countyHint;
-    const phone = String(p.customerPhone || fd.customerPhoneNumber || ship?.phone || inv?.phone || '').replace(/\D/g, '');
-    const fromPhone = inferCountryFromPhoneDigits(phone);
-    if (fromPhone) return fromPhone;
-    if (stored && stored !== 'TR') return stored;
-    return shipCode || lineCode || rootCode || 'TR';
-  }
-
-  if (!hubInvoice) {
-    if (shipCode) return shipCode;
-    if (lineCode) return lineCode;
-    if (rootCode) return rootCode;
-    if (invCode) return invCode;
-    if (stored) return stored;
-  }
-
-  const phone = String(p.customerPhone || fd.customerPhoneNumber || ship?.phone || inv?.phone || '').replace(/\D/g, '');
-  const fromPhone = inferCountryFromPhoneDigits(phone);
-  if (fromPhone) return fromPhone;
-
-  if (!hubInvoice && invCode) return invCode;
-
-  return shipCode || lineCode || rootCode || stored || 'TR';
+  return shipCode || lineCode || invCode || rootCode || stored || 'TR';
 }
 
 export function resolveCargoCompanyFromTrendyolApi(api: any): string {
@@ -437,5 +306,5 @@ export const COUNTRY_LIST = [
 ];
 
 export const isInternationalOrder = (order: Partial<Order>) => {
-    return getEffectiveOrderCountryCode(order as Order) !== 'TR';
+  return getEffectiveOrderCountryCode(order as Order) !== 'TR';
 };

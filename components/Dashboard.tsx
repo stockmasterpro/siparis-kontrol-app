@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { Database, OrderStatus } from '../types';
+import { getEffectiveOrderCountryCode } from '../utils/orderUtils';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { Download, X, Check, Filter, ChevronDown } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -57,17 +58,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   const filteredOrders = useMemo(() => {
     let baseOrders = db.orders.filter(o => !o.isSuspended && o.status !== OrderStatus.CANCELLED);
 
-    // Country Filter
+    // Ülke: yalnızca API'den türetilen countryCode (fullData dahil)
     if (selectedCountries.length > 0) {
       baseOrders = baseOrders.filter(o => {
-        const countryCode = (o.countryCode || '').toUpperCase();
-        const address = (o.deliveryAddress || '').toLowerCase();
-
-        return selectedCountries.some(code => {
-          const countryObj = PRIORITY_COUNTRIES.find(c => c.code === code);
-          const countryName = countryObj ? countryObj.name.toLowerCase() : code.toLowerCase();
-          return countryCode === code || address.includes(countryName);
-        });
+        const codeUpper = getEffectiveOrderCountryCode(o).toUpperCase();
+        return selectedCountries.some(code => codeUpper === code.toUpperCase());
       });
     }
 
@@ -89,14 +84,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       baseReturns = baseReturns.filter(r => {
         const order = db.orders.find(o => o.id === r.orderId);
         if (!order) return false;
-        const countryCode = (order.countryCode || '').toUpperCase();
-        const address = (order.deliveryAddress || '').toLowerCase();
-
-        return selectedCountries.some(code => {
-          const countryObj = PRIORITY_COUNTRIES.find(c => c.code === code);
-          const countryName = countryObj ? countryObj.name.toLowerCase() : code.toLowerCase();
-          return countryCode === code || address.includes(countryName);
-        });
+        const codeUpper = getEffectiveOrderCountryCode(order).toUpperCase();
+        return selectedCountries.some(code => codeUpper === code.toUpperCase());
       });
     }
 
@@ -107,7 +96,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       const d = new Date(r.returnDate);
       return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
     });
-  }, [db.returns, db.orders, selectedMonth, selectedCountries, PRIORITY_COUNTRIES]);
+  }, [db.returns, db.orders, selectedMonth, selectedCountries]);
 
   // GLOBAL STATS (Filtered by month)
   const totalOrders = filteredOrders.length;
@@ -243,13 +232,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
           // Apply Country Filter
           if (selectedCountries.length > 0) {
-            const countryCode = (o.countryCode || '').toUpperCase();
-            const address = (o.deliveryAddress || '').toLowerCase();
-            const isMatch = selectedCountries.some(code => {
-              const countryObj = PRIORITY_COUNTRIES.find(c => c.code === code);
-              const countryName = countryObj ? countryObj.name.toLowerCase() : code.toLowerCase();
-              return countryCode === code || address.includes(countryName);
-            });
+            const codeUpper = getEffectiveOrderCountryCode(o).toUpperCase();
+            const isMatch = selectedCountries.some(code => codeUpper === code.toUpperCase());
             if (!isMatch) return false;
           }
 
@@ -268,7 +252,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       return dayData;
     });
-  }, [chartDays, db.orders, db.apiConfigs, db.returns, selectedMonth, selectedCountries, PRIORITY_COUNTRIES]);
+  }, [chartDays, db.orders, db.apiConfigs, db.returns, selectedMonth, selectedCountries]);
 
   const chartMonths = useMemo(() => {
     const months = [];
@@ -298,13 +282,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
           // Apply Country Filter
           if (selectedCountries.length > 0) {
-            const countryCode = (o.countryCode || '').toUpperCase();
-            const address = (o.deliveryAddress || '').toLowerCase();
-            const isMatch = selectedCountries.some(code => {
-              const countryObj = PRIORITY_COUNTRIES.find(c => c.code === code);
-              const countryName = countryObj ? countryObj.name.toLowerCase() : code.toLowerCase();
-              return countryCode === code || address.includes(countryName);
-            });
+            const codeUpper = getEffectiveOrderCountryCode(o).toUpperCase();
+            const isMatch = selectedCountries.some(code => codeUpper === code.toUpperCase());
             if (!isMatch) return false;
           }
 
@@ -323,7 +302,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       return monthData;
     });
-  }, [chartMonths, db.orders, db.apiConfigs, db.returns, selectedCountries, PRIORITY_COUNTRIES]);
+  }, [chartMonths, db.orders, db.apiConfigs, db.returns, selectedCountries]);
 
   // --- Ay Seçenekleri ---
   const getMonthOptions = () => {
@@ -495,7 +474,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
                     <div className="flex gap-2">
                       <button
                         onClick={() => {
-                          const allCodes = Array.from(new Set([...PRIORITY_COUNTRIES.map(c => c.code), ...db.orders.map(o => o.countryCode).filter(c => c && c !== 'TR')]));
+                          const allCodes = Array.from(new Set([
+                            ...PRIORITY_COUNTRIES.map(c => c.code),
+                            ...db.orders.map(o => getEffectiveOrderCountryCode(o)).filter(c => c && c !== 'TR')
+                          ]));
                           setSelectedCountries(allCodes as string[]);
                         }}
                         className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded hover:bg-blue-200 font-bold"
@@ -538,7 +520,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
                     {/* Diğer Ülkeler */}
                     {db.orders
-                      .map(o => o.countryCode)
+                      .map(o => getEffectiveOrderCountryCode(o))
                       .filter((c, i, a) => c && c !== 'TR' && !PRIORITY_COUNTRIES.some(p => p.code === c) && a.indexOf(c) === i)
                       .map(code => (
                         <label key={code} className="flex items-center gap-3 p-2 hover:bg-blue-50 rounded-lg cursor-pointer transition-colors group">
