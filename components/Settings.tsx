@@ -1095,23 +1095,12 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         </div>
                                         <button
                                             onClick={async () => {
-                                                try {
-                                                    if (window.require) {
-                                                        const { ipcRenderer } = window.require('electron');
-                                                        setNotification({ type: 'success', message: 'Güncelleme kontrolü başlatıldı...' });
-                                                        const result = await ipcRenderer.invoke('check-for-updates');
-                                                        console.log('Update check result:', result);
-                                                        if (result.updateInfo) {
-                                                            setNotification({ type: 'success', message: 'Güncelleme kontrolü tamamlandı.' });
-                                                        } else {
-                                                            setNotification({ type: 'info', message: 'Güncelleme mevcut değil.' });
-                                                        }
-                                                    } else {
-                                                        setNotification({ type: 'error', message: 'Bu özellik sadece masaüstü uygulamasında çalışır.' });
-                                                    }
-                                                } catch (error) {
-                                                    console.error('Update check error:', error);
-                                                    setNotification({ type: 'error', message: 'Güncelleme kontrolü sırasında hata oluştu.' });
+                                                if (window.require) {
+                                                    const { ipcRenderer } = window.require('electron');
+                                                    setNotification({ type: 'success', message: 'Güncelleme kontrolü başlatıldı...' });
+                                                    await ipcRenderer.invoke('check-for-updates');
+                                                } else {
+                                                    setNotification({ type: 'error', message: 'Bu özellik sadece masaüstü uygulamasında çalışır.' });
                                                 }
                                             }}
                                             className="bg-indigo-600 text-white px-6 py-2 rounded flex items-center hover:bg-indigo-700 font-bold shadow-sm"

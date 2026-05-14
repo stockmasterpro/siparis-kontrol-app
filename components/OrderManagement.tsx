@@ -311,9 +311,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         }
     };
 
-    // Background loading and 3-day filter
-    const [showAllOrders, setShowAllOrders] = useState(false); // Filtre verildiğinde tüm siparişleri göster
-    const [backgroundOrders, setBackgroundOrders] = useState<Order[]>([]); // Arka planda tutulan tüm siparişler
+    // Filtre verildiğinde tarih/görünürlük sınırını kapatmak için (liste her zaman db.orders üzerinden)
+    const [showAllOrders, setShowAllOrders] = useState(false);
 
 
     // Handle clicking outside filter dropdown
@@ -601,7 +600,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
 
     const getFilteredOrders = () => {
-        let list = showAllOrders ? backgroundOrders : db.orders;
+        let list = db.orders;
 
         if (activeTab === 'cancelled') {
             // İade alınanları İptal Edilenler sayfasında gösterme
@@ -764,7 +763,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     // Sipariş sayım fonksiyonları
     const getOrderCount = (tab: 'active' | 'cancelled' | 'suspended' | 'returned') => {
-        let list = showAllOrders ? backgroundOrders : db.orders;
+        let list = db.orders;
 
         if (tab === 'cancelled') {
             list = list.filter(o => o.status === OrderStatus.CANCELLED);
@@ -995,7 +994,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 orderDate: data.orderDate ? new Date(new Date(data.orderDate).getTime() - (3 * 3600 * 1000)).toISOString() : order.orderDate,
                 items: (data.lines || data.items || []).map((line: any) => ({
                     orderItemId: line.orderItemId || line.id, // Trendyol order item ID
-                    barcode: line.barcode || 'NO-BARCODE',
+                    barcode: line.barcode || line.stockCode || 'NO-BARCODE',
                     productName: line.productName || line.name || 'Ürün adı mevcut değil',
                     sku: line.merchantSku || line.sku || '',
                     // Varyant bilgilerini Trendyol'dan çek - attributes'dan veya merchantSku'dan

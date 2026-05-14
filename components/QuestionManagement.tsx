@@ -10,10 +10,9 @@ interface QuestionManagementProps {
     db: Database;
     onUpdateDB: (newDB: Database | ((prev: Database) => Database)) => void;
     onSyncNow?: () => Promise<void>;
-    setNotification?: (notification: { type: 'success' | 'error' | 'info', message: string }) => void;
 }
 
-export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUpdateDB, onSyncNow, setNotification }) => {
+export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUpdateDB, onSyncNow }) => {
     const [activeTab, setActiveTab] = useState<'questions' | 'quick-answers'>('questions');
     const [searchTerm, setSearchTerm] = useState('');
     const [currentPage, setCurrentPage] = useState(1);
@@ -22,6 +21,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
     const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
     const [answerText, setAnswerText] = useState('');
     const [isAnswering, setIsAnswering] = useState(false);
+    const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
     const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
     const [storeFilter, setStoreFilter] = useState<string>('all');
     const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
@@ -51,26 +51,14 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
 
     const openProductLink = async (url?: string) => {
         const target = (url || '').trim();
-        console.log('openProductLink called with:', target);
-        
-        if (!target) {
-            console.log('No URL provided, showing notification');
-            if (setNotification) {
-                setNotification({ type: 'error', message: 'Bu soru için ürün linki bulunmuyor.' });
-            }
-            return;
-        }
-        
+        if (!target) return;
         try {
             if (window.electron?.openExternal) {
-                console.log('Using electron.openExternal for:', target);
                 await window.electron.openExternal(target);
             } else {
-                console.log('Using window.open for:', target);
                 window.open(target, '_blank', 'noreferrer');
             }
-        } catch (error) {
-            console.error('Error opening product link:', error);
+        } catch {
             window.open(target, '_blank', 'noreferrer');
         }
     };
@@ -155,7 +143,40 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                 setSelectedQuestion(null);
             }
         } catch (error: any) {
-            setNotification({ type: 'error', message: error.message || 'Cevap gönderilirken bir hata oluştu.' });
+            const msg = String(error?.message || '');
+            const alreadyAnswered =
+                /\b400\b|daha önce\s+cevaplandı|zaten\s+cevaplanmış|already\s+answered/i.test(msg);
+
+            if (alreadyAnswered && selectedQuestion) {
+                const qid = selectedQuestion.id;
+                const currentIndex = filteredQuestions.findIndex(q => q.id === qid);
+                const nextFromList =
+                    filteredQuestions[currentIndex + 1] || filteredQuestions[currentIndex - 1] || null;
+
+                onUpdateDB(prev => ({
+                    ...prev,
+                    questions: (prev.questions || []).map(q =>
+                        q.id === qid
+                            ? { ...q, status: QuestionStatus.ANSWERED, answer: q.answer || answerText.trim() }
+                            : q
+                    )
+                }));
+
+                setAnswerText('');
+                setSelectedQuestion(nextFromList && nextFromList.id !== qid ? nextFromList : null);
+                setNotification({
+                    type: 'success',
+                    message:
+                        'Bu soru başka panelden veya önceden cevaplanmış. Yerel listeden kaldırıldı; liste senkronize ediliyor.'
+                });
+                try {
+                    await onSyncNow?.();
+                } catch {
+                    /* senkron isteğe bağlı */
+                }
+            } else {
+                setNotification({ type: 'error', message: msg || 'Cevap gönderilirken bir hata oluştu.' });
+            }
         } finally {
             setIsAnswering(false);
         }
@@ -566,7 +587,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                                 </div>
                                                 <div className="flex items-start justify-between gap-3 mb-1">
                                                     <h4 className="text-base font-extrabold text-gray-900 leading-tight">{selectedQuestion.productName}</h4>
-                                                    <button
+                                                    {selectedQuestion.productUrl && (
+                                                        <button
                                                             onClick={() => openProductLink(selectedQuestion.productUrl)}
                                                             className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-blue-200 text-blue-700 text-xs font-extrabold hover:bg-blue-50 transition-colors shadow-sm"
                                                             title="Ürün sayfasını tarayıcıda aç"
@@ -574,6 +596,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                                             <ExternalLink size={14} />
                                                             Ürüne Git
                                                         </button>
+                                                    )}
                                                 </div>
                                                 <div className="flex items-center gap-3 mb-4">
                                                     <div className="flex items-center gap-1.5">
@@ -657,7 +680,15 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                         </div>
                     )}
 
-                    
+                    {notification && (
+                        <div className={`fixed bottom-4 right-4 p-4 rounded-xl shadow-xl z-50 animate-in slide-in-from-right duration-300 ${notification.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>
+                            <div className="flex items-center space-x-2">
+                                {notification.type === 'success' ? <CheckCircle size={20} /> : <AlertTriangle size={20} />}
+                                <span className="text-sm font-bold">{notification.message}</span>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Bulk Answer Modal */}
                     {isBulkModalOpen && (
                         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4 backdrop-blur-sm">

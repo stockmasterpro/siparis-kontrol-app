@@ -1164,6 +1164,74 @@ export const syncMarketplaceOrders = async (
     }
   }
 
+  // Aynı sipariş numarası + mağaza için birden fazla paket kaydı varsa: tüm kalemlerde barkod
+  // sistemde tanımlı değilse siparişin hiçbir paketini aktif sayfada bırakma (askıya al);
+  // yanlışlıkla stok düşülmüş aktif paket varsa stoğu iade et.
+  const itemBarcodeResolved = (barcode: string) =>
+    Boolean(
+      barcode &&
+        barcode !== 'NO-BARCODE' &&
+        currentDbProducts.some(p => p.variants.some(v => v.barcode === barcode))
+    );
+
+  const orderGroups = new Map<string, typeof currentDbOrders>();
+  for (const o of currentDbOrders) {
+    if (o.id.includes('_OLD_')) continue;
+    const key = `${o.storeName}::${o.marketplaceOrderId || ''}`;
+    if (!orderGroups.has(key)) orderGroups.set(key, []);
+    orderGroups.get(key)!.push(o);
+  }
+
+  for (const siblings of orderGroups.values()) {
+    if (siblings.length < 2) continue;
+
+    const mergedItems = siblings.flatMap(o => o.items || []);
+    const groupOk =
+      mergedItems.length === 0 ||
+      mergedItems.every(it => itemBarcodeResolved(String(it.barcode || '')));
+
+    if (groupOk) continue;
+
+    for (const o of siblings) {
+      if (o.status === OrderStatus.CANCELLED) continue;
+
+      if (!o.isSuspended) {
+        o.items.forEach(item => {
+          const product = currentDbProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
+          if (product) {
+            const variant = product.variants.find(v => v.barcode === item.barcode);
+            if (variant) {
+              const whId = Object.keys(variant.stocks)[0] || 'wh1';
+              const currentStock = variant.stocks[whId] || 0;
+              const newStock = currentStock + item.quantity;
+
+              const result = updateLocalStockWithConsistency(
+                currentDbProducts,
+                product.id,
+                variant.color,
+                variant.size,
+                whId,
+                newStock
+              );
+              currentDbProducts = result.updatedProducts;
+
+              const updatedProduct = currentDbProducts.find(p => p.id === product.id);
+              if (updatedProduct) {
+                updatedProduct.variants.forEach(pv => {
+                  if (pv.barcode) {
+                    const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + b, 0);
+                    barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                  }
+                });
+              }
+            }
+          }
+        });
+      }
+      o.isSuspended = true;
+    }
+  }
+
   return {
     updatedProducts: currentDbProducts,
     updatedOrders: currentDbOrders,
@@ -1221,17 +1289,6 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
 
       const questions = items.map((item: any) => {
         const questionImageUrl = item.imageUrl || (item.imageUrls && item.imageUrls.length > 0 ? item.imageUrls[0] : '');
-        
-        // Try to get product image from product URL if main image is empty
-        let productImageUrl = item.productMainImageUrl || '';
-        if (!productImageUrl && item.productUrl) {
-          // Extract product ID from URL to construct image URL
-          const urlMatch = item.productUrl.match(/\/p-(\d+)/);
-          if (urlMatch && urlMatch[1]) {
-            const productId = urlMatch[1];
-            productImageUrl = `https://cdn.dsmcdn.com/mnresize/1200/1800/ty${productId}/product_main_images/${productId}_1.jpg`;
-          }
-        }
 
         return {
           id: `${config.storeName}_${item.id}`,
@@ -1242,8 +1299,8 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
           userName: item.userName || 'Müşteri',
           createdDate: item.createdDate ? new Date(item.createdDate).toISOString() : new Date().toISOString(), // Trendyol returns timestamp in ms
           productName: item.productName || 'Bilinmeyen Ürün',
-          productImageUrl: productImageUrl,
-          productUrl: item.webUrl || item.productUrl || '',
+          productImageUrl: item.productMainImageUrl || '',
+          productUrl: item.productUrl || '',
           storeName: config.storeName,
           isPublic: item.public || false,
           questionImageUrl: questionImageUrl
