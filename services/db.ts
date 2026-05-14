@@ -234,7 +234,7 @@ export const loadDB = (): Database => {
 
   if (!stored) {
     localDb = INITIAL_DB;
-    saveDB(INITIAL_DB);
+    void saveDB(INITIAL_DB);
   } else {
     try {
       const parsed = JSON.parse(stored);
@@ -242,7 +242,7 @@ export const loadDB = (): Database => {
     } catch (error) {
       console.error('Veritabanı yükleme hatası:', error);
       localDb = INITIAL_DB;
-      saveDB(INITIAL_DB);
+      void saveDB(INITIAL_DB);
     }
   }
 
@@ -352,66 +352,63 @@ export const migrateProductImages = async (db: Database): Promise<Database> => {
   return db;
 };
 
-export const saveDB = (db: Database) => {
+export const saveDB = async (db: Database): Promise<void> => {
   // 1. Sync small session data to localStorage
   const sessionData = { currentUser: db.currentUser };
   localStorage.setItem(DB_KEY, JSON.stringify(sessionData));
   window.dispatchEvent(new Event('storage'));
 
   // 2. Save to SQLite via IPC
-  if (window.require) {
-    const { ipcRenderer } = window.require('electron');
+  if (!window.require) return;
 
-    return (async () => {
-      try {
-        const ops = [];
+  const { ipcRenderer } = window.require('electron');
 
-        // Settings (Incremental)
-        Object.entries(db.settings).forEach(([k, v]) => {
-          ops.push({ query: 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', params: [k, JSON.stringify(v)] });
-        });
+  try {
+    const ops: { query: string; params?: unknown[] }[] = [];
 
-        // API Configs
-        db.apiConfigs.forEach(c => {
-          ops.push({ query: 'INSERT OR REPLACE INTO api_configs (id, data) VALUES (?, ?)', params: [c.id || c.storeName, JSON.stringify(c)] });
-        });
+    // Settings (Incremental)
+    Object.entries(db.settings).forEach(([k, v]) => {
+      ops.push({ query: 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', params: [k, JSON.stringify(v)] });
+    });
 
-        // Warehouses
-        db.warehouses.forEach(w => {
-          ops.push({ query: 'INSERT OR REPLACE INTO warehouses (id, name) VALUES (?, ?)', params: [w.id, w.name] });
-        });
+    // API Configs
+    db.apiConfigs.forEach(c => {
+      ops.push({ query: 'INSERT OR REPLACE INTO api_configs (id, data) VALUES (?, ?)', params: [c.id || c.storeName, JSON.stringify(c)] });
+    });
 
-        // Products (This is still a bit heavy, but SQLite handles it better than JSON write)
-        db.products.forEach(p => {
-          ops.push({
-            query: 'INSERT OR REPLACE INTO products (id, productCode, name, brand, "group", date, data) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            params: [p.id, p.productCode, p.name, p.brand, p.group, p.date, JSON.stringify(p)]
-          });
-        });
+    // Warehouses
+    db.warehouses.forEach(w => {
+      ops.push({ query: 'INSERT OR REPLACE INTO warehouses (id, name) VALUES (?, ?)', params: [w.id, w.name] });
+    });
 
-        // Orders
-        db.orders.forEach(o => {
-          ops.push({
-            query: 'INSERT OR REPLACE INTO orders (id, marketplaceOrderId, storeName, status, customerName, deliveryAddress, cargoCode, orderDate, isSuspended, shipmentPackageId, countryCode, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            params: [o.id, o.marketplaceOrderId, o.storeName, o.status, o.customerName, o.deliveryAddress, o.cargoCode, o.orderDate, o.isSuspended ? 1 : 0, o.shipmentPackageId, o.countryCode, JSON.stringify(o)]
-          });
-        });
+    // Products (This is still a bit heavy, but SQLite handles it better than JSON write)
+    db.products.forEach(p => {
+      ops.push({
+        query: 'INSERT OR REPLACE INTO products (id, productCode, name, brand, "group", date, data) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        params: [p.id, p.productCode, p.name, p.brand, p.group, p.date, JSON.stringify(p)]
+      });
+    });
 
-        // Questions, Returns
-        // v1.4.2: Wipe actions-needed tables before re-inserting to prevent ghost records
-        ops.push({ query: 'DELETE FROM questions', params: [] });
-        ops.push({ query: 'DELETE FROM return_claims', params: [] });
+    // Orders
+    db.orders.forEach(o => {
+      ops.push({
+        query: 'INSERT OR REPLACE INTO orders (id, marketplaceOrderId, storeName, status, customerName, deliveryAddress, cargoCode, orderDate, isSuspended, shipmentPackageId, countryCode, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        params: [o.id, o.marketplaceOrderId, o.storeName, o.status, o.customerName, o.deliveryAddress, o.cargoCode, o.orderDate, o.isSuspended ? 1 : 0, o.shipmentPackageId, o.countryCode, JSON.stringify(o)]
+      });
+    });
 
-        db.questions.forEach(q => ops.push({ query: 'INSERT OR REPLACE INTO questions (id, data) VALUES (?, ?)', params: [q.id, JSON.stringify(q)] }));
-        db.returns.forEach(r => ops.push({ query: 'INSERT OR REPLACE INTO returns (id, data) VALUES (?, ?)', params: [r.id, JSON.stringify(r)] }));
-        db.returnClaims.forEach(rc => ops.push({ query: 'INSERT OR REPLACE INTO return_claims (id, data) VALUES (?, ?)', params: [rc.id, JSON.stringify(rc)] }));
+    // Questions, Returns
+    // v1.4.2: Wipe actions-needed tables before re-inserting to prevent ghost records
+    ops.push({ query: 'DELETE FROM questions', params: [] });
+    ops.push({ query: 'DELETE FROM return_claims', params: [] });
 
-        await ipcRenderer.invoke('sqlite-transaction', ops);
-        // console.log('[DB-SAVE] SQLite transaction completed');
-      } catch (err) {
-        console.error('[DB-SAVE] SQLite error:', err);
-      }
-    })();
+    db.questions.forEach(q => ops.push({ query: 'INSERT OR REPLACE INTO questions (id, data) VALUES (?, ?)', params: [q.id, JSON.stringify(q)] }));
+    db.returns.forEach(r => ops.push({ query: 'INSERT OR REPLACE INTO returns (id, data) VALUES (?, ?)', params: [r.id, JSON.stringify(r)] }));
+    db.returnClaims.forEach(rc => ops.push({ query: 'INSERT OR REPLACE INTO return_claims (id, data) VALUES (?, ?)', params: [rc.id, JSON.stringify(rc)] }));
+
+    await ipcRenderer.invoke('sqlite-transaction', ops);
+  } catch (err) {
+    console.error('[DB-SAVE] SQLite error:', err);
   }
 };
 

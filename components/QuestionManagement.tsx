@@ -51,16 +51,34 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
 
     const openProductLink = async (url?: string) => {
         const target = (url || '').trim();
-        if (!target) return;
+        if (!target) {
+            setNotification({ type: 'error', message: 'Ürün sayfası linki bulunamadı. Soruları yeniden senkronize edin.' });
+            return;
+        }
         try {
+            if (window.require) {
+                const { ipcRenderer } = window.require('electron');
+                const ok = await ipcRenderer.invoke('open-external', target);
+                if (ok) return;
+            }
             if (window.electron?.openExternal) {
                 await window.electron.openExternal(target);
-            } else {
-                window.open(target, '_blank', 'noreferrer');
+                return;
             }
+            window.open(target, '_blank', 'noreferrer');
         } catch {
             window.open(target, '_blank', 'noreferrer');
         }
+    };
+
+    const trendyolFallbackProductUrl = (contentId: string) =>
+        contentId ? `https://www.trendyol.com/urun/-p-${encodeURIComponent(contentId)}` : '';
+
+    const resolveQuestionProductPageUrl = (q: Question): string => {
+        const direct = (q.webUrl || q.productUrl || '').trim();
+        if (direct) return direct;
+        const id = (q.productContentId || '').trim();
+        return id ? trendyolFallbackProductUrl(id) : '';
     };
 
     const itemsPerPage = 25;
@@ -404,7 +422,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
-                                {paginatedQuestions.map((q) => (
+                                {paginatedQuestions.map((q) => {
+                                    const qProductUrl = resolveQuestionProductPageUrl(q);
+                                    return (
                                     <tr key={q.id} className={`hover:bg-gray-50 transition-colors group ${selectedQuestionIds.has(q.id) ? 'bg-blue-50' : ''}`}>
                                         <td className="px-4 py-4">
                                             <input
@@ -442,11 +462,14 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                                 </div>
                                                 <div className="flex flex-col">
                                                     <span className="text-xs font-medium text-gray-800 line-clamp-1">{q.productName}</span>
-                                                    {q.productUrl && (
-                                                        <a href={q.productUrl} target="_blank" rel="noreferrer" className="text-[10px] text-blue-600 hover:underline flex items-center">
-                                                            Görüntüle <ExternalLink size={8} className="ml-1" />
-                                                        </a>
-                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openProductLink(qProductUrl)}
+                                                        disabled={!qProductUrl}
+                                                        className={`text-[10px] flex items-center text-left ${qProductUrl ? 'text-blue-600 hover:underline' : 'text-gray-400 cursor-not-allowed'}`}
+                                                    >
+                                                        Ürüne Git <ExternalLink size={8} className="ml-1" />
+                                                    </button>
                                                 </div>
                                             </div>
                                         </td>
@@ -477,7 +500,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                             )}
                                         </td>
                                     </tr>
-                                ))}
+                                    );
+                                })}
                             </tbody>
                         </table>
 
@@ -527,7 +551,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                     )}
 
                     {/* Answer Modal */}
-                    {selectedQuestion && (
+                    {selectedQuestion && (() => {
+                        const productPageUrl = resolveQuestionProductPageUrl(selectedQuestion);
+                        return (
                         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
                             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
                                 <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-4 text-white flex justify-between items-center">
@@ -585,18 +611,22 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                                     </span>
                                                     <span className="text-[10px] text-gray-400 font-mono">#{selectedQuestion.marketplaceQuestionId}</span>
                                                 </div>
-                                                <div className="flex items-start justify-between gap-3 mb-1">
-                                                    <h4 className="text-base font-extrabold text-gray-900 leading-tight">{selectedQuestion.productName}</h4>
-                                                    {selectedQuestion.productUrl && (
-                                                        <button
-                                                            onClick={() => openProductLink(selectedQuestion.productUrl)}
-                                                            className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-blue-200 text-blue-700 text-xs font-extrabold hover:bg-blue-50 transition-colors shadow-sm"
-                                                            title="Ürün sayfasını tarayıcıda aç"
-                                                        >
-                                                            <ExternalLink size={14} />
-                                                            Ürüne Git
-                                                        </button>
-                                                    )}
+                                                <div className="mb-1 flex flex-wrap items-start justify-between gap-2">
+                                                    <h4 className="text-base font-extrabold text-gray-900 leading-tight flex-1 min-w-0">{selectedQuestion.productName}</h4>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openProductLink(productPageUrl)}
+                                                        disabled={!productPageUrl}
+                                                        className={`shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-extrabold transition-colors shadow-sm ${
+                                                            productPageUrl
+                                                                ? 'bg-white border-blue-200 text-blue-700 hover:bg-blue-50'
+                                                                : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                                                        }`}
+                                                        title={productPageUrl ? 'Ürün sayfasını varsayılan tarayıcıda aç' : 'Ürün linki yok — soruları yenileyin'}
+                                                    >
+                                                        <ExternalLink size={14} />
+                                                        Ürüne Git
+                                                    </button>
                                                 </div>
                                                 <div className="flex items-center gap-3 mb-4">
                                                     <div className="flex items-center gap-1.5">
@@ -616,12 +646,28 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                     </div>
 
                                     <div>
-                                        <label className="block text-sm font-bold text-gray-700 mb-2 flex justify-between">
-                                            Cevabınız
-                                            <span className={`text-xs ${answerText.length >= 10 && answerText.length <= 2000 ? 'text-green-600' : 'text-red-500'}`}>
-                                                {answerText.length} / 2000
-                                            </span>
-                                        </label>
+                                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                            <label className="text-sm font-bold text-gray-700">Cevabınız</label>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => openProductLink(productPageUrl)}
+                                                    disabled={!productPageUrl}
+                                                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-bold transition-colors ${
+                                                        productPageUrl
+                                                            ? 'bg-blue-50 border-blue-200 text-blue-800 hover:bg-blue-100'
+                                                            : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                                                    }`}
+                                                    title={productPageUrl ? 'Ürün sayfasını varsayılan tarayıcıda aç' : 'Ürün linki yok'}
+                                                >
+                                                    <ExternalLink size={14} />
+                                                    Ürüne Git
+                                                </button>
+                                                <span className={`text-xs ${answerText.length >= 10 && answerText.length <= 2000 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {answerText.length} / 2000
+                                                </span>
+                                            </div>
+                                        </div>
                                         <textarea
                                             className="w-full border-2 border-gray-200 rounded-xl p-4 text-sm focus:border-blue-500 focus:ring-0 outline-none transition-colors h-40 resize-none"
                                             placeholder="Cevabınızı buraya yazın..."
@@ -678,7 +724,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                 </div>
                             </div>
                         </div>
-                    )}
+                        );
+                    })()}
 
                     {notification && (
                         <div className={`fixed bottom-4 right-4 p-4 rounded-xl shadow-xl z-50 animate-in slide-in-from-right duration-300 ${notification.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>

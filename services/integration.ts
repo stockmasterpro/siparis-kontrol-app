@@ -734,6 +734,7 @@ export const createRealOrder = async (
  * Fetches new orders, updates statuses, and reconciles stock.
  * 
  * @param db Current database state
+ * @param isManual true = kullanıcı "Manuel Sipariş Çek" (otomatik sipariş çekme ayarından bağımsız); false = arka plan zamanlayıcı
  * @returns Updated products and orders, and counts of new items
  */
 export const syncMarketplaceOrders = async (
@@ -1261,6 +1262,133 @@ async function getProductImageFromUrl(url: string): Promise<string> {
   }
 }
 
+/**
+ * Trendyol Q&A yanıtında ürün linki farklı alan adlarıyla gelebilir.
+ */
+function pickQuestionProductPageUrl(item: any): string {
+  const tryStr = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  const keys = [
+    'webUrl',
+    'WebUrl',
+    'productUrl',
+    'ProductUrl',
+    'productPageUrl',
+    'productLink',
+    'productWebUrl',
+    'link',
+    'url',
+    'deepLink',
+    'deeplink',
+    'mobileWebUrl',
+    'webLink'
+  ];
+  for (const k of keys) {
+    const u = tryStr(item?.[k]);
+    if (u) return u;
+  }
+  const prod = item?.product;
+  if (prod && typeof prod === 'object') {
+    for (const k of keys) {
+      const u = tryStr(prod[k]);
+      if (u) return u;
+    }
+  }
+  return '';
+}
+
+function pickQuestionProductContentId(item: any): string {
+  const tryId = (v: unknown) => {
+    if (v === undefined || v === null) return '';
+    return String(v).trim();
+  };
+  const candidates = [
+    item?.productContentId,
+    item?.contentId,
+    item?.productMainId,
+    item?.productId,
+    item?.productMainid,
+    item?.listingId,
+    item?.product?.contentId,
+    item?.product?.id,
+    item?.product?.productId,
+    item?.product?.productMainId,
+    item?.product?.listingId
+  ];
+  for (const c of candidates) {
+    const id = tryId(c);
+    if (id) return id;
+  }
+  return '';
+}
+
+function trendyolPublicProductUrlFromContentId(contentId: string): string {
+  if (!contentId) return '';
+  return `https://www.trendyol.com/urun/-p-${encodeURIComponent(contentId)}`;
+}
+
+/** Müşterinin sorduğu anın zamanı (senkron zamanı değil). */
+function parseTrendyolQuestionTimestamp(raw: unknown): string {
+  if (raw === undefined || raw === null) return '';
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || raw <= 0) return '';
+    let ms = raw;
+    // saniye cinsinden epoch (10 hane) vs milisaniye (13 hane)
+    if (ms < 1e12) ms = ms * 1000;
+    const d = new Date(ms);
+    if (isNaN(d.getTime())) return '';
+    const y = d.getUTCFullYear();
+    if (y < 2018 || y > 2035) return '';
+    return d.toISOString();
+  }
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return '';
+    const asNum = Number(trimmed);
+    if (!isNaN(asNum) && trimmed === String(asNum)) {
+      return parseTrendyolQuestionTimestamp(asNum);
+    }
+    const d = new Date(trimmed);
+    if (isNaN(d.getTime())) return '';
+    const y = d.getUTCFullYear();
+    if (y < 2018 || y > 2035) return '';
+    return d.toISOString();
+  }
+  return '';
+}
+
+function pickQuestionAskedAtIso(item: any): string {
+  const keys = [
+    'createdDate',
+    'CreatedDate',
+    'creationDate',
+    'CreationDate',
+    'questionDate',
+    'QuestionDate',
+    'askedDate',
+    'AskedDate',
+    'createDate',
+    'CreateDate',
+    'createdAt',
+    'CreatedAt',
+    'questionCreatedDate',
+    'customerQuestionDate',
+    'questionTime',
+    'date'
+  ];
+  for (const k of keys) {
+    const iso = parseTrendyolQuestionTimestamp(item?.[k]);
+    if (iso) return iso;
+  }
+  const nested = item?.question;
+  if (nested && typeof nested === 'object') {
+    for (const k of keys) {
+      const iso = parseTrendyolQuestionTimestamp(nested[k]);
+      if (iso) return iso;
+    }
+  }
+  return '';
+}
+
 export const syncMarketplaceQuestions = async (config: ApiConfig, status?: QuestionStatus): Promise<Question[]> => {
   if (config.isQuestionSyncEnabled === false) {
     console.log(`[QUESTION-SYNC-SKIP] ${config.storeName} için soru çekme devre dışı.`);
@@ -1287,8 +1415,25 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
       const data = await response.json();
       const items = data.content || [];
 
+      const normalizeQuestionImageUrl = (raw: unknown): string => {
+        const u = typeof raw === 'string' ? raw.trim() : '';
+        if (!u) return '';
+        if (u.startsWith('//')) return `https:${u}`;
+        if (u.startsWith('http://') || u.startsWith('https://')) return u;
+        return `https://cdn.dsmcdn.com${u.startsWith('/') ? '' : '/'}${u}`;
+      };
+
       const questions = items.map((item: any) => {
         const questionImageUrl = item.imageUrl || (item.imageUrls && item.imageUrls.length > 0 ? item.imageUrls[0] : '');
+        const directUrl = pickQuestionProductPageUrl(item);
+        const contentId = pickQuestionProductContentId(item);
+        const fallbackUrl = !directUrl && contentId ? trendyolPublicProductUrlFromContentId(contentId) : '';
+        const resolvedPageUrl = directUrl || fallbackUrl;
+
+        const productImg =
+          normalizeQuestionImageUrl(item.imageUrl) ||
+          normalizeQuestionImageUrl(item.productMainImageUrl) ||
+          '';
 
         return {
           id: `${config.storeName}_${item.id}`,
@@ -1297,23 +1442,16 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
           answer: item.answer?.text || '',
           status: (item.status as QuestionStatus) || QuestionStatus.WAITING_FOR_ANSWER,
           userName: item.userName || 'Müşteri',
-          createdDate: item.createdDate ? new Date(item.createdDate).toISOString() : new Date().toISOString(), // Trendyol returns timestamp in ms
+          createdDate: pickQuestionAskedAtIso(item),
           productName: item.productName || 'Bilinmeyen Ürün',
-          productImageUrl: item.productMainImageUrl || '',
-          productUrl: item.productUrl || '',
+          productImageUrl: productImg,
+          productUrl: resolvedPageUrl,
+          webUrl: directUrl || undefined,
+          productContentId: contentId || undefined,
           storeName: config.storeName,
           isPublic: item.public || false,
-          questionImageUrl: questionImageUrl
+          questionImageUrl: normalizeQuestionImageUrl(questionImageUrl)
         };
-      });
-
-      // Background backfill for missing images
-      questions.forEach(q => {
-        if (!q.productImageUrl && q.productUrl) {
-          getProductImageFromUrl(q.productUrl).then(img => {
-            if (img) q.productImageUrl = img;
-          });
-        }
       });
 
       return questions;

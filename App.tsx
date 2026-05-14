@@ -203,7 +203,8 @@ const App: React.FC = () => {
 
 
   const handleUpdateDB = async (newDB: Database | ((prev: Database) => Database)) => {
-    // Functional update logic to avoid race conditions
+    let dbToSave: Database | null = null;
+
     setDB(prev => {
       if (!prev) return prev;
 
@@ -218,11 +219,13 @@ const App: React.FC = () => {
         dbToUpdate.currentUser = DEFAULT_ADMIN;
       }
 
-      // Dosyaya kaydet
-      saveDB(dbToUpdate);
-
+      dbToSave = dbToUpdate;
       return dbToUpdate;
     });
+
+    if (dbToSave) {
+      await saveDB(dbToSave);
+    }
   };
 
   // Fetch real time from online API
@@ -537,7 +540,14 @@ const App: React.FC = () => {
           pq.marketplaceQuestionId === newQ.marketplaceQuestionId &&
           pq.status === QuestionStatus.ANSWERED
         );
-        return localMatched ? localMatched : newQ;
+        if (localMatched) return localMatched;
+
+        const prevSame = prevQuestions.find(pq => pq.marketplaceQuestionId === newQ.marketplaceQuestionId);
+        const mergedDate =
+          (newQ.createdDate && String(newQ.createdDate).trim()) ||
+          (prevSame?.createdDate && String(prevSame.createdDate).trim()) ||
+          '';
+        return { ...newQ, createdDate: mergedDate };
       });
       return { ...prev, questions: updatedQuestions };
     });
@@ -706,7 +716,11 @@ const App: React.FC = () => {
       }
     };
 
-    if (db?.settings.enableAutoOrderFetch && db?.settings.autoFetchIntervalMinutes > 0) {
+    const intervalMinutesRaw = Number(db?.settings?.autoFetchIntervalMinutes);
+    const intervalMinutes =
+      Number.isFinite(intervalMinutesRaw) && intervalMinutesRaw > 0 ? intervalMinutesRaw : 5;
+
+    if (db?.settings.enableAutoOrderFetch) {
       const initialTimer = setTimeout(() => {
         performBackgroundSync();
         checkTrialStatus();
@@ -715,14 +729,14 @@ const App: React.FC = () => {
       backgroundInterval = setInterval(() => {
         performBackgroundSync();
         checkTrialStatus();
-      }, db.settings.autoFetchIntervalMinutes * 60 * 1000);
+      }, intervalMinutes * 60 * 1000);
 
       return () => {
         clearTimeout(initialTimer);
         if (backgroundInterval) clearInterval(backgroundInterval);
       };
     }
-  }, [db?.settings.enableAutoOrderFetch, db?.settings.autoFetchIntervalMinutes, db?.apiConfigs.length]);
+  }, [db?.settings.enableAutoOrderFetch, db?.settings.autoFetchIntervalMinutes, db?.apiConfigs.length]); // interval NaN/0 iken 5 dk varsayılır
 
   // Question Sync Background Service
   useEffect(() => {
@@ -810,7 +824,7 @@ const App: React.FC = () => {
           // CurrentUser'ı null yap ama diğer verileri koru - handleUpdateDB güvenliğini aşmak için doğrudan setDB/saveDB kullan
           const newDB = { ...db, currentUser: null };
           setDB(newDB);
-          saveDB(newDB);
+          void saveDB(newDB);
 
           // Bildirim göster
           if (db.settings.notifications?.systemNotification) {
@@ -861,11 +875,11 @@ const App: React.FC = () => {
       if (data.users.length === 0) {
         const adminDB = { ...data, currentUser: DEFAULT_ADMIN };
         setDB(adminDB);
-        saveDB(adminDB);
+        await saveDB(adminDB);
       } else if (data.currentUser) {
         const clearedDB = { ...data, currentUser: null };
         setDB(clearedDB);
-        saveDB(clearedDB);
+        await saveDB(clearedDB);
       }
     };
 
@@ -896,7 +910,7 @@ const App: React.FC = () => {
     // Directly update DB without using handleUpdateDB to avoid currentUser protection
     const newDB = { ...db, currentUser: db.users.length === 0 ? DEFAULT_ADMIN : null };
     setDB(newDB);
-    saveDB(newDB);
+    void saveDB(newDB);
 
     // Eğer kullanıcı varsa login sayfasına git, yoksa dashboard'a (DEFAULT_ADMIN ile)
     setPage('dashboard');
@@ -1160,7 +1174,12 @@ const App: React.FC = () => {
     return {
       active: activeCount,
       cancelled: db.orders.filter(o => o.status === OrderStatus.CANCELLED && new Date(o.orderDate) >= thresholdDate).length,
-      suspended: db.orders.filter(o => o.isSuspended && new Date(o.orderDate) >= thresholdDate).length,
+      suspended: db.orders.filter(
+        o =>
+          o.isSuspended &&
+          (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING) &&
+          new Date(o.orderDate) >= thresholdDate
+      ).length,
       returned: db.returns.filter(r => new Date(r.returnDate) >= thresholdDate).length,
       newQuestions: (db.questions || []).filter(q => q.status === QuestionStatus.WAITING_FOR_ANSWER).length,
       returnClaims: (db.returnClaims || []).length

@@ -127,10 +127,14 @@ export interface Question {
   productName: string;
   productImageUrl: string;
   productUrl?: string;
+  /** Pazaryeri ürün sayfası (API: webUrl) */
+  webUrl?: string;
   storeName: string;
   marketplaceQuestionId: string;
   isPublic?: boolean;
   questionImageUrl?: string; // Müşterinin eklediği görsel
+  /** Pazaryeri ürün içerik kimliği (URL yoksa yedek link için) */
+  productContentId?: string;
 }
 
 export interface ReturnClaim {

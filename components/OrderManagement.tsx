@@ -12,7 +12,7 @@ const uuid = () => Math.random().toString(36).substr(2, 9);
 
 interface Props {
     db: Database;
-    updateDB: (newDB: Database | ((prev: Database) => Database)) => void;
+    updateDB: (newDB: Database | ((prev: Database) => Database)) => void | Promise<void>;
     userRole: UserRole;
     activeTab: 'active' | 'cancelled' | 'suspended' | 'returned';
     onTabChange: (tab: 'active' | 'cancelled' | 'suspended' | 'returned') => void;
@@ -83,7 +83,10 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     const [orderSearch, setOrderSearch] = useState('');
     const [customerSearch, setCustomerSearch] = useState('');
     const [barcodeSearch, setBarcodeSearch] = useState('');
-    const [storeSearch, setStoreSearch] = useState('');
+    const [productNameSearch, setProductNameSearch] = useState('');
+    const [selectedStores, setSelectedStores] = useState<string[]>([]);
+    const [storeFilterOpen, setStoreFilterOpen] = useState(false);
+    const storeDropdownRef = useRef<HTMLDivElement>(null);
     const [cargoSearch, setCargoSearch] = useState('');
     const [sellerSearch, setSellerSearch] = useState('');
     const [stockSearch, setStockSearch] = useState('');
@@ -133,12 +136,14 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 searchTerm === '' &&
                 orderSearch === '' &&
                 customerSearch === '' &&
-                storeSearch === '' &&
+                productNameSearch === '' &&
+                selectedStores.length === 0 &&
                 cargoSearch === '' &&
                 skuSearch === '' &&
                 dateFilterStart === '' &&
                 dateFilterEnd === '' &&
                 printedFilter === 'all' &&
+                selectedCountries.length === 0 &&
                 selectedStatuses.length === 2 &&
                 selectedStatuses.includes(OrderStatus.NEW) &&
                 selectedStatuses.includes(OrderStatus.PROCESSING);
@@ -161,7 +166,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         searchTerm,
         orderSearch,
         customerSearch,
-        storeSearch,
+        productNameSearch,
+        selectedStores,
+        selectedCountries,
         cargoSearch,
         skuSearch,
         dateFilterStart,
@@ -171,10 +178,10 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         db.orders // db değişirse de güncelle
     ]);
 
-    // Reset page on tab change
+    // Reset page on tab or filter change
     useEffect(() => {
         setCurrentPage(1);
-    }, [activeTab]);
+    }, [activeTab, selectedStores, productNameSearch, selectedCountries, printedFilter]);
 
     // Return Modal State
     const [isReturnModalOpen, setIsReturnModalOpen] = useState(false);
@@ -323,6 +330,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }
             if (countryDropdownRef.current && !countryDropdownRef.current.contains(event.target as Node)) {
                 setCountryFilterOpen(false);
+            }
+            if (storeDropdownRef.current && !storeDropdownRef.current.contains(event.target as Node)) {
+                setStoreFilterOpen(false);
             }
         };
         document.addEventListener('mousedown', handleClickOutside);
@@ -529,11 +539,11 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         try {
             const result = await syncMarketplaceOrders(db, true);
 
-            updateDB({
-                ...db,
+            await updateDB(prev => ({
+                ...prev,
                 products: result.updatedProducts,
                 orders: result.updatedOrders
-            });
+            }));
 
             // OTOMATİK STOK GÜNCELLEME (Tüm mağazalara)
             if (db.settings.enableAutoStockSync && Object.keys(result.barcodesToSync).length > 0) {
@@ -598,6 +608,14 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         }
     };
 
+    const toggleStoreFilter = (storeName: string) => {
+        if (selectedStores.includes(storeName)) {
+            setSelectedStores(selectedStores.filter(s => s !== storeName));
+        } else {
+            setSelectedStores([...selectedStores, storeName]);
+        }
+    };
+
 
     const getFilteredOrders = () => {
         let list = db.orders;
@@ -606,27 +624,37 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             // İade alınanları İptal Edilenler sayfasında gösterme
             list = list.filter(o => o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id));
         } else if (activeTab === 'suspended') {
-            list = list.filter(o => o.isSuspended && o.status !== OrderStatus.CANCELLED);
+            list = list.filter(
+                o =>
+                    o.isSuspended &&
+                    o.status !== OrderStatus.CANCELLED &&
+                    (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING)
+            );
         } else if (activeTab === 'returned') {
             return []; // We handle this separately in render
         } else {
             list = list.filter(o => !o.isSuspended && o.status !== OrderStatus.CANCELLED);
             // Apply Status Filter only in Active Tab
             list = list.filter(o => selectedStatuses.includes(o.status));
+        }
 
-            // Ülke bazlı detaylı filtre (Çoklu Seçim)
-            if (activeTab === 'active' && selectedCountries.length > 0) {
-                list = list.filter(o => {
-                    const countryCode = (o.countryCode || '').toUpperCase();
-                    const address = (o.deliveryAddress || '').toLowerCase();
+        // Ülke filtresi: aktif, askıda ve iptal sekmelerinde geçerli (iade sekmesi ayrı)
+        if (activeTab !== 'returned' && selectedCountries.length > 0) {
+            list = list.filter(o => {
+                const fd = o.fullData;
+                const fromShip = String(fd?.shipmentAddress?.countryCode || fd?.shipmentAddress?.country || '').toUpperCase();
+                const fromInv = String(fd?.invoiceAddress?.countryCode || fd?.invoiceAddress?.country || '').toUpperCase();
+                const fromNested = fromShip || fromInv;
+                const countryUpper = String(o.countryCode || '').toUpperCase() || fromNested;
+                const address = `${o.deliveryAddress || ''} ${o.invoiceAddress || ''}`.toLowerCase();
 
-                    return selectedCountries.some(code => {
-                        const countryObj = PRIORITY_COUNTRIES.find(c => c.code === code);
-                        const countryName = countryObj ? countryObj.name.toLowerCase() : code.toLowerCase();
-                        return countryCode === code || address.includes(countryName);
-                    });
+                return selectedCountries.some(code => {
+                    const codeNorm = code.toUpperCase();
+                    const countryObj = PRIORITY_COUNTRIES.find(c => c.code === codeNorm);
+                    const countryName = countryObj ? countryObj.name.toLowerCase() : code.toLowerCase();
+                    return (countryUpper && countryUpper === codeNorm) || address.includes(countryName);
                 });
-            }
+            });
         }
 
         // Ayarlardaki gün filtresi (sadece filtre uygulanmadığında ve ayar aktifse)
@@ -658,9 +686,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             });
         }
 
-        // Apply store search filter
-        if (storeSearch) {
-            list = list.filter(o => o.storeName.toLowerCase().includes(storeSearch.toLowerCase()));
+        // Mağaza (çoklu seçim)
+        if (selectedStores.length > 0) {
+            list = list.filter(o => selectedStores.includes(o.storeName));
         }
 
         // Apply SKU search filter
@@ -684,6 +712,12 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (customerSearch) {
             const lower = customerSearch.toLowerCase();
             list = list.filter(o => (o.customerName || '').toLowerCase().includes(lower));
+        }
+
+        // Ürün adı (sütun filtresi)
+        if (productNameSearch) {
+            const lower = productNameSearch.toLowerCase();
+            list = list.filter(o => o.items.some(i => (i.productName || '').toLowerCase().includes(lower)));
         }
 
         // Apply barcode search filter
@@ -768,7 +802,12 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (tab === 'cancelled') {
             list = list.filter(o => o.status === OrderStatus.CANCELLED);
         } else if (tab === 'suspended') {
-            list = list.filter(o => o.isSuspended && o.status !== OrderStatus.CANCELLED);
+            list = list.filter(
+                o =>
+                    o.isSuspended &&
+                    o.status !== OrderStatus.CANCELLED &&
+                    (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING)
+            );
         } else if (tab === 'returned') {
             list = db.returns;
         } else {
@@ -789,9 +828,38 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     // Filtre değiştiğinde tüm siparişleri göster
     useEffect(() => {
-        const hasAnyFilter = dateFilterStart || dateFilterEnd || storeSearch || cargoSearch || sellerSearch || stockSearch || skuSearch || searchTerm || orderSearch || customerSearch || barcodeSearch || printedFilter !== 'all';
+        const hasAnyFilter =
+            dateFilterStart ||
+            dateFilterEnd ||
+            selectedStores.length > 0 ||
+            cargoSearch ||
+            sellerSearch ||
+            stockSearch ||
+            skuSearch ||
+            searchTerm ||
+            orderSearch ||
+            customerSearch ||
+            productNameSearch ||
+            barcodeSearch ||
+            selectedCountries.length > 0 ||
+            printedFilter !== 'all';
         setShowAllOrders(hasAnyFilter);
-    }, [dateFilterStart, dateFilterEnd, storeSearch, cargoSearch, sellerSearch, stockSearch, skuSearch, searchTerm, orderSearch, customerSearch, barcodeSearch, printedFilter]);
+    }, [
+        dateFilterStart,
+        dateFilterEnd,
+        selectedStores,
+        cargoSearch,
+        sellerSearch,
+        stockSearch,
+        skuSearch,
+        searchTerm,
+        orderSearch,
+        customerSearch,
+        productNameSearch,
+        barcodeSearch,
+        selectedCountries,
+        printedFilter
+    ]);
 
     // Get paginated orders
     const getPaginatedOrders = () => {
@@ -813,7 +881,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         setOrderSearch('');
         setCustomerSearch('');
         setBarcodeSearch('');
-        setStoreSearch('');
+        setProductNameSearch('');
+        setSelectedStores([]);
         setCargoSearch('');
         setSellerSearch('');
         setStockSearch('');
@@ -2555,13 +2624,6 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                 <div className="resizable-header">
                                     <div className="flex flex-col">
                                         <span>Mağaza</span>
-                                        <input
-                                            type="text"
-                                            className="text-xs border rounded px-1 py-0.5 mt-1"
-                                            placeholder="Mağaza ara..."
-                                            value={storeSearch}
-                                            onChange={(e) => setStoreSearch(e.target.value)}
-                                        />
                                     </div>
                                     <div className="resizer-handle" onMouseDown={(e) => handleResizeStart(e, 'store', columnWidths['store'] || 120)} />
                                 </div>
@@ -2647,14 +2709,23 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                     <th>Kalem</th>
                                     <th style={{ width: columnWidths['productName'] || 'auto' }}>
                                         <div className="resizable-header">
-                                            <div
-                                                className="cursor-pointer hover:bg-gray-100 px-1 rounded"
-                                                onClick={() => {
-                                                    if (sortBy === 'productName') setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-                                                    else { setSortBy('productName'); setSortOrder('asc'); }
-                                                }}
-                                            >
-                                                Ürün Adı {sortBy === 'productName' && (sortOrder === 'asc' ? '↑' : '↓')}
+                                            <div className="flex flex-col">
+                                                <div
+                                                    className="cursor-pointer hover:bg-gray-100 px-1 rounded"
+                                                    onClick={() => {
+                                                        if (sortBy === 'productName') setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                                                        else { setSortBy('productName'); setSortOrder('asc'); }
+                                                    }}
+                                                >
+                                                    Ürün Adı {sortBy === 'productName' && (sortOrder === 'asc' ? '↑' : '↓')}
+                                                </div>
+                                                <input
+                                                    type="text"
+                                                    className="text-xs border rounded px-1 py-0.5 mt-1 w-full min-w-0"
+                                                    placeholder="Ürün adı ara..."
+                                                    value={productNameSearch}
+                                                    onChange={(e) => setProductNameSearch(e.target.value)}
+                                                />
                                             </div>
                                             <div className="resizer-handle" onMouseDown={(e) => handleResizeStart(e, 'productName', columnWidths['productName'] || 200)} />
                                         </div>
@@ -2739,19 +2810,66 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
                                             <div className="flex items-center gap-2 ml-4">
                                                 <span className="text-xs text-gray-600">Mağaza Filtresi:</span>
-                                                <select
-                                                    className="text-xs border rounded px-2 py-1"
-                                                    value={storeSearch}
-                                                    onChange={(e) => setStoreSearch(e.target.value)}
-                                                >
-                                                    <option value="">Tümü</option>
-                                                    {(() => {
-                                                        const stores = Array.from(new Set(db.orders.map(o => o.storeName))).sort();
-                                                        return stores.map(storeName => (
-                                                            <option key={storeName} value={storeName}>{storeName}</option>
-                                                        ));
-                                                    })()}
-                                                </select>
+                                                <div className="relative" ref={storeDropdownRef}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setStoreFilterOpen(!storeFilterOpen)}
+                                                        className="text-xs border rounded px-2 py-1 bg-white min-w-[140px] flex justify-between items-center hover:bg-gray-50 transition-colors shadow-sm"
+                                                    >
+                                                        <span className="truncate max-w-[120px]">
+                                                            {selectedStores.length > 0
+                                                                ? `${selectedStores.length} Mağaza Seçili`
+                                                                : 'Tümü'}
+                                                        </span>
+                                                        <ChevronDown size={10} className="ml-1 shrink-0" />
+                                                    </button>
+                                                    {storeFilterOpen && (
+                                                        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-400 shadow-xl p-0 z-[100] w-56 max-h-64 overflow-y-auto rounded">
+                                                            <div className="p-2 border-b bg-gray-50 flex justify-between items-center sticky top-0">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        const stores = Array.from(new Set(db.orders.map(o => o.storeName)))
+                                                                            .filter((s): s is string => Boolean(s))
+                                                                            .sort();
+                                                                        setSelectedStores(stores);
+                                                                    }}
+                                                                    className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded hover:bg-blue-200 font-bold"
+                                                                >
+                                                                    Tümünü Seç
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setSelectedStores([])}
+                                                                    className="text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded hover:bg-gray-200 font-bold"
+                                                                >
+                                                                    Temizle
+                                                                </button>
+                                                            </div>
+                                                            <div className="p-1">
+                                                                {Array.from(new Set(db.orders.map(o => o.storeName)))
+                                                                    .filter((s): s is string => Boolean(s))
+                                                                    .sort()
+                                                                    .map(storeName => (
+                                                                        <label
+                                                                            key={storeName}
+                                                                            className="flex items-center gap-2 p-1.5 hover:bg-blue-50 rounded cursor-pointer"
+                                                                        >
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600"
+                                                                                checked={selectedStores.includes(storeName)}
+                                                                                onChange={() => toggleStoreFilter(storeName)}
+                                                                            />
+                                                                            <span className={`text-[11px] ${selectedStores.includes(storeName) ? 'text-blue-700 font-bold' : 'text-gray-700'}`}>
+                                                                                {storeName}
+                                                                            </span>
+                                                                        </label>
+                                                                    ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                             <div className="flex items-center gap-2 ml-4">
                                                 <span className="text-xs text-gray-600">Ülke Filtresi:</span>
