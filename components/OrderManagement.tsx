@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { isInternationalOrder, getEffectiveOrderCountryCode, resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi } from '../utils/orderUtils';
+import { isInternationalOrder, getEffectiveOrderCountryCode, resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi, orderImportDismissKey } from '../utils/orderUtils';
 import { Database, Order, OrderStatus, OrderItem, ReturnRecord, Product, UserRole, Variant } from '../types';
 import { RefreshCcw, Printer, Play, Filter, PauseCircle, AlertTriangle, Loader2, RotateCcw, ChevronDown, CheckSquare, Square, FileSpreadsheet, LayoutTemplate, Save, Eye, ArrowLeftRight, Bell, FileText, SearchCheck, HardDrive, ArrowUp, ArrowDown, Trash, Trash2, ZoomIn, ZoomOut, Plus, Globe } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
@@ -1237,6 +1237,13 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }
 
             // 2. DB'yi Güncelle (Senkronizasyondan ÖNCE yap ki sync güncel veriyi okusun)
+            let nextDismissed = [...(db.dismissedOrderImportKeys || [])];
+            if (isSuspended && order.marketplaceOrderId) {
+                const k = orderImportDismissKey(order.storeName, order.marketplaceOrderId, order.shipmentPackageId);
+                if (!nextDismissed.includes(k)) nextDismissed.push(k);
+                if (nextDismissed.length > 4000) nextDismissed = nextDismissed.slice(-4000);
+            }
+
             const newOrders = db.orders.filter(o => o.id !== orderId);
             const newReturns = db.returns.filter(r => r.orderId !== orderId);
 
@@ -1244,7 +1251,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 ...db,
                 orders: newOrders,
                 returns: newReturns,
-                products: currentProducts
+                products: currentProducts,
+                dismissedOrderImportKeys: nextDismissed
             });
 
             // 3. Stok Senkronizasyonunu Tetikle (TOPLAM STOKLAR)
@@ -1351,10 +1359,21 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 }
             });
 
+            let nextDismissed = [...(db.dismissedOrderImportKeys || [])];
+            selectedOrders.forEach(orderId => {
+                const order = db.orders.find(o => o.id === orderId);
+                if (order && order.isSuspended && order.marketplaceOrderId) {
+                    const k = orderImportDismissKey(order.storeName, order.marketplaceOrderId, order.shipmentPackageId);
+                    if (!nextDismissed.includes(k)) nextDismissed.push(k);
+                }
+            });
+            if (nextDismissed.length > 4000) nextDismissed = nextDismissed.slice(-4000);
+
             updateDB({
                 ...db,
                 orders: db.orders.filter(o => !selectedOrders.includes(o.id)),
-                products: currentProducts
+                products: currentProducts,
+                dismissedOrderImportKeys: nextDismissed
             });
 
             // Sync

@@ -248,4 +248,6 @@ export interface Database {
   lastSeenDate?: string; // NEW: Track last known valid date for time-travel detection
   questions: Question[]; // New
   returnClaims: ReturnClaim[]; // New
+  /** Pazaryerinden tekrar içeri alınmaması gereken paket anahtarları (mağaza::siparişNo::paketId) */
+  dismissedOrderImportKeys?: string[];
 }

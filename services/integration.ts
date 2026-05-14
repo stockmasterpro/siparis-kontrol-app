@@ -1,5 +1,5 @@
 import { Database, ApiConfig, Product, Variant, Order, OrderStatus, Question, QuestionStatus, ReturnClaim } from '../types';
-import { resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi } from '../utils/orderUtils';
+import { resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi, orderImportDismissKey } from '../utils/orderUtils';
 
 /**
  * Trendyol Ürün Aktarma (Create/Update Products)
@@ -796,6 +796,7 @@ export const syncMarketplaceOrders = async (
   let currentDbProducts = [...db.products];
   let currentDbOrders = [...db.orders];
   const barcodesToSync: { [key: string]: number } = {};
+  const dismissedImport = new Set(db.dismissedOrderImportKeys || []);
 
   for (const config of db.apiConfigs) {
     if (config.type === 'MANUAL') continue;
@@ -891,6 +892,12 @@ export const syncMarketplaceOrders = async (
     }
 
     for (const apiOrder of content) {
+      const dismissKey = orderImportDismissKey(config.storeName, apiOrder.orderNumber, apiOrder.shipmentPackageId);
+      if (dismissedImport.has(dismissKey)) {
+        console.log(`[ORDER-SYNC] Kullanıcı silmiş paket atlanıyor: ${dismissKey}`);
+        continue;
+      }
+
       // 3 Saatlik zaman kayması düzeltmesi (Trendyol API timestamp offset sorunu)
       const apiOrderDate = apiOrder.orderDate || apiOrder.createdDate || Date.now();
       const orderDate = new Date(apiOrderDate - (3 * 3600 * 1000));

@@ -9,9 +9,13 @@ const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
 const { autoUpdater } = require('electron-updater');
 
+const UPDATE_GITHUB_OWNER = 'stockmasterpro';
+const UPDATE_GITHUB_REPO = 'siparis-kontrol-app';
+
 // Configure autoUpdater
-autoUpdater.autoDownload = true; // Automatically download updates
-autoUpdater.autoInstallOnAppQuit = true; // Install when app quits
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.logger = console;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -23,7 +27,6 @@ let isLicensed = false;
 // --- Auto Updater Integration ---
 
 function setupAutoUpdater() {
-  // Check for updates
   autoUpdater.on('checking-for-update', () => {
     console.log('[UPDATE] Checking for update...');
   });
@@ -59,11 +62,12 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('error', (err) => {
+    const detail = err && (err.message || err.toString && err.toString()) ? (err.message || String(err)) : 'Bilinmeyen hata';
     console.error('[UPDATE] Error:', err);
     if (mainWindow) {
       mainWindow.webContents.send('update-message', {
         type: 'error',
-        message: 'Güncelleme kontrolü sırasında hata oluştu.'
+        message: `Güncelleme kontrolü sırasında hata: ${detail}`
       });
     }
   });
@@ -100,10 +104,26 @@ function setupAutoUpdater() {
       });
     }
   });
+
+  if (!app.isPackaged) {
+    console.log('[UPDATE] Paketlenmemiş ortam — GitHub güncelleme beslemesi atlandı.');
+    return;
+  }
+
+  // Tam kurulum dosyası indir (blockmap ile kısmi güncelleme bazı ortamlarda hata veriyor)
+  autoUpdater.disableDifferentialDownload = true;
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: UPDATE_GITHUB_OWNER,
+    repo: UPDATE_GITHUB_REPO
+  });
 }
 
 // IPC Handlers for Updates
 ipcMain.handle('check-for-updates', async () => {
+  if (!app.isPackaged) {
+    return { updateInfo: null, message: 'Geliştirme modunda güncelleme denetlenmez.' };
+  }
   return autoUpdater.checkForUpdates();
 });
 
@@ -272,9 +292,11 @@ if (!gotTheLock) {
       createWindow();
       createTray();
 
-      // Initial check for updates after a short delay
+      // Initial check for updates after a short delay (yalnızca kurulu .exe)
       setTimeout(() => {
-        autoUpdater.checkForUpdatesAndNotify();
+        if (app.isPackaged) {
+          autoUpdater.checkForUpdatesAndNotify();
+        }
       }, 5000);
     }).catch(err => {
       console.error('Database initialization failed:', err);
@@ -1175,13 +1197,26 @@ ipcMain.handle('db-get-all', async () => {
     };
 
     const settingsRows = sqliteDb.prepare('SELECT * FROM settings').all();
+    let dismissedOrderImportKeys = [];
     settingsRows.forEach(row => {
+      if (row.key === 'dismissedOrderImportKeys') {
+        try {
+          dismissedOrderImportKeys = JSON.parse(row.value) || [];
+        } catch {
+          dismissedOrderImportKeys = [];
+        }
+        return;
+      }
       try {
         db.settings[row.key] = JSON.parse(row.value);
       } catch {
         db.settings[row.key] = row.value;
       }
     });
+
+    db.dismissedOrderImportKeys = Array.isArray(dismissedOrderImportKeys)
+      ? dismissedOrderImportKeys.filter(k => typeof k === 'string')
+      : [];
 
     return db;
   } catch (err) {

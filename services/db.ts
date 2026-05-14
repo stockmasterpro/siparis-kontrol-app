@@ -16,6 +16,7 @@ const INITIAL_DB: Database = {
   apiConfigs: [],
   questions: [],
   returnClaims: [],
+  dismissedOrderImportKeys: [],
   settings: {
     autoFetchIntervalMinutes: 5,
     enableAutoStockSync: false,
@@ -59,6 +60,13 @@ const INITIAL_DB: Database = {
   },
 };
 
+const DISMISS_IMPORT_CAP = 4000;
+
+function mergeDismissedKeys(a?: string[], b?: string[]): string[] {
+  const merged = [...new Set([...(a || []), ...(b || [])])];
+  return merged.length > DISMISS_IMPORT_CAP ? merged.slice(-DISMISS_IMPORT_CAP) : merged;
+}
+
 // Merge shared data with local session data
 const mergeDatabases = (localDb: Database, sharedDb: Partial<Database>): Database => {
   return {
@@ -70,6 +78,7 @@ const mergeDatabases = (localDb: Database, sharedDb: Partial<Database>): Databas
     apiConfigs: sharedDb.apiConfigs || localDb.apiConfigs,
     warehouses: sharedDb.warehouses || localDb.warehouses,
     settings: { ...localDb.settings, ...sharedDb.settings },
+    dismissedOrderImportKeys: mergeDismissedKeys(localDb.dismissedOrderImportKeys, sharedDb.dismissedOrderImportKeys),
     // Keep session-specific data
     currentUser: localDb.currentUser,
     users: localDb.users,
@@ -97,6 +106,9 @@ const migrateAndValidateDB = (data: any): Database => {
     warehouses: Array.isArray(data.warehouses) ? data.warehouses : INITIAL_DB.warehouses,
     questions: Array.isArray(data.questions) ? data.questions : [],
     returnClaims: Array.isArray(data.returnClaims) ? data.returnClaims : [],
+    dismissedOrderImportKeys: Array.isArray(data.dismissedOrderImportKeys)
+      ? data.dismissedOrderImportKeys.filter((k: unknown) => typeof k === 'string')
+      : [],
     settings: {
       autoFetchIntervalMinutes: typeof data.settings?.autoFetchIntervalMinutes === 'number'
         ? data.settings.autoFetchIntervalMinutes
@@ -369,6 +381,11 @@ export const saveDB = async (db: Database): Promise<void> => {
     // Settings (Incremental)
     Object.entries(db.settings).forEach(([k, v]) => {
       ops.push({ query: 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', params: [k, JSON.stringify(v)] });
+    });
+
+    ops.push({
+      query: 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+      params: ['dismissedOrderImportKeys', JSON.stringify(db.dismissedOrderImportKeys || [])]
     });
 
     // API Configs
