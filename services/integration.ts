@@ -391,8 +391,46 @@ export const syncOrderStatusToMarketplaces = async (
 };
 
 /**
- * Fetches orders from Trendyol API with specified filters.
- * GET /order/sellers/{sellerId}/orders
+ * Legacy Trendyol sipariş listesi (sapigw) — integration API başarısız olursa yedek.
+ */
+const fetchOrdersFromTrendyolSapigwLegacy = async (
+  config: ApiConfig,
+  filters: {
+    status?: string;
+    startDate?: number;
+    endDate?: number;
+    page?: number;
+    size?: number;
+  }
+): Promise<any[]> => {
+  await rateLimitDelay();
+  const params = new URLSearchParams();
+  if (filters.status) params.append('status', filters.status);
+  if (filters.startDate) params.append('startDate', filters.startDate.toString());
+  if (filters.endDate) params.append('endDate', filters.endDate.toString());
+  if (filters.page !== undefined) params.append('page', filters.page.toString());
+  if (filters.size !== undefined) params.append('size', filters.size.toString());
+  params.append('orderBy', 'LastUpdateDate');
+  params.append('order', 'DESC');
+
+  const url = `https://api.trendyol.com/sapigw/suppliers/${config.supplierId}/orders?${params.toString()}`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: getTrendyolHeaders(config)
+  });
+
+  if (response.ok) {
+    const data = await response.json();
+    return data.content || [];
+  }
+  const errorMsg = await handleTrendyolError(response);
+  console.error(`[FETCH-ORDERS-ERROR] ${config.storeName} | Hata: ${errorMsg}`);
+  throw new Error(errorMsg);
+};
+
+/**
+ * Fetches orders from Trendyol — öncelik getShipmentPackages (integration/order/sellers/.../orders).
+ * @see https://developers.trendyol.com/docs/sipari%C5%9F-paketlerini-%C3%A7ekme-getshipmentpackages
  */
 export const fetchOrdersFromTrendyol = async (
   config: ApiConfig,
@@ -409,16 +447,15 @@ export const fetchOrdersFromTrendyol = async (
 
     const params = new URLSearchParams();
     if (filters.status) params.append('status', filters.status);
-    if (filters.startDate) params.append('startDate', filters.startDate.toString());
-    if (filters.endDate) params.append('endDate', filters.endDate.toString());
-    if (filters.page !== undefined) params.append('page', filters.page.toString());
-    if (filters.size !== undefined) params.append('size', filters.size.toString());
-    params.append('orderBy', 'LastUpdateDate');
-    params.append('order', 'DESC');
+    if (filters.startDate !== undefined) params.append('startDate', String(filters.startDate));
+    if (filters.endDate !== undefined) params.append('endDate', String(filters.endDate));
+    if (filters.page !== undefined) params.append('page', String(filters.page));
+    const size = Math.min(filters.size ?? 200, 200);
+    params.append('size', String(size));
+    params.append('orderByField', 'PackageLastModifiedDate');
+    params.append('orderByDirection', 'DESC');
 
-    // User specifies: GET /order/sellers/{sellerId}/orders
-    // Standard is often sapigw/suppliers/{sellerId}/orders
-    const url = `https://api.trendyol.com/sapigw/suppliers/${config.supplierId}/orders?${params.toString()}`;
+    const url = `https://apigw.trendyol.com/integration/order/sellers/${config.supplierId}/orders?${params.toString()}`;
 
     const response = await fetch(url, {
       method: 'GET',
@@ -428,14 +465,13 @@ export const fetchOrdersFromTrendyol = async (
     if (response.ok) {
       const data = await response.json();
       return data.content || [];
-    } else {
-      const errorMsg = await handleTrendyolError(response);
-      console.error(`[FETCH-ORDERS-ERROR] ${config.storeName} | Hata: ${errorMsg}`);
-      throw new Error(errorMsg);
     }
+
+    console.warn(`[FETCH-ORDERS] Integration API HTTP ${response.status}, sapigw yedek deneniyor (${config.storeName})`);
+    return await fetchOrdersFromTrendyolSapigwLegacy(config, filters);
   } catch (error) {
-    console.error(`[FETCH-ORDERS-EXCEPTION] ${config.storeName} |`, error);
-    throw error;
+    console.warn(`[FETCH-ORDERS] Integration API istisna, sapigw yedek (${config.storeName})`, error);
+    return await fetchOrdersFromTrendyolSapigwLegacy(config, filters);
   }
 };
 
@@ -819,25 +855,35 @@ export const syncMarketplaceOrders = async (
       }
     } else {
       try {
-        const startDate = new Date();
-        startDate.setDate(startDate.getDate() - (db.settings.orderFetchDays || 30));
-        const startDateParams = startDate.getTime();
+        const fetchDays = db.settings.orderFetchDays || 30;
+        const nowMs = Date.now();
+        const horizonMs = fetchDays * 86400000;
+        const twoWeeksMs = 14 * 86400000;
+        const dedupeKeys = new Set<string>();
 
-        // Tarih bazlı çekim - Tüm statüler gelir
-        let page = 0;
-        const size = 100;
+        for (let windowEnd = nowMs; windowEnd > nowMs - horizonMs; windowEnd -= twoWeeksMs) {
+          const windowStart = Math.max(windowEnd - twoWeeksMs, nowMs - horizonMs);
+          let page = 0;
+          while (true) {
+            const pageOrders = await fetchOrdersFromTrendyol(config, {
+              startDate: windowStart,
+              endDate: windowEnd,
+              page: page,
+              size: 200
+            });
 
-        while (true) {
-          const pageOrders = await fetchOrdersFromTrendyol(config, {
-            startDate: startDateParams,
-            page: page,
-            size: size
-          });
+            if (pageOrders.length === 0) break;
 
-          if (pageOrders.length === 0) break;
-          content = content.concat(pageOrders);
-          if (pageOrders.length < size) break;
-          page++;
+            for (const o of pageOrders) {
+              const dedupeKey = `${config.storeName}::${o.orderNumber || ''}::${o.shipmentPackageId ?? o.id ?? ''}`;
+              if (dedupeKeys.has(dedupeKey)) continue;
+              dedupeKeys.add(dedupeKey);
+              content.push(o);
+            }
+
+            if (pageOrders.length < 200) break;
+            page++;
+          }
         }
       } catch (error) {
         console.error(`[SYNC-ERROR] ${config.storeName} |`, error);
@@ -850,7 +896,7 @@ export const syncMarketplaceOrders = async (
       const orderDate = new Date(apiOrderDate - (3 * 3600 * 1000));
 
       let mappedStatus = OrderStatus.NEW;
-      const status = (apiOrder.status || '').toString().toLowerCase().trim();
+      const status = (apiOrder.status || apiOrder.shipmentPackageStatus || '').toString().toLowerCase().trim();
 
       if (status === 'shipped' || status === 'shipping') mappedStatus = OrderStatus.SHIPPING;
       else if (status === 'delivered' || status === 'completed') mappedStatus = OrderStatus.DELIVERED;

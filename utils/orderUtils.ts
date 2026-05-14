@@ -38,6 +38,14 @@ export function inferCountryFromPhoneDigits(digits: string): string | undefined 
   return undefined;
 }
 
+/** Mikro ihracat / yurt dışı aracılık: invoiceAddress çoğu zaman DSM İstanbul + TR (Trendyol dokümantasyonu) */
+function isTrendyolCrossBorderHubInvoice(fd: any, inv: any): boolean {
+  if (!inv && !fd) return false;
+  if (fd?.micro === true || fd?.is4P === true || fd?.['3pByTrendyol'] === true) return true;
+  const blob = `${inv?.fullAddress || ''} ${inv?.address1 || ''} ${inv?.company || ''}`.toUpperCase();
+  return blob.includes('DSM') && (pickIsoCountryCode(inv?.countryCode) === 'TR' || !inv?.countryCode);
+}
+
 type CountryResolvePayload = {
   countryCode?: string;
   fullData?: any;
@@ -47,56 +55,62 @@ type CountryResolvePayload = {
 };
 
 /**
- * Trendyol sipariş yanıtı veya Order + fullData için tutarlı ülke kodu.
- * Kayıtlı countryCode "TR" varsayılanı olsa bile fullData / telefon / adres metninden düzeltme yapar.
+ * Ülke: Trendyol yanıtındaki countryCode alanları (öncelik sevkiyat adresi).
+ * Mikro ihracat / is4P / 3pByTrendyol / DSM faturada invoice countryCode kullanılmaz.
  */
 export function resolveCountryCodeFromPayload(p: CountryResolvePayload): string {
   const fd = p.fullData || {};
   const ship = fd.shipmentAddress;
   const inv = fd.invoiceAddress;
+  const hubInvoice = isTrendyolCrossBorderHubInvoice(fd, inv);
 
-  const fromNested =
-    pickIsoCountryCode(ship?.countryCode) ||
-    pickIsoCountryCode(inv?.countryCode) ||
-    pickIsoCountryCode(ship?.country) ||
-    pickIsoCountryCode(inv?.country);
-
+  const rootCode = pickIsoCountryCode(fd.countryCode);
+  const shipCode = pickIsoCountryCode(ship?.countryCode) || pickIsoCountryCode(ship?.country);
+  const invCode = pickIsoCountryCode(inv?.countryCode) || pickIsoCountryCode(inv?.country);
   const stored = pickIsoCountryCode(p.countryCode);
 
-  if (fromNested && fromNested !== 'TR') return fromNested;
-  if (stored && stored !== 'TR') return stored;
-  if (fromNested) return fromNested;
-  if (stored) return stored;
+  const firstLineCountryCode = (): string | undefined => {
+    const lines = fd.lines;
+    if (!Array.isArray(lines)) return undefined;
+    for (const line of lines) {
+      const c =
+        pickIsoCountryCode(line?.shipmentAddress?.countryCode) ||
+        pickIsoCountryCode(line?.countryCode) ||
+        pickIsoCountryCode(line?.shipmentAddress?.country);
+      if (c) return c;
+    }
+    return undefined;
+  };
 
-  const lines = fd.lines;
-  if (Array.isArray(lines)) {
-    for (const line of lines) {
-      const lc =
-        pickIsoCountryCode(line?.shipmentAddress?.countryCode) ||
-        pickIsoCountryCode(line?.countryCode) ||
-        pickIsoCountryCode(line?.shipmentAddress?.country);
-      if (lc && lc !== 'TR') return lc;
-    }
-    for (const line of lines) {
-      const lc =
-        pickIsoCountryCode(line?.shipmentAddress?.countryCode) ||
-        pickIsoCountryCode(line?.countryCode) ||
-        pickIsoCountryCode(line?.shipmentAddress?.country);
-      if (lc) return lc;
-    }
+  const lineCode = firstLineCountryCode();
+
+  // 1) Sevkiyat adresi (asıl müşteri ülkesi)
+  if (shipCode && shipCode !== 'TR') return shipCode;
+  // 2) Satır bazlı countryCode
+  if (lineCode && lineCode !== 'TR') return lineCode;
+  // 3) Paket kökü countryCode (API bazen buraya yazar)
+  if (rootCode && rootCode !== 'TR') return rootCode;
+
+  if (!hubInvoice) {
+    if (shipCode) return shipCode;
+    if (lineCode) return lineCode;
+    if (rootCode) return rootCode;
+    if (invCode) return invCode;
+    if (stored) return stored;
+  } else {
+    if (shipCode) return shipCode;
+    if (lineCode) return lineCode;
+    if (rootCode) return rootCode;
+    if (stored && stored !== 'TR') return stored;
   }
 
   const phone = String(p.customerPhone || fd.customerPhoneNumber || ship?.phone || inv?.phone || '').replace(/\D/g, '');
   const fromPhone = inferCountryFromPhoneDigits(phone);
   if (fromPhone) return fromPhone;
 
-  const builtDelivery = [ship?.address1, ship?.address2, ship?.district, ship?.city].filter(Boolean).join(', ');
-  const builtInvoice = [inv?.address1, inv?.address2, inv?.district, inv?.city].filter(Boolean).join(', ');
-  const addr = `${p.deliveryAddress || ''} ${p.invoiceAddress || ''} ${builtDelivery} ${builtInvoice}`.toLowerCase();
-  const hit = COUNTRY_LIST.find(c => c.code !== 'TR' && addr.includes(c.name.toLowerCase()));
-  if (hit) return hit.code;
+  if (!hubInvoice && invCode) return invCode;
 
-  return 'TR';
+  return shipCode || lineCode || rootCode || stored || 'TR';
 }
 
 export function resolveCargoCompanyFromTrendyolApi(api: any): string {
