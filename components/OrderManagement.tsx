@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { isInternationalOrder } from '../utils/orderUtils';
+import { isInternationalOrder, getEffectiveOrderCountryCode, resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi } from '../utils/orderUtils';
 import { Database, Order, OrderStatus, OrderItem, ReturnRecord, Product, UserRole, Variant } from '../types';
 import { RefreshCcw, Printer, Play, Filter, PauseCircle, AlertTriangle, Loader2, RotateCcw, ChevronDown, CheckSquare, Square, FileSpreadsheet, LayoutTemplate, Save, Eye, ArrowLeftRight, Bell, FileText, SearchCheck, HardDrive, ArrowUp, ArrowDown, Trash, Trash2, ZoomIn, ZoomOut, Plus, Globe } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
@@ -56,9 +56,10 @@ const DEFAULT_PRINT_CONFIG: PrintConfig = {
         { id: '6', label: 'Tarih', key: 'orderDate', x: 20, y: 30, fontSize: 12, visible: true },
         { id: '2', label: 'Müşteri Adı', key: 'customerName', x: 20, y: 40, fontSize: 14, visible: true },
         { id: '4', label: 'Kargo Kodu', key: 'cargoCode', x: 130, y: 50, fontSize: 14, visible: true, isBarcode: true },
-        { id: '7', label: 'Adres', key: 'deliveryAddress', x: 20, y: 55, fontSize: 10, width: 100, visible: true },
+        { id: '4b', label: 'Kargo Firması', key: 'cargoCompanyName', x: 20, y: 52, fontSize: 10, visible: true },
+        { id: '7', label: 'Adres', key: 'deliveryAddress', x: 20, y: 64, fontSize: 10, width: 100, visible: true },
         {
-            id: '5', label: 'Ürün Listesi', key: 'items', x: 20, y: 90, fontSize: 10, width: 170, visible: true, tableColumns: [
+            id: '5', label: 'Ürün Listesi', key: 'items', x: 20, y: 100, fontSize: 10, width: 170, visible: true, tableColumns: [
                 { key: 'productName', label: 'Ürün Adı', visible: true },
                 { key: 'color', label: 'Renk', visible: true },
                 { key: 'size', label: 'Beden', visible: true },
@@ -67,11 +68,11 @@ const DEFAULT_PRINT_CONFIG: PrintConfig = {
                 { key: 'price', label: 'Fiyat', visible: true }
             ]
         },
-        { id: '8', label: 'Not 1', key: 'customNote', x: 20, y: 250, fontSize: 12, width: 150, visible: true, content: '' },
-        { id: 'n2', label: 'Not 2', key: 'customNote2', x: 20, y: 265, fontSize: 12, width: 150, visible: false, content: '' },
-        { id: 'n3', label: 'Not 3', key: 'customNote3', x: 20, y: 280, fontSize: 12, width: 150, visible: false, content: '' },
-        { id: 'n4', label: 'Not 4', key: 'customNote4', x: 20, y: 295, fontSize: 12, width: 150, visible: false, content: '' },
-        { id: 'n5', label: 'Not 5', key: 'customNote5', x: 20, y: 310, fontSize: 12, width: 150, visible: false, content: '' },
+        { id: '8', label: 'Not 1', key: 'customNote', x: 20, y: 260, fontSize: 12, width: 150, visible: true, content: '' },
+        { id: 'n2', label: 'Not 2', key: 'customNote2', x: 20, y: 275, fontSize: 12, width: 150, visible: false, content: '' },
+        { id: 'n3', label: 'Not 3', key: 'customNote3', x: 20, y: 290, fontSize: 12, width: 150, visible: false, content: '' },
+        { id: 'n4', label: 'Not 4', key: 'customNote4', x: 20, y: 305, fontSize: 12, width: 150, visible: false, content: '' },
+        { id: 'n5', label: 'Not 5', key: 'customNote5', x: 20, y: 320, fontSize: 12, width: 150, visible: false, content: '' },
     ]
 };
 
@@ -103,13 +104,16 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     const PRIORITY_COUNTRIES = [
         { name: 'Türkiye', code: 'TR' },
         { name: 'Suudi Arabistan', code: 'SA' },
-        { name: 'Romanya', code: 'RO' },
-        { name: 'Yunanistan', code: 'GR' },
-        { name: 'Azerbaycan', code: 'AZ' },
-        { name: 'B.A.E.', code: 'AE' },
+        { name: 'Birleşik Arap Emirlikleri', code: 'AE' },
         { name: 'Katar', code: 'QA' },
         { name: 'Kuveyt', code: 'KW' },
         { name: 'Umman', code: 'OM' },
+        { name: 'Bahreyn', code: 'BH' },
+        { name: 'Azerbaycan', code: 'AZ' },
+        { name: 'Slovakya', code: 'SK' },
+        { name: 'Romanya', code: 'RO' },
+        { name: 'Çekya', code: 'CZ' },
+        { name: 'Yunanistan', code: 'GR' },
         { name: 'Bulgaristan', code: 'BG' },
         { name: 'Moldova', code: 'MD' },
         { name: 'Sırbistan', code: 'XS' },
@@ -641,18 +645,15 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         // Ülke filtresi: aktif, askıda ve iptal sekmelerinde geçerli (iade sekmesi ayrı)
         if (activeTab !== 'returned' && selectedCountries.length > 0) {
             list = list.filter(o => {
-                const fd = o.fullData;
-                const fromShip = String(fd?.shipmentAddress?.countryCode || fd?.shipmentAddress?.country || '').toUpperCase();
-                const fromInv = String(fd?.invoiceAddress?.countryCode || fd?.invoiceAddress?.country || '').toUpperCase();
-                const fromNested = fromShip || fromInv;
-                const countryUpper = String(o.countryCode || '').toUpperCase() || fromNested;
+                const codeUpper = getEffectiveOrderCountryCode(o);
                 const address = `${o.deliveryAddress || ''} ${o.invoiceAddress || ''}`.toLowerCase();
 
                 return selectedCountries.some(code => {
                     const codeNorm = code.toUpperCase();
+                    if (codeUpper === codeNorm) return true;
                     const countryObj = PRIORITY_COUNTRIES.find(c => c.code === codeNorm);
                     const countryName = countryObj ? countryObj.name.toLowerCase() : code.toLowerCase();
-                    return (countryUpper && countryUpper === codeNorm) || address.includes(countryName);
+                    return address.includes(countryName);
                 });
             });
         }
@@ -1059,6 +1060,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     order.cargoCode ||
                     '-'
                 ),
+                cargoCompanyName: resolveCargoCompanyFromTrendyolApi(data) || order.cargoCompanyName,
+                countryCode: resolveCountryCodeFromTrendyolApi(data),
+                fullData: data,
                 // 3 Saatlik zaman kayması düzeltmesi
                 orderDate: data.orderDate ? new Date(new Date(data.orderDate).getTime() - (3 * 3600 * 1000)).toISOString() : order.orderDate,
                 items: (data.lines || data.items || []).map((line: any) => ({
@@ -1421,7 +1425,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         'Birim Fiyat': item.unitPrice.toFixed(2),
                         'Kalem Toplamı': (item.unitPrice * item.quantity).toFixed(2),
                         'Genel Toplam': (item.unitPrice * item.quantity).toFixed(2),
-                        'Ülke': o.countryCode || 'TR',
+                        'Ülke': getEffectiveOrderCountryCode(o),
                         'Yazdırıldı': o.isPrinted ? 'Evet' : 'Hayır',
                         'Askıda': o.isSuspended ? 'Evet' : 'Hayır'
                     };
@@ -1960,6 +1964,14 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     }
                     else if (el.key === 'orderDate') {
                         content = new Date(orderToPrint.orderDate).toLocaleDateString('tr-TR');
+                    } else if (el.key === 'cargoCompanyName') {
+                        const val = orderToPrint.cargoCompanyName || '';
+                        content = (
+                            <div>
+                                <div style={{ fontSize: `${Math.max(7, el.fontSize - 2)}pt`, fontWeight: 800, marginBottom: '0.5mm', letterSpacing: '0.02em' }}>Kargo Firması</div>
+                                <div style={{ fontWeight: 600 }}>{val || '—'}</div>
+                            </div>
+                        );
                     } else if (el.key === 'sku') {
                         content = orderToPrint.items.map(i => i.sku).filter(Boolean).join(', ');
                     } else if (el.key.startsWith('customNote')) {
@@ -2098,6 +2110,12 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }
             else if (el.key === 'orderDate') {
                 content = new Date(orderToPrint.orderDate).toLocaleDateString('tr-TR');
+            } else if (el.key === 'cargoCompanyName') {
+                const raw = String((orderToPrint as Order).cargoCompanyName || '');
+                const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                const val = esc(raw);
+                const titleFs = Math.max(7, el.fontSize - 2);
+                content = `<div><div style="font-size:${titleFs}pt;font-weight:800;margin-bottom:0.5mm;letter-spacing:0.02em">Kargo Firması</div><div style="font-weight:600">${val || '—'}</div></div>`;
             } else if (el.key === 'sku') {
                 content = orderToPrint.items.map(i => i.sku).filter(Boolean).join(', ');
             } else if (el.key.startsWith('customNote')) {
@@ -2893,7 +2911,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                     onClick={() => {
                                                                         const allCodes = Array.from(new Set([
                                                                             ...PRIORITY_COUNTRIES.map(c => c.code),
-                                                                            ...db.orders.map(o => o.countryCode).filter(Boolean) as string[]
+                                                                            ...db.orders.map(o => getEffectiveOrderCountryCode(o))
                                                                         ]));
                                                                         setSelectedCountries(allCodes);
                                                                     }}
@@ -2928,7 +2946,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                 {/* Other Countries from DB */}
                                                                 {(() => {
                                                                     const dbCountryCodes = Array.from(new Set(db.orders
-                                                                        .map(o => (o.countryCode || '').toUpperCase())
+                                                                        .map(o => getEffectiveOrderCountryCode(o).toUpperCase())
                                                                         .filter(c => c && c !== 'TR' && !PRIORITY_COUNTRIES.some(p => p.code === c))
                                                                     )).sort() as string[];
 
@@ -3298,6 +3316,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                             <p><strong>Tarih:</strong> {safeFormatDate(detailOrder.orderDate, true)}</p>
                                             <p><strong>Durum:</strong> <span className="font-semibold text-blue-600">{detailOrder.status}</span></p>
                                             <p><strong>Kargo Kodu:</strong> {detailOrder.cargoCode}</p>
+                                            <p><strong>Kargo Firması:</strong> {detailOrder.cargoCompanyName || '—'}</p>
+                                            <p><strong>Ülke:</strong> {getEffectiveOrderCountryCode(detailOrder)}</p>
                                         </div>
                                     </div>
                                 </div>
@@ -3378,7 +3398,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             {
                 isPrintModalOpen && (
                     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[150] backdrop-blur-sm no-print">
-                        <div className="bg-[#f0f0f0] border border-gray-500 shadow-2xl w-[900px] h-[700px] flex flex-col font-sans">
+                        <div className="bg-[#f0f0f0] border border-gray-500 shadow-2xl w-[1080px] h-[840px] flex flex-col font-sans">
                             <div className="h-8 bg-white border-b border-gray-300 flex justify-between items-center px-3 select-none">
                                 <span className="font-semibold text-gray-800 flex items-center gap-2"><LayoutTemplate size={16} /> Yazdırma Şablonu Tasarımcısı</span>
                                 <button onClick={() => setIsPrintModalOpen(false)} className="hover:bg-red-500 hover:text-white px-2"><div className="text-lg leading-none">×</div></button>

@@ -423,7 +423,6 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                             </thead>
                             <tbody className="divide-y divide-gray-200">
                                 {paginatedQuestions.map((q) => {
-                                    const qProductUrl = resolveQuestionProductPageUrl(q);
                                     return (
                                     <tr key={q.id} className={`hover:bg-gray-50 transition-colors group ${selectedQuestionIds.has(q.id) ? 'bg-blue-50' : ''}`}>
                                         <td className="px-4 py-4">
@@ -451,25 +450,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                                             </div>
                                                         </div>
                                                     )}
-                                                    {q.questionImageUrl && (
-                                                        <div className="relative group">
-                                                            <img src={q.questionImageUrl} alt="" className="w-12 h-12 object-cover rounded border border-orange-200 bg-white shadow-sm" />
-                                                            <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity rounded">
-                                                                <span className="text-[8px] text-white font-bold">Soru</span>
-                                                            </div>
-                                                        </div>
-                                                    )}
                                                 </div>
                                                 <div className="flex flex-col">
                                                     <span className="text-xs font-medium text-gray-800 line-clamp-1">{q.productName}</span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => openProductLink(qProductUrl)}
-                                                        disabled={!qProductUrl}
-                                                        className={`text-[10px] flex items-center text-left ${qProductUrl ? 'text-blue-600 hover:underline' : 'text-gray-400 cursor-not-allowed'}`}
-                                                    >
-                                                        Ürüne Git <ExternalLink size={8} className="ml-1" />
-                                                    </button>
                                                 </div>
                                             </div>
                                         </td>
@@ -585,19 +568,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                                         <div className="absolute top-2 left-2 bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg">ÜRÜN</div>
                                                     </div>
                                                 )}
-                                                {selectedQuestion.questionImageUrl && (
-                                                    <div className="relative group shrink-0">
-                                                        <div className="absolute -inset-1 bg-gradient-to-r from-orange-600 to-yellow-500 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
-                                                        <img
-                                                            src={selectedQuestion.questionImageUrl}
-                                                            alt=""
-                                                            className="relative w-40 h-40 object-cover rounded-2xl border-4 border-white shadow-xl bg-white cursor-zoom-in hover:scale-105 transition-transform duration-300"
-                                                            onClick={() => window.open(selectedQuestion.questionImageUrl, '_blank')}
-                                                        />
-                                                        <div className="absolute top-2 left-2 bg-orange-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg">SORU GÖRSELİ</div>
-                                                    </div>
-                                                )}
-                                                {!selectedQuestion.productImageUrl && !selectedQuestion.questionImageUrl && (
+                                                {!selectedQuestion.productImageUrl && (
                                                     <div className="w-40 h-40 bg-gray-200 rounded-2xl flex flex-col items-center justify-center text-gray-400 border-2 border-dashed">
                                                         <ImageIcon size={40} className="mb-2 opacity-20" />
                                                         <span className="text-[10px] font-bold">Görsel Yok</span>
@@ -648,25 +619,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                     <div>
                                         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                                             <label className="text-sm font-bold text-gray-700">Cevabınız</label>
-                                            <div className="flex items-center gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => openProductLink(productPageUrl)}
-                                                    disabled={!productPageUrl}
-                                                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-bold transition-colors ${
-                                                        productPageUrl
-                                                            ? 'bg-blue-50 border-blue-200 text-blue-800 hover:bg-blue-100'
-                                                            : 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
-                                                    }`}
-                                                    title={productPageUrl ? 'Ürün sayfasını varsayılan tarayıcıda aç' : 'Ürün linki yok'}
-                                                >
-                                                    <ExternalLink size={14} />
-                                                    Ürüne Git
-                                                </button>
-                                                <span className={`text-xs ${answerText.length >= 10 && answerText.length <= 2000 ? 'text-green-600' : 'text-red-500'}`}>
-                                                    {answerText.length} / 2000
-                                                </span>
-                                            </div>
+                                            <span className={`text-xs ${answerText.length >= 10 && answerText.length <= 2000 ? 'text-green-600' : 'text-red-500'}`}>
+                                                {answerText.length} / 2000
+                                            </span>
                                         </div>
                                         <textarea
                                             className="w-full border-2 border-gray-200 rounded-xl p-4 text-sm focus:border-blue-500 focus:ring-0 outline-none transition-colors h-40 resize-none"

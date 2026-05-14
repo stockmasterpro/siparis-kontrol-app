@@ -1,6 +1,141 @@
 
 import { Order } from '../types';
 
+/** İki harf ISO ülke kodu (API bazen boşluk veya yanlış uzunluk gönderebilir) */
+export function pickIsoCountryCode(value: unknown): string | undefined {
+  const s = String(value ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s/g, '');
+  if (s.length === 2 && /^[A-Z]{2}$/.test(s)) return s;
+  return undefined;
+}
+
+const PHONE_PREFIX_TO_COUNTRY: [string, string][] = [
+  ['966', 'SA'],
+  ['971', 'AE'],
+  ['974', 'QA'],
+  ['965', 'KW'],
+  ['968', 'OM'],
+  ['973', 'BH'],
+  ['994', 'AZ'],
+  ['420', 'CZ'],
+  ['421', 'SK'],
+  ['40', 'RO'],
+  ['359', 'BG'],
+  ['380', 'UA'],
+  ['30', 'GR'],
+  ['90', 'TR']
+].sort((a, b) => b[0].length - a[0].length);
+
+export function inferCountryFromPhoneDigits(digits: string): string | undefined {
+  const d = digits.replace(/\D/g, '');
+  if (!d || d.length < 10) return undefined;
+  const normalized = d.startsWith('00') ? d.slice(2) : d;
+  for (const [prefix, code] of PHONE_PREFIX_TO_COUNTRY) {
+    if (normalized.startsWith(prefix)) return code;
+  }
+  return undefined;
+}
+
+type CountryResolvePayload = {
+  countryCode?: string;
+  fullData?: any;
+  customerPhone?: string;
+  deliveryAddress?: string;
+  invoiceAddress?: string;
+};
+
+/**
+ * Trendyol sipariş yanıtı veya Order + fullData için tutarlı ülke kodu.
+ * Kayıtlı countryCode "TR" varsayılanı olsa bile fullData / telefon / adres metninden düzeltme yapar.
+ */
+export function resolveCountryCodeFromPayload(p: CountryResolvePayload): string {
+  const fd = p.fullData || {};
+  const ship = fd.shipmentAddress;
+  const inv = fd.invoiceAddress;
+
+  const fromNested =
+    pickIsoCountryCode(ship?.countryCode) ||
+    pickIsoCountryCode(inv?.countryCode) ||
+    pickIsoCountryCode(ship?.country) ||
+    pickIsoCountryCode(inv?.country);
+
+  const stored = pickIsoCountryCode(p.countryCode);
+
+  if (fromNested && fromNested !== 'TR') return fromNested;
+  if (stored && stored !== 'TR') return stored;
+  if (fromNested) return fromNested;
+  if (stored) return stored;
+
+  const lines = fd.lines;
+  if (Array.isArray(lines)) {
+    for (const line of lines) {
+      const lc =
+        pickIsoCountryCode(line?.shipmentAddress?.countryCode) ||
+        pickIsoCountryCode(line?.countryCode) ||
+        pickIsoCountryCode(line?.shipmentAddress?.country);
+      if (lc && lc !== 'TR') return lc;
+    }
+    for (const line of lines) {
+      const lc =
+        pickIsoCountryCode(line?.shipmentAddress?.countryCode) ||
+        pickIsoCountryCode(line?.countryCode) ||
+        pickIsoCountryCode(line?.shipmentAddress?.country);
+      if (lc) return lc;
+    }
+  }
+
+  const phone = String(p.customerPhone || fd.customerPhoneNumber || ship?.phone || inv?.phone || '').replace(/\D/g, '');
+  const fromPhone = inferCountryFromPhoneDigits(phone);
+  if (fromPhone) return fromPhone;
+
+  const builtDelivery = [ship?.address1, ship?.address2, ship?.district, ship?.city].filter(Boolean).join(', ');
+  const builtInvoice = [inv?.address1, inv?.address2, inv?.district, inv?.city].filter(Boolean).join(', ');
+  const addr = `${p.deliveryAddress || ''} ${p.invoiceAddress || ''} ${builtDelivery} ${builtInvoice}`.toLowerCase();
+  const hit = COUNTRY_LIST.find(c => c.code !== 'TR' && addr.includes(c.name.toLowerCase()));
+  if (hit) return hit.code;
+
+  return 'TR';
+}
+
+export function resolveCargoCompanyFromTrendyolApi(api: any): string {
+  if (!api || typeof api !== 'object') return '';
+  const hist = Array.isArray(api.shipmentPackageHistories) ? api.shipmentPackageHistories[0] : null;
+  const candidates = [
+    api.cargoProviderName,
+    api.cargoCompanyName,
+    api.cargoCompany,
+    api.lastMileCargoCompany,
+    hist?.cargoCompanyName,
+    hist?.cargoCompany,
+    hist?.cargoProviderName
+  ];
+  for (const c of candidates) {
+    const s = String(c || '').trim();
+    if (s) return s;
+  }
+  return '';
+}
+
+export function resolveCountryCodeFromTrendyolApi(apiOrder: any): string {
+  return resolveCountryCodeFromPayload({
+    countryCode: apiOrder?.countryCode,
+    fullData: apiOrder,
+    customerPhone: apiOrder?.customerPhoneNumber
+  });
+}
+
+export function getEffectiveOrderCountryCode(order: Order): string {
+  return resolveCountryCodeFromPayload({
+    countryCode: order.countryCode,
+    fullData: order.fullData,
+    customerPhone: order.customerPhone,
+    deliveryAddress: order.deliveryAddress,
+    invoiceAddress: order.invoiceAddress
+  });
+}
+
 export const COUNTRY_LIST = [
     { name: 'Almanya', code: 'DE' },
     { name: 'Amerika Birleşik Devletleri', code: 'US' },
@@ -207,26 +342,5 @@ export const COUNTRY_LIST = [
 ];
 
 export const isInternationalOrder = (order: Partial<Order>) => {
-    // 1. En güvenilir yöntem: Ülke Kodu (Pazaryerinden or Manuel secimden gelir)
-    if (order.countryCode) {
-        return order.countryCode.toUpperCase() !== 'TR';
-    }
-
-    // 2. Yedek yöntem: Adres metni analizi
-    const address = String(order.deliveryAddress || '').toLowerCase();
-    if (!address) return false;
-
-    // Türkiye ve ilgili anahtar kelimeleri iceriyorsa yereldir
-    const turkishIndices = ['türkiye', 'turkiye', ' turkey', ', tr', 'istanbul', 'ankara', 'izmir'];
-    if (turkishIndices.some(hint => address.includes(hint))) return false;
-
-    // Listemizdeki DİĞER ülkelerden biri geciyorsa yurt dısıdır
-    // Türkiye'yi listeden cıkarıp kontrol edelim
-    const foreignCountries = COUNTRY_LIST.filter(c => c.code !== 'TR');
-
-    return foreignCountries.some(c => {
-        const nameLower = c.name.toLowerCase();
-        // Sadece kelime bazlı kontrol (Bitişik karakterlerle çakışmaması için boşluk kontrolü eklenebilir)
-        return address.includes(nameLower) || (order.countryCode && order.countryCode.toUpperCase() === c.code);
-    });
+    return getEffectiveOrderCountryCode(order as Order) !== 'TR';
 };

@@ -84,6 +84,8 @@ export interface Order {
   customerPhone?: string; // New Field
   deliveryAddress?: string; // New Field
   cargoCode: string;
+  /** Trendyol / API kargo sağlayıcı adı */
+  cargoCompanyName?: string;
   orderDate: string;
   items: OrderItem[];
   cancelledItems?: OrderItem[]; // Track partially cancelled items

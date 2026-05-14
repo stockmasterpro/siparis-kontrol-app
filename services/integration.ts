@@ -1,4 +1,5 @@
 import { Database, ApiConfig, Product, Variant, Order, OrderStatus, Question, QuestionStatus, ReturnClaim } from '../types';
+import { resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi } from '../utils/orderUtils';
 
 /**
  * Trendyol Ürün Aktarma (Create/Update Products)
@@ -1009,6 +1010,13 @@ export const syncMarketplaceOrders = async (
             if (existingOrder.cargoCode !== newCargoCode && newCargoCode !== '-') {
               currentDbOrders[existingOrderIndex].cargoCode = newCargoCode;
             }
+            const resolvedCountry = resolveCountryCodeFromTrendyolApi(apiOrder);
+            currentDbOrders[existingOrderIndex].countryCode = resolvedCountry;
+            const cargoName = resolveCargoCompanyFromTrendyolApi(apiOrder);
+            if (cargoName) {
+              currentDbOrders[existingOrderIndex].cargoCompanyName = cargoName;
+            }
+            currentDbOrders[existingOrderIndex].fullData = apiOrder;
             continue; // Başka işlem yapma, sonraki siparişe geç
           }
         } // Else block closure for cargo code check
@@ -1128,11 +1136,12 @@ export const syncMarketplaceOrders = async (
         customerEmail: apiOrder.customerEmail,
         deliveryAddress: deliveryAddress || undefined,
         cargoCode: String(apiOrder.cargoTrackingNumber || apiOrder.trackingNumber || '-'),
+        cargoCompanyName: resolveCargoCompanyFromTrendyolApi(apiOrder) || undefined,
         orderDate: orderDate.toISOString(),
         items: orderItems,
         isSuspended: isSuspended, // Hesaplanan değer
         shipmentPackageId: packageId,
-        countryCode: apiOrder.shipmentAddress?.countryCode || 'TR',
+        countryCode: resolveCountryCodeFromTrendyolApi(apiOrder),
         city: apiOrder.shipmentAddress?.city,
         district: apiOrder.shipmentAddress?.district,
         neighborhood: apiOrder.shipmentAddress?.neighborhood,
