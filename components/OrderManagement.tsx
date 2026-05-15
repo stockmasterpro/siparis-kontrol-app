@@ -3739,7 +3739,6 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                             {db.apiConfigs.map(config => (
                                                 <option key={config.id} value={config.storeName}>{config.storeName}</option>
                                             ))}
-                                            <option value="Mağaza Satış">Mağaza Satış (Genel)</option>
                                         </select>
                                     </div>
                                     <div className="space-y-1.5">
@@ -3908,8 +3907,23 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                     >+</button>
                                                                 </div>
                                                             </td>
-                                                            <td className="px-4 py-3 text-right font-bold text-green-700">
-                                                                {(item.unitPrice * item.quantity).toFixed(2)} ₺
+                                                            <td className="px-4 py-3 text-right">
+                                                                <div className="flex items-center justify-end gap-1">
+                                                                    <input
+                                                                        type="number"
+                                                                        className="w-20 text-right bg-white border border-gray-200 rounded px-2 py-1 text-sm focus:border-green-500 outline-none font-bold text-green-700"
+                                                                        value={item.unitPrice}
+                                                                        onChange={(e) => {
+                                                                            const newItems = [...manualOrderForm.items];
+                                                                            newItems[idx].unitPrice = Number(e.target.value) || 0;
+                                                                            setManualOrderForm({ ...manualOrderForm, items: newItems });
+                                                                        }}
+                                                                    />
+                                                                    <span className="text-xs text-gray-500">₺</span>
+                                                                </div>
+                                                                <div className="text-[10px] text-gray-400 mt-1">
+                                                                    Toplam: {(item.unitPrice * item.quantity).toFixed(2)} ₺
+                                                                </div>
                                                             </td>
                                                             <td className="px-4 py-3 text-right">
                                                                 <button
