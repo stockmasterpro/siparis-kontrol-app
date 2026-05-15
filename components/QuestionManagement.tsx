@@ -562,8 +562,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                     </button>
                                 </div>
 
-                                <div className="flex flex-1 overflow-hidden">
-                                    <div className="flex-1 p-6 space-y-6 overflow-y-auto flex flex-col">
+                                <div className="flex flex-1 overflow-hidden min-h-0">
+                                    <div className="flex-1 p-6 space-y-6 overflow-y-auto flex flex-col min-h-0">
                                         <div className="bg-gray-50 rounded-2xl p-5 border-2 border-dashed border-gray-200 shadow-inner shrink-0">
                                         <div className="flex flex-col md:flex-row gap-6">
                                             <div className="flex gap-3 justify-center md:justify-start">
@@ -627,7 +627,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                         </div>
                                     </div>
 
-                                        <div className="flex flex-col flex-1 min-h-[200px]">
+                                        <div className="flex flex-col flex-1 min-h-0">
                                             <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                                                 <label className="text-sm font-bold text-gray-700">Cevabınız</label>
                                                 <span className={`text-xs ${answerText.length >= 10 && answerText.length <= 2000 ? 'text-green-600' : 'text-red-500'}`}>
@@ -644,23 +644,22 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                     </div>
 
                                     {db.settings.quickAnswers && db.settings.quickAnswers.length > 0 && (
-                                        <div className="w-80 bg-gray-50 border-l border-gray-200 flex flex-col shrink-0">
-                                            <div className="p-4 border-b border-gray-200 bg-white shadow-sm z-10">
+                                        <div className="w-80 bg-gray-50 border-l border-gray-200 flex flex-col shrink-0 min-h-0">
+                                            <div className="p-4 border-b border-gray-200 bg-white shadow-sm z-10 shrink-0">
                                                 <h4 className="text-xs font-extrabold text-gray-700 uppercase tracking-wider flex items-center gap-2">
                                                     <Clock size={16} className="text-blue-600" />
                                                     Hazır Cevaplar
                                                 </h4>
                                                 <p className="text-[10px] text-gray-500 mt-1">Hızlıca cevaplamak için bir şablon seçin</p>
                                             </div>
-                                            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                                            <div className="flex-1 overflow-y-auto p-3 space-y-2">
                                                 {db.settings.quickAnswers.map((qa) => (
                                                     <button
                                                         key={qa.id}
                                                         onClick={() => useQuickAnswer(qa.text)}
-                                                        className="w-full text-left bg-white p-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all group"
+                                                        className="w-full text-left bg-white px-4 py-2.5 rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all group"
                                                     >
-                                                        <div className="font-bold text-sm text-gray-800 mb-1 group-hover:text-blue-700 transition-colors">{qa.title}</div>
-                                                        <div className="text-xs text-gray-500 line-clamp-4 leading-relaxed">{qa.text}</div>
+                                                        <div className="font-bold text-sm text-gray-800 group-hover:text-blue-700 transition-colors line-clamp-1">{qa.title}</div>
                                                     </button>
                                                 ))}
                                             </div>
