@@ -956,6 +956,9 @@ async function initSQLite() {
 
   sqliteDb = new Database(dbPath);
 
+  // Enable foreign keys
+  sqliteDb.exec('PRAGMA foreign_keys = ON;');
+
   // Create tables
   sqliteDb.exec(`
     CREATE TABLE IF NOT EXISTS settings (

@@ -389,16 +389,19 @@ export const saveDB = async (db: Database): Promise<void> => {
     });
 
     // API Configs
+    ops.push({ query: 'DELETE FROM api_configs', params: [] });
     db.apiConfigs.forEach(c => {
       ops.push({ query: 'INSERT OR REPLACE INTO api_configs (id, data) VALUES (?, ?)', params: [c.id || c.storeName, JSON.stringify(c)] });
     });
 
     // Warehouses
+    ops.push({ query: 'DELETE FROM warehouses', params: [] });
     db.warehouses.forEach(w => {
       ops.push({ query: 'INSERT OR REPLACE INTO warehouses (id, name) VALUES (?, ?)', params: [w.id, w.name] });
     });
 
     // Products (This is still a bit heavy, but SQLite handles it better than JSON write)
+    ops.push({ query: 'DELETE FROM products', params: [] });
     db.products.forEach(p => {
       ops.push({
         query: 'INSERT OR REPLACE INTO products (id, productCode, name, brand, "group", date, data) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -407,6 +410,7 @@ export const saveDB = async (db: Database): Promise<void> => {
     });
 
     // Orders
+    ops.push({ query: 'DELETE FROM orders', params: [] });
     db.orders.forEach(o => {
       ops.push({
         query: 'INSERT OR REPLACE INTO orders (id, marketplaceOrderId, storeName, status, customerName, deliveryAddress, cargoCode, orderDate, isSuspended, shipmentPackageId, countryCode, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -418,6 +422,7 @@ export const saveDB = async (db: Database): Promise<void> => {
     // v1.4.2: Wipe actions-needed tables before re-inserting to prevent ghost records
     ops.push({ query: 'DELETE FROM questions', params: [] });
     ops.push({ query: 'DELETE FROM return_claims', params: [] });
+    ops.push({ query: 'DELETE FROM returns', params: [] });
 
     db.questions.forEach(q => ops.push({ query: 'INSERT OR REPLACE INTO questions (id, data) VALUES (?, ?)', params: [q.id, JSON.stringify(q)] }));
     db.returns.forEach(r => ops.push({ query: 'INSERT OR REPLACE INTO returns (id, data) VALUES (?, ?)', params: [r.id, JSON.stringify(r)] }));

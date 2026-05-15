@@ -90,6 +90,8 @@ export function resolveCountryCodeFromPayload(p: CountryResolvePayload): string 
       if (cCode === 'PLN') return 'PL'; // Polonya
       if (cCode === 'RSD') return 'RS'; // Sırbistan
       if (cCode === 'MKD') return 'MK'; // Kuzey Makedonya
+      if (cCode === 'MDL') return 'MD'; // Moldova
+      if (cCode === 'UAH') return 'UA'; // Ukrayna
       if (cCode === 'EUR') return 'EU'; // Avrupa Birliği
     }
 
@@ -196,7 +198,7 @@ export const COUNTRY_LIST = [
     { name: 'Estonya', code: 'EE' },
     { name: 'Etiyopya', code: 'ET' },
     { name: 'Falkland Adaları', code: 'FK' },
-    { name: 'Faroe Adaları', FO: 'FO' },
+    { name: 'Faroe Adaları', code: 'FO' },
     { name: 'Fas', code: 'MA' },
     { name: 'Fiji', code: 'FJ' },
     { name: 'Fildişi Kıyısı', code: 'CI' },
@@ -308,7 +310,7 @@ export const COUNTRY_LIST = [
     { name: 'Sao Tome', code: 'ST' },
     { name: 'Senegal', code: 'SN' },
     { name: 'Seyşeller', code: 'SC' },
-    { name: 'Sırbistan', code: 'XS' },
+    { name: 'Sırbistan', code: 'RS' },
     { name: 'Sierra Leone', code: 'SL' },
     { name: 'Singapur', code: 'SG' },
     { name: 'Slovakya', code: 'SK' },

@@ -204,8 +204,6 @@ const App: React.FC = () => {
 
 
   const handleUpdateDB = async (newDB: Database | ((prev: Database) => Database)) => {
-    let dbToSave: Database | null = null;
-
     setDB(prev => {
       if (!prev) return prev;
 
@@ -220,14 +218,23 @@ const App: React.FC = () => {
         dbToUpdate.currentUser = DEFAULT_ADMIN;
       }
 
-      dbToSave = dbToUpdate;
       return dbToUpdate;
     });
-
-    if (dbToSave) {
-      await saveDB(dbToSave);
-    }
   };
+
+  // Centralized Save logic to ensure reliability
+  useEffect(() => {
+    if (db && !isFirstLoad.current) {
+      const saveToStorage = async () => {
+        try {
+          await saveDB(db);
+        } catch (error) {
+          console.error('[DB-SAVE-EFFECT] Critical Error:', error);
+        }
+      };
+      saveToStorage();
+    }
+  }, [db]);
 
   // Fetch real time from online API
   const fetchRealTime = async (): Promise<Date | null> => {
@@ -878,6 +885,9 @@ const App: React.FC = () => {
       const data = await loadDBFromFile();
       setDB(data);
       setLoading(false);
+      
+      // Mark as loaded so useEffect doesn't trigger save immediately
+      isFirstLoad.current = false;
 
       // Clear currentUser on restart to force login, unless no users exist
       if (data.users.length === 0) {

@@ -39,7 +39,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     { name: 'Umman', code: 'OM' },
     { name: 'Bulgaristan', code: 'BG' },
     { name: 'Moldova', code: 'MD' },
-    { name: 'Sırbistan', code: 'XS' },
+    { name: 'Sırbistan', code: 'RS' },
     { name: 'Ukrayna', code: 'UA' }
   ];
 
@@ -390,21 +390,51 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     const reportOrders = db.orders.filter(o => {
       if (o.isSuspended || o.status === OrderStatus.CANCELLED) return false;
       const orderDate = new Date(o.orderDate);
-      return orderDate >= start && orderDate <= end;
+      const isDateMatch = orderDate >= start && orderDate <= end;
+      if (!isDateMatch) return false;
+
+      // Apply active country filters if any
+      if (selectedCountries.length > 0) {
+        const codeUpper = getEffectiveOrderCountryCode(o).toUpperCase();
+        return selectedCountries.some(code => codeUpper === code.toUpperCase());
+      }
+      return true;
     });
 
     if (reportOrders.length === 0) {
-      alert("Seçilen tarih aralığında satış/sipariş bulunamadı.");
+      alert("Seçilen tarih aralığında ve filtrelerde satış/sipariş bulunamadı.");
       return;
     }
 
     const groupedData: Record<string, any> = {};
+    const cList = [
+      { name: 'Almanya', code: 'DE' },
+      { name: 'Suudi Arabistan', code: 'SA' },
+      { name: 'Romanya', code: 'RO' },
+      { name: 'Yunanistan', code: 'GR' },
+      { name: 'Azerbaycan', code: 'AZ' },
+      { name: 'B.A.E.', code: 'AE' },
+      { name: 'Katar', code: 'QA' },
+      { name: 'Kuveyt', code: 'KW' },
+      { name: 'Umman', code: 'OM' },
+      { name: 'Bulgaristan', code: 'BG' },
+      { name: 'Moldova', code: 'MD' },
+      { name: 'Sırbistan', code: 'RS' },
+      { name: 'Ukrayna', code: 'UA' },
+      { name: 'Türkiye', code: 'TR' }
+    ];
+
     reportOrders.forEach(order => {
+      const countryCode = getEffectiveOrderCountryCode(order);
+      const countryName = cList.find(c => c.code === countryCode)?.name || countryCode;
+
       order.items.forEach(item => {
-        const key = `${order.storeName}_${item.barcode}`;
+        // Group by Store, Country and Barcode
+        const key = `${order.storeName}_${countryCode}_${item.barcode}`;
         if (!groupedData[key]) {
           groupedData[key] = {
             'Mağaza': order.storeName,
+            'Ülke': countryName,
             'Ürün Adı': item.productName,
             'Barkod': item.barcode,
             'Renk': item.color || '-',
@@ -424,6 +454,39 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     XLSX.writeFile(workbook, `Satis_Raporu_Ozet.xlsx`);
     setIsReportModalOpen(false);
   };
+
+  // --- Ülke Bazlı Analiz ---
+  const countryAnalytics = useMemo(() => {
+    const stats: Record<string, { code: string, name: string, count: number, revenue: number }> = {};
+    const cList = [
+      { name: 'Almanya', code: 'DE' },
+      { name: 'Suudi Arabistan', code: 'SA' },
+      { name: 'Romanya', code: 'RO' },
+      { name: 'Yunanistan', code: 'GR' },
+      { name: 'Azerbaycan', code: 'AZ' },
+      { name: 'B.A.E.', code: 'AE' },
+      { name: 'Katar', code: 'QA' },
+      { name: 'Kuveyt', code: 'KW' },
+      { name: 'Umman', code: 'OM' },
+      { name: 'Bulgaristan', code: 'BG' },
+      { name: 'Moldova', code: 'MD' },
+      { name: 'Sırbistan', code: 'RS' },
+      { name: 'Ukrayna', code: 'UA' },
+      { name: 'Türkiye', code: 'TR' }
+    ];
+
+    filteredOrders.forEach(order => {
+      const code = getEffectiveOrderCountryCode(order);
+      if (!stats[code]) {
+        const countryName = cList.find(c => c.code === code)?.name || code;
+        stats[code] = { code, name: countryName, count: 0, revenue: 0 };
+      }
+      stats[code].count += 1;
+      stats[code].revenue += order.items.reduce((sum, item) => sum + item.totalPrice, 0);
+    });
+
+    return Object.values(stats).sort((a, b) => b.revenue - a.revenue);
+  }, [filteredOrders]);
 
   return (
     <div className="space-y-6">
@@ -702,6 +765,58 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
             </LineChart>
           </ResponsiveContainer>
         </div>
+      </div>
+
+      {/* Ülke Bazlı Satış Dağılımı */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+        <h3 className="text-lg font-bold text-gray-800 mb-4">Ülke Bazlı Satış Dağılımı</h3>
+        {countryAnalytics.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="text-gray-500 text-sm border-b">
+                  <th className="pb-3 font-medium">Ülke</th>
+                  <th className="pb-3 font-medium">Sipariş</th>
+                  <th className="pb-3 font-medium">Ciro</th>
+                  <th className="pb-3 font-medium text-right">Pay</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {countryAnalytics.map((country) => (
+                  <tr key={country.code} className="group hover:bg-gray-50 transition-colors">
+                    <td className="py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-bold text-xs">
+                          {country.code}
+                        </div>
+                        <span className="font-medium text-gray-700">{country.name}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 text-gray-600">{country.count} Adet</td>
+                    <td className="py-3 font-semibold text-green-600">{country.revenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                    <td className="py-3 text-right">
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="text-xs font-bold text-gray-400">
+                          {((country.revenue / (grossRevenue || 1)) * 100).toFixed(1)}%
+                        </span>
+                        <div className="w-24 bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                          <div 
+                            className="bg-blue-500 h-full rounded-full" 
+                            style={{ width: `${(country.revenue / (grossRevenue || 1)) * 100}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-center py-8 text-gray-400">
+            Veri bulunamadı.
+          </div>
+        )}
       </div>
 
       {/* Stok Azalma Uyarısı */}

@@ -57,6 +57,7 @@ const DEFAULT_PRINT_CONFIG: PrintConfig = {
         { id: '2', label: 'Müşteri Adı', key: 'customerName', x: 20, y: 40, fontSize: 14, visible: true },
         { id: '4', label: 'Kargo Kodu', key: 'cargoCode', x: 130, y: 50, fontSize: 14, visible: true, isBarcode: true },
         { id: '4b', label: 'Kargo Firması', key: 'cargoCompanyName', x: 20, y: 52, fontSize: 10, visible: true },
+        { id: '4c', label: 'Ülke', key: 'countryName', x: 20, y: 56, fontSize: 10, visible: true },
         { id: '7', label: 'Adres', key: 'deliveryAddress', x: 20, y: 64, fontSize: 10, width: 100, visible: true },
         {
             id: '5', label: 'Ürün Listesi', key: 'items', x: 20, y: 100, fontSize: 10, width: 170, visible: true, tableColumns: [
@@ -356,6 +357,13 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (saved) {
             try {
                 const config = JSON.parse(saved);
+                const mergedElements = [...config.elements];
+                DEFAULT_PRINT_CONFIG.elements.forEach(defEl => {
+                    if (!mergedElements.find(e => e.id === defEl.id)) {
+                        mergedElements.push(defEl);
+                    }
+                });
+                config.elements = mergedElements;
                 setPrintConfig(config);
             } catch (error) {
                 console.error('Failed to load saved print config:', error);
@@ -1229,12 +1237,6 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }
 
             // 2. DB'yi Güncelle (Senkronizasyondan ÖNCE yap ki sync güncel veriyi okusun)
-            let nextDismissed = [...(db.dismissedOrderImportKeys || [])];
-            if (isSuspended && order.marketplaceOrderId) {
-                const k = orderImportDismissKey(order.storeName, order.marketplaceOrderId, order.shipmentPackageId);
-                if (!nextDismissed.includes(k)) nextDismissed.push(k);
-                if (nextDismissed.length > 4000) nextDismissed = nextDismissed.slice(-4000);
-            }
 
             const newOrders = db.orders.filter(o => o.id !== orderId);
             const newReturns = db.returns.filter(r => r.orderId !== orderId);
@@ -1243,8 +1245,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 ...db,
                 orders: newOrders,
                 returns: newReturns,
-                products: currentProducts,
-                dismissedOrderImportKeys: nextDismissed
+                products: currentProducts
             });
 
             // 3. Stok Senkronizasyonunu Tetikle (TOPLAM STOKLAR)
@@ -1351,21 +1352,12 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 }
             });
 
-            let nextDismissed = [...(db.dismissedOrderImportKeys || [])];
-            selectedOrders.forEach(orderId => {
-                const order = db.orders.find(o => o.id === orderId);
-                if (order && order.isSuspended && order.marketplaceOrderId) {
-                    const k = orderImportDismissKey(order.storeName, order.marketplaceOrderId, order.shipmentPackageId);
-                    if (!nextDismissed.includes(k)) nextDismissed.push(k);
-                }
-            });
-            if (nextDismissed.length > 4000) nextDismissed = nextDismissed.slice(-4000);
+            // 2. DB'yi Güncelle
 
             updateDB({
                 ...db,
                 orders: db.orders.filter(o => !selectedOrders.includes(o.id)),
-                products: currentProducts,
-                dismissedOrderImportKeys: nextDismissed
+                products: currentProducts
             });
 
             // Sync
@@ -1418,13 +1410,20 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             // Her sipariş için her ürün kalemini ayrı satır olarak ekle
             orders.forEach(o => {
                 o.items.forEach((item, index) => {
-                    const orderData = {
+                    const config = db.apiConfigs.find(c => c.storeName === o.storeName);
+                    const countryCode = getEffectiveOrderCountryCode(o);
+                    const countryName = PRIORITY_COUNTRIES.find(c => c.code === countryCode)?.name || countryCode;
+
+                    const orderData: any = {
                         'Mağaza': o.storeName,
+                        'Satıcı ID': o.fullData?.supplierId || config?.supplierId || '-',
                         'Sipariş No': o.marketplaceOrderId,
                         'Müşteri': o.customerName,
                         'Teslimat Adresi': o.deliveryAddress || '',
+                        'Kargo Firması': o.cargoCompanyName || '-',
                         'Kargo Kodu': o.cargoCode,
-                        'Sipariş Tarihi': new Date(o.orderDate).toLocaleDateString('tr-TR'),
+                        'Sipariş Tarihi': new Date(o.orderDate).toLocaleString('tr-TR'),
+                        ...(o.fullData?.estimatedDeliveryEndDate ? { 'Termin Süresi': new Date(o.fullData.estimatedDeliveryEndDate).toLocaleString('tr-TR') } : {}),
                         'Sipariş Durumu': o.status,
                         'Kalem No': index + 1,
                         'Ürün Adı': item.productName,
@@ -1436,7 +1435,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         'Birim Fiyat': item.unitPrice.toFixed(2),
                         'Kalem Toplamı': (item.unitPrice * item.quantity).toFixed(2),
                         'Genel Toplam': (item.unitPrice * item.quantity).toFixed(2),
-                        'Ülke': getEffectiveOrderCountryCode(o),
+                        'Ülke': countryName,
                         'Yazdırıldı': o.isPrinted ? 'Evet' : 'Hayır',
                         'Askıda': o.isSuspended ? 'Evet' : 'Hayır'
                     };
@@ -1977,12 +1976,11 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         content = new Date(orderToPrint.orderDate).toLocaleDateString('tr-TR');
                     } else if (el.key === 'cargoCompanyName') {
                         const val = orderToPrint.cargoCompanyName || '';
-                        content = (
-                            <div>
-                                <div style={{ fontSize: `${Math.max(7, el.fontSize - 2)}pt`, fontWeight: 800, marginBottom: '0.5mm', letterSpacing: '0.02em' }}>Kargo Firması</div>
-                                <div style={{ fontWeight: 600 }}>{val || '—'}</div>
-                            </div>
-                        );
+                        content = <div style={{ fontWeight: 600 }}>{val || '—'}</div>;
+                    } else if (el.key === 'countryName') {
+                        const cCode = getEffectiveOrderCountryCode(orderToPrint as Order);
+                        const cName = PRIORITY_COUNTRIES.find(c => c.code === cCode)?.name || cCode;
+                        content = <div style={{ fontWeight: 600 }}>{cName}</div>;
                     } else if (el.key === 'sku') {
                         content = orderToPrint.items.map(i => i.sku).filter(Boolean).join(', ');
                     } else if (el.key.startsWith('customNote')) {
@@ -2006,6 +2004,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                     data-height={el.barcodeHeight || Math.max(20, el.fontSize * 2.5)}
                                     data-width={Math.max(1, el.fontSize / 8)}
                                     data-displayvalue="true"
+                                    data-fontoptions="bold"
                                 ></svg>
                             </div>
                         );
@@ -2030,6 +2029,13 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (saved) {
             try {
                 const config = JSON.parse(saved);
+                const mergedElements = [...config.elements];
+                DEFAULT_PRINT_CONFIG.elements.forEach(defEl => {
+                    if (!mergedElements.find(e => e.id === defEl.id)) {
+                        mergedElements.push(defEl);
+                    }
+                });
+                config.elements = mergedElements;
                 setPrintConfig(config);
                 setNotification({
                     type: 'success',
@@ -2125,8 +2131,11 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 const raw = String((orderToPrint as Order).cargoCompanyName || '');
                 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
                 const val = esc(raw);
-                const titleFs = Math.max(7, el.fontSize - 2);
-                content = `<div><div style="font-size:${titleFs}pt;font-weight:800;margin-bottom:0.5mm;letter-spacing:0.02em">Kargo Firması</div><div style="font-weight:600">${val || '—'}</div></div>`;
+                content = `<div style="font-weight:600">${val || '—'}</div>`;
+            } else if (el.key === 'countryName') {
+                const cCode = getEffectiveOrderCountryCode(orderToPrint as Order);
+                const cName = PRIORITY_COUNTRIES.find(c => c.code === cCode)?.name || cCode;
+                content = `<div style="font-weight:600">${cName}</div>`;
             } else if (el.key === 'sku') {
                 content = orderToPrint.items.map(i => i.sku).filter(Boolean).join(', ');
             } else if (el.key.startsWith('customNote')) {
@@ -2149,7 +2158,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 data-format="CODE128" 
                 data-height="${el.barcodeHeight || Math.max(20, el.fontSize * 2.5)}" 
                 data-width="${Math.max(1, el.fontSize / 8)}" 
-                data-displayvalue="true"></svg>
+                data-displayvalue="true"
+                data-fontoptions="bold"></svg>
           </div>
         `;
             } else {

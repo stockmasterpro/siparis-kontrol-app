@@ -38,6 +38,16 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
         setCurrentPage(1);
     }, [searchTerm, storeFilter]);
 
+    // Auto-clear notification
+    React.useEffect(() => {
+        if (notification) {
+            const timer = setTimeout(() => {
+                setNotification(null);
+            }, 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [notification]);
+
     const safeFormatDate = (dateStr: string | number | undefined, formatStr: string = 'd MMMM yyyy HH:mm') => {
         if (!dateStr) return 'Tarih Belirtilmemiş';
         try {
@@ -538,8 +548,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                         const productPageUrl = resolveQuestionProductPageUrl(selectedQuestion);
                         return (
                         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
-                                <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-4 text-white flex justify-between items-center">
+                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[90vh]">
+                                <div className="bg-gradient-to-r from-blue-600 to-blue-700 p-4 text-white flex justify-between items-center shrink-0">
                                     <div className="flex items-center space-x-3">
                                         <div className="bg-white/20 p-2 rounded-lg"><MessageSquare size={20} /></div>
                                         <div>
@@ -552,8 +562,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                     </button>
                                 </div>
 
-                                <div className="p-6 space-y-6 overflow-y-auto max-h-[80vh]">
-                                    <div className="bg-gray-50 rounded-2xl p-5 border-2 border-dashed border-gray-200 shadow-inner">
+                                <div className="flex flex-1 overflow-hidden">
+                                    <div className="flex-1 p-6 space-y-6 overflow-y-auto flex flex-col">
+                                        <div className="bg-gray-50 rounded-2xl p-5 border-2 border-dashed border-gray-200 shadow-inner shrink-0">
                                         <div className="flex flex-col md:flex-row gap-6">
                                             <div className="flex gap-3 justify-center md:justify-start">
                                                 {selectedQuestion.productImageUrl && (
@@ -616,32 +627,40 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                         </div>
                                     </div>
 
-                                    <div>
-                                        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                                            <label className="text-sm font-bold text-gray-700">Cevabınız</label>
-                                            <span className={`text-xs ${answerText.length >= 10 && answerText.length <= 2000 ? 'text-green-600' : 'text-red-500'}`}>
-                                                {answerText.length} / 2000
-                                            </span>
+                                        <div className="flex flex-col flex-1 min-h-[200px]">
+                                            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                                                <label className="text-sm font-bold text-gray-700">Cevabınız</label>
+                                                <span className={`text-xs ${answerText.length >= 10 && answerText.length <= 2000 ? 'text-green-600' : 'text-red-500'}`}>
+                                                    {answerText.length} / 2000
+                                                </span>
+                                            </div>
+                                            <textarea
+                                                className="w-full flex-1 border-2 border-gray-200 rounded-xl p-4 text-sm focus:border-blue-500 focus:ring-0 outline-none transition-colors resize-none"
+                                                placeholder="Cevabınızı buraya yazın..."
+                                                value={answerText}
+                                                onChange={(e) => setAnswerText(e.target.value)}
+                                            />
                                         </div>
-                                        <textarea
-                                            className="w-full border-2 border-gray-200 rounded-xl p-4 text-sm focus:border-blue-500 focus:ring-0 outline-none transition-colors h-40 resize-none"
-                                            placeholder="Cevabınızı buraya yazın..."
-                                            value={answerText}
-                                            onChange={(e) => setAnswerText(e.target.value)}
-                                        />
                                     </div>
 
                                     {db.settings.quickAnswers && db.settings.quickAnswers.length > 0 && (
-                                        <div>
-                                            <p className="text-xs font-bold text-gray-500 mb-2 uppercase tracking-wider">Hazır Cevaplar</p>
-                                            <div className="flex flex-wrap gap-2">
+                                        <div className="w-80 bg-gray-50 border-l border-gray-200 flex flex-col shrink-0">
+                                            <div className="p-4 border-b border-gray-200 bg-white shadow-sm z-10">
+                                                <h4 className="text-xs font-extrabold text-gray-700 uppercase tracking-wider flex items-center gap-2">
+                                                    <Clock size={16} className="text-blue-600" />
+                                                    Hazır Cevaplar
+                                                </h4>
+                                                <p className="text-[10px] text-gray-500 mt-1">Hızlıca cevaplamak için bir şablon seçin</p>
+                                            </div>
+                                            <div className="flex-1 overflow-y-auto p-4 space-y-3">
                                                 {db.settings.quickAnswers.map((qa) => (
                                                     <button
                                                         key={qa.id}
                                                         onClick={() => useQuickAnswer(qa.text)}
-                                                        className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium transition-colors border"
+                                                        className="w-full text-left bg-white p-3 rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all group"
                                                     >
-                                                        {qa.title}
+                                                        <div className="font-bold text-sm text-gray-800 mb-1 group-hover:text-blue-700 transition-colors">{qa.title}</div>
+                                                        <div className="text-xs text-gray-500 line-clamp-4 leading-relaxed">{qa.text}</div>
                                                     </button>
                                                 ))}
                                             </div>
@@ -649,7 +668,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                     )}
                                 </div>
 
-                                <div className="p-4 bg-gray-50 border-t flex justify-between items-center">
+                                <div className="p-4 bg-gray-50 border-t flex justify-between items-center shrink-0">
                                     <div className="flex space-x-2">
                                         <button
                                             onClick={handlePrevious}
