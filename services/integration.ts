@@ -1,6 +1,8 @@
 import { Database, ApiConfig, Product, Variant, Order, OrderStatus, Question, QuestionStatus, ReturnClaim } from '../types';
 import { resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi, orderImportDismissKey } from '../utils/orderUtils';
 
+let globalSyncLock = false;
+
 /**
  * Trendyol Ürün Aktarma (Create/Update Products)
  * POST /suppliers/{supplierId}/v2/products
@@ -792,6 +794,18 @@ export const syncMarketplaceOrders = async (
     };
   }
 
+  if (globalSyncLock) {
+    console.warn('[SYNC-LOCK] Sipariş senkronizasyonu zaten devam ediyor, atlanıyor.');
+    return {
+      updatedProducts: db.products,
+      updatedOrders: db.orders,
+      newOrdersAddedCount: 0,
+      barcodesToSync: {}
+    };
+  }
+  globalSyncLock = true;
+  try {
+
   let newOrdersAddedCount = 0;
   let currentDbProducts = [...db.products];
   let currentDbOrders = [...db.orders];
@@ -1295,12 +1309,37 @@ export const syncMarketplaceOrders = async (
     }
   }
 
+  // --- FINAL DEDUPLICATION ---
+  // Aynı mağaza + sipariş numarası + paket ID'sine sahip mükerrer AKTİF kayıtları temizle.
+  // (Özellikle arka plan senkronizasyonu çakışmalarında veya API veri dalgalanmalarında oluşabilir)
+  const seenActiveKeys = new Set<string>();
+  const finalOrders: Order[] = [];
+
+  for (const o of currentDbOrders) {
+    // Arşivlenmiş olanları olduğu gibi koru (zaten ID'leri benzersizleşti)
+    if (o.id.includes('_OLD_')) {
+      finalOrders.push(o);
+      continue;
+    }
+
+    const key = `${o.storeName}::${o.marketplaceOrderId}::${o.shipmentPackageId || ''}`;
+    if (seenActiveKeys.has(key)) {
+      console.warn(`[SYNC-DEDUPE] Mükerrer aktif sipariş temizlendi: ${key}`);
+      continue;
+    }
+    seenActiveKeys.add(key);
+    finalOrders.push(o);
+  }
+
   return {
     updatedProducts: currentDbProducts,
-    updatedOrders: currentDbOrders,
+    updatedOrders: finalOrders,
     newOrdersAddedCount,
     barcodesToSync
   };
+  } finally {
+    globalSyncLock = false;
+  }
 };
 /**
  * Trendyol Müşteri Sorularını Çekme
@@ -1456,6 +1495,11 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
     console.log(`[QUESTION-SYNC-SKIP] ${config.storeName} için soru çekme devre dışı.`);
     return [];
   }
+  if (globalSyncLock) {
+    console.warn('[SYNC-LOCK] Soru senkronizasyonu zaten devam ediyor, atlanıyor.');
+    return [];
+  }
+  globalSyncLock = true;
   try {
     // Note: Official Q&A endpoints use /integration/qna/sellers/{sellerId}/
     const baseUrl = `https://apigw.trendyol.com/integration/qna/sellers/${config.supplierId}/questions/filter`;
@@ -1525,6 +1569,8 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
   } catch (error) {
     console.error(`syncMarketplaceQuestions error for ${config.storeName}:`, error);
     return [];
+  } finally {
+    globalSyncLock = false;
   }
 };
 
@@ -1564,6 +1610,11 @@ export const syncMarketplaceClaims = async (config: ApiConfig): Promise<ReturnCl
     console.log(`[RETURN-SYNC-SKIP] ${config.storeName} için iade çekme devre dışı.`);
     return [];
   }
+  if (globalSyncLock) {
+    console.warn('[SYNC-LOCK] İade senkronizasyonu zaten devam ediyor, atlanıyor.');
+    return [];
+  }
+  globalSyncLock = true;
   try {
     const url = `https://apigw.trendyol.com/integration/order/sellers/${config.supplierId}/claims`;
     let page = 0;
@@ -1664,6 +1715,8 @@ export const syncMarketplaceClaims = async (config: ApiConfig): Promise<ReturnCl
   } catch (error) {
     console.error(`syncMarketplaceClaims error for ${config.storeName}:`, error);
     return [];
+  } finally {
+    globalSyncLock = false;
   }
 };
 

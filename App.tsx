@@ -43,6 +43,7 @@ const App: React.FC = () => {
   const [confirmDialog, setConfirmDialog] = useState<{ message: string, onConfirm: () => void } | null>(null);
   const notificationAudioRef = useRef<HTMLAudioElement | null>(null);
   const dbRef = useRef<Database | null>(null);
+  const syncInProgress = useRef(false);
 
   useEffect(() => {
     dbRef.current = db;
@@ -443,7 +444,8 @@ const App: React.FC = () => {
 
   const handleSyncClaims = async () => {
     const currentDb = dbRef.current;
-    if (!currentDb) return;
+    if (!currentDb || syncInProgress.current) return;
+    syncInProgress.current = true;
 
     const currentClaims = dbRef.current?.returnClaims || [];
     const existingClaimKeys = new Set(currentClaims.map(c => `${c.storeName}|${c.claimId}|${c.claimLineItemId}`));
@@ -513,11 +515,13 @@ const App: React.FC = () => {
       }
       setNotification({ type: 'success', message: `${newClaimsInWaitingState.length} yeni iade talebi sisteme düştü.` });
     }
+    syncInProgress.current = false;
   };
 
   const handleSyncQuestions = async () => {
     const currentDb = dbRef.current;
-    if (!currentDb) return;
+    if (!currentDb || syncInProgress.current) return;
+    syncInProgress.current = true;
 
     console.log('[SYNC] Müşteri soruları güncel olarak çekiliyor...');
     let allLatestQuestions: Question[] = [];
@@ -581,6 +585,7 @@ const App: React.FC = () => {
     }
 
     (window as any).lastQuestionSync = Date.now();
+    syncInProgress.current = false;
   };
 
   // Background service - Centralized Sync
@@ -589,7 +594,8 @@ const App: React.FC = () => {
 
     const performBackgroundSync = async () => {
       const currentDb = dbRef.current;
-      if (!currentDb || !currentDb.settings.enableAutoOrderFetch) return;
+      if (!currentDb || !currentDb.settings.enableAutoOrderFetch || syncInProgress.current) return;
+      syncInProgress.current = true;
 
       if (currentDb.settings.notifications.systemNotification) {
         console.log('[BACKGROUND-SYNC] Pazar yerlerinden siparişler çekiliyor...');
@@ -683,6 +689,8 @@ const App: React.FC = () => {
         }
       } catch (error) {
         console.error('[BACKGROUND-SYNC-ERROR]', error);
+      } finally {
+        syncInProgress.current = false;
       }
     };
 

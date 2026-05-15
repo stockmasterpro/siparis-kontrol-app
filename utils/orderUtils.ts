@@ -49,18 +49,57 @@ export function resolveCountryCodeFromPayload(p: CountryResolvePayload): string 
         pickIsoCountryCode(line?.shipmentAddress?.countryCode) ||
         pickIsoCountryCode(line?.countryCode) ||
         pickIsoCountryCode(line?.shipmentAddress?.country);
-      if (c) return c;
+      if (c && c !== 'TR') return c; // Öncelikli olarak TR dışı kodu al
     }
     return undefined;
   };
 
   const shipCode = pickIsoCountryCode(ship?.countryCode) || pickIsoCountryCode(ship?.country);
-  const lineCode = fromLines();
   const invCode = pickIsoCountryCode(inv?.countryCode) || pickIsoCountryCode(inv?.country);
   const rootCode = pickIsoCountryCode(fd.countryCode);
   const stored = pickIsoCountryCode(p.countryCode);
 
-  return shipCode || lineCode || invCode || rootCode || stored || 'TR';
+  // 1. API'de açıkça TR dışında bir ülke kodu varsa onu kullan (gerçek müşteri ülkesi gelmişse)
+  if (shipCode && shipCode !== 'TR') return shipCode;
+  const lineCode = fromLines();
+  if (lineCode) return lineCode;
+  if (invCode && invCode !== 'TR') return invCode;
+  if (rootCode && rootCode !== 'TR') return rootCode;
+  if (stored && stored !== 'TR') return stored;
+
+  // 2. Bütün kodlar 'TR' (veya boş) ise, ancak sipariş mikro ihracat / is4P ise:
+  const isMicro = fd.micro || fd.is4P || fd['3pByTrendyol'];
+  
+  if (isMicro) {
+    // Para biriminden ülkeyi tahmin et (TRY dışında ise)
+    const currencyCode = fd.currencyCode || (Array.isArray(fd.lines) && fd.lines[0]?.currencyCode);
+    if (currencyCode && currencyCode !== 'TRY') {
+      const cCode = currencyCode.toUpperCase();
+      if (cCode === 'RON') return 'RO'; // Romanya
+      if (cCode === 'SAR') return 'SA'; // Suudi Arabistan
+      if (cCode === 'AED') return 'AE'; // BAE
+      if (cCode === 'AZN') return 'AZ'; // Azerbaycan
+      if (cCode === 'KWD') return 'KW'; // Kuveyt
+      if (cCode === 'BHD') return 'BH'; // Bahreyn
+      if (cCode === 'QAR') return 'QA'; // Katar
+      if (cCode === 'OMR') return 'OM'; // Umman
+      if (cCode === 'BGN') return 'BG'; // Bulgaristan
+      if (cCode === 'GEL') return 'GE'; // Gürcistan
+      if (cCode === 'CZK') return 'CZ'; // Çekya
+      if (cCode === 'HUF') return 'HU'; // Macaristan
+      if (cCode === 'PLN') return 'PL'; // Polonya
+      if (cCode === 'RSD') return 'RS'; // Sırbistan
+      if (cCode === 'MKD') return 'MK'; // Kuzey Makedonya
+      if (cCode === 'EUR') return 'EU'; // Avrupa Birliği
+    }
+
+    // Hiçbir belirgin ülke kodu veya para birimi ipucu yoksa, genel bir "Yurt Dışı" kodu ata.
+    // Böylece sipariş TR olarak sayılmaz ve yurt dışı filtrelerinde / istatistiklerinde görünür.
+    return 'INT';
+  }
+
+  // 3. Yurt içi normal sipariş
+  return 'TR';
 }
 
 export function resolveCargoCompanyFromTrendyolApi(api: any): string {
@@ -302,7 +341,9 @@ export const COUNTRY_LIST = [
     { name: 'Yeni Kaledonya', code: 'NC' },
     { name: 'Yeni Zelanda', code: 'NZ' },
     { name: 'Yunanistan', code: 'GR' },
-    { name: 'Zambiya', code: 'ZM' }
+    { name: 'Zambiya', code: 'ZM' },
+    { name: 'Yurt Dışı (Genel)', code: 'INT' },
+    { name: 'Avrupa Birliği', code: 'EU' }
 ];
 
 export const isInternationalOrder = (order: Partial<Order>) => {
