@@ -220,6 +220,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         deliveryAddress: string;
         marketplaceOrderId: string;
         cargoCode: string;
+        cargoCompanyName: string;
+        countryCode: string;
         storeName: string;
         orderDate: string;
         items: { barcode: string; productName: string; color: string; size: string; quantity: number; unitPrice: number; sku: string; }[];
@@ -229,6 +231,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         deliveryAddress: '',
         marketplaceOrderId: '',
         cargoCode: '',
+        cargoCompanyName: '',
+        countryCode: 'TR',
         storeName: '',
         orderDate: new Date().toISOString().split('T')[0],
         items: []
@@ -465,6 +469,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             orderDate: manualOrderForm.orderDate ? new Date(manualOrderForm.orderDate).toISOString() : new Date().toISOString(),
             status: OrderStatus.DELIVERED,
             cargoCode: manualOrderForm.cargoCode || '-',
+            cargoCompanyName: manualOrderForm.cargoCompanyName || '',
+            // @ts-ignore
+            countryCode: manualOrderForm.countryCode || 'TR',
             items: manualOrderForm.items.map(item => ({
                 productName: item.productName,
                 barcode: item.barcode,
@@ -536,6 +543,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             deliveryAddress: '',
             marketplaceOrderId: '',
             cargoCode: '',
+            cargoCompanyName: '',
+            countryCode: 'TR',
             storeName: '',
             orderDate: new Date().toISOString().split('T')[0],
             items: []
@@ -3704,50 +3713,261 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             {/* --- MANUEL SİPARİŞ MODALI --- */}
             {
                 isManualOrderModalOpen && (
-                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200] backdrop-blur-sm no-print font-sans">
-                        <div className="bg-white border border-gray-400 shadow-2xl w-[800px] flex flex-col rounded overflow-hidden">
-                            <div className="h-10 bg-green-600 text-white flex justify-between items-center px-4">
-                                <span className="font-bold flex items-center gap-2"><Plus size={18} /> Manuel Sipariş Oluştur</span>
-                                <button onClick={() => setIsManualOrderModalOpen(false)} className="hover:bg-green-700 px-2 rounded">✕</button>
+                    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] backdrop-blur-sm no-print font-sans p-4">
+                        <div className="bg-white border border-gray-200 shadow-2xl w-full max-w-4xl flex flex-col rounded-2xl overflow-hidden animate-in fade-in zoom-in duration-200 max-h-[90vh]">
+                            <div className="h-14 bg-gradient-to-r from-green-600 to-green-700 text-white flex justify-between items-center px-6 shrink-0">
+                                <div className="flex items-center gap-3">
+                                    <div className="bg-white/20 p-2 rounded-lg"><Plus size={20} /></div>
+                                    <span className="font-bold text-lg">Manuel Sipariş Oluştur</span>
+                                </div>
+                                <button onClick={() => setIsManualOrderModalOpen(false)} className="hover:bg-white/20 p-1.5 rounded-full transition-colors">
+                                    <Plus size={24} className="rotate-45" />
+                                </button>
                             </div>
 
-                            <div className="p-4 flex flex-col gap-4 overflow-auto max-h-[80vh]">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-2">
-                                        <label className="block text-xs font-bold text-gray-700 uppercase">Mağaza *</label>
+                            <div className="p-6 overflow-y-auto min-h-0 space-y-6">
+                                {/* Section 1: General Info */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Mağaza *</label>
                                         <select
-                                            className="desktop-input w-full"
+                                            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-0 outline-none transition-all"
                                             value={manualOrderForm.storeName}
                                             onChange={e => setManualOrderForm({ ...manualOrderForm, storeName: e.target.value })}
                                         >
-                                            <option value="">Seçiniz...</option>
+                                            <option value="">Mağaza Seçiniz...</option>
                                             {db.apiConfigs.map(config => (
                                                 <option key={config.id} value={config.storeName}>{config.storeName}</option>
                                             ))}
+                                            <option value="Mağaza Satış">Mağaza Satış (Genel)</option>
                                         </select>
                                     </div>
-                                    <div className="space-y-2">
-                                        <label className="block text-xs font-bold text-gray-700 uppercase">Müşteri Ad Soyad *</label>
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Sipariş No</label>
                                         <input
-                                            className="desktop-input w-full"
-                                            value={manualOrderForm.customerName}
-                                            onChange={e => setManualOrderForm({ ...manualOrderForm, customerName: e.target.value })}
-                                            placeholder="Müşteri adını giriniz..."
+                                            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-0 outline-none transition-all"
+                                            value={manualOrderForm.marketplaceOrderId}
+                                            onChange={e => setManualOrderForm({ ...manualOrderForm, marketplaceOrderId: e.target.value })}
+                                            placeholder="Otomatik oluşturulur..."
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Tarih</label>
+                                        <input
+                                            type="date"
+                                            className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-0 outline-none transition-all"
+                                            value={manualOrderForm.orderDate}
+                                            onChange={e => setManualOrderForm({ ...manualOrderForm, orderDate: e.target.value })}
                                         />
                                     </div>
                                 </div>
+
+                                {/* Section 2: Customer Info */}
+                                <div className="bg-gray-50/50 p-5 rounded-2xl border border-gray-100 space-y-4">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <div className="w-1.5 h-4 bg-green-500 rounded-full"></div>
+                                        <h4 className="text-sm font-bold text-gray-700">Müşteri ve Teslimat Bilgileri</h4>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-1.5">
+                                            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Ad Soyad *</label>
+                                            <input
+                                                className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-0 outline-none transition-all"
+                                                value={manualOrderForm.customerName}
+                                                onChange={e => setManualOrderForm({ ...manualOrderForm, customerName: e.target.value })}
+                                                placeholder="Müşteri adını giriniz..."
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Telefon</label>
+                                            <input
+                                                className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-0 outline-none transition-all"
+                                                value={manualOrderForm.phone}
+                                                onChange={e => setManualOrderForm({ ...manualOrderForm, phone: e.target.value })}
+                                                placeholder="05xx..."
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        <div className="md:col-span-2 space-y-1.5">
+                                            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Teslimat Adresi</label>
+                                            <textarea
+                                                className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-0 outline-none transition-all resize-none h-20"
+                                                value={manualOrderForm.deliveryAddress}
+                                                onChange={e => setManualOrderForm({ ...manualOrderForm, deliveryAddress: e.target.value })}
+                                                placeholder="Adres detaylarını giriniz..."
+                                            />
+                                        </div>
+                                        <div className="space-y-4">
+                                            <div className="space-y-1.5">
+                                                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Ülke</label>
+                                                <select
+                                                    className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-0 outline-none transition-all"
+                                                    value={manualOrderForm.countryCode}
+                                                    onChange={e => setManualOrderForm({ ...manualOrderForm, countryCode: e.target.value })}
+                                                >
+                                                    {PRIORITY_COUNTRIES.map(c => (
+                                                        <option key={c.code} value={c.code}>{c.name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Kargo Firması</label>
+                                                <input
+                                                    className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-0 outline-none transition-all"
+                                                    value={manualOrderForm.cargoCompanyName}
+                                                    onChange={e => setManualOrderForm({ ...manualOrderForm, cargoCompanyName: e.target.value })}
+                                                    placeholder="Örn: Trendyol Express"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Kargo Takip Kodu</label>
+                                        <input
+                                            className="w-full bg-white border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:border-green-500 focus:ring-0 outline-none transition-all"
+                                            value={manualOrderForm.cargoCode}
+                                            onChange={e => setManualOrderForm({ ...manualOrderForm, cargoCode: e.target.value })}
+                                            placeholder="Takip kodunu giriniz..."
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Section 3: Products */}
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-1.5 h-4 bg-green-500 rounded-full"></div>
+                                            <h4 className="text-sm font-bold text-gray-700">Ürünler ({manualOrderForm.items.length})</h4>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-2">
+                                        <div className="relative flex-1">
+                                            <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none text-gray-400">
+                                                <HardDrive size={18} />
+                                            </div>
+                                            <input
+                                                className="w-full bg-gray-50 border border-gray-200 rounded-xl pl-11 pr-4 py-3 text-sm focus:border-green-500 focus:ring-0 outline-none transition-all font-mono"
+                                                value={manualBarcode}
+                                                onChange={e => setManualBarcode(e.target.value)}
+                                                onKeyDown={e => e.key === 'Enter' && handleAddManualItem()}
+                                                placeholder="Ürün barkodunu okutun veya yazın..."
+                                            />
+                                        </div>
+                                        <button
+                                            onClick={handleAddManualItem}
+                                            className="bg-green-600 text-white px-6 rounded-xl font-bold hover:bg-green-700 transition-all active:scale-95 shadow-lg shadow-green-100 flex items-center gap-2"
+                                        >
+                                            <Plus size={18} /> Ekle
+                                        </button>
+                                    </div>
+
+                                    {manualOrderForm.items.length > 0 ? (
+                                        <div className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+                                            <table className="w-full text-sm">
+                                                <thead className="bg-gray-50 text-gray-500 text-[10px] uppercase font-bold tracking-wider">
+                                                    <tr>
+                                                        <th className="px-4 py-3 text-left">Ürün</th>
+                                                        <th className="px-4 py-3 text-center">Beden</th>
+                                                        <th className="px-4 py-3 text-center">Adet</th>
+                                                        <th className="px-4 py-3 text-right">Fiyat</th>
+                                                        <th className="px-4 py-3 text-right w-16"></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-gray-100 bg-white">
+                                                    {manualOrderForm.items.map((item, idx) => (
+                                                        <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                                                            <td className="px-4 py-3">
+                                                                <div className="font-bold text-gray-800">{item.productName}</div>
+                                                                <div className="text-[10px] text-gray-400 font-mono">{item.barcode} | {item.sku}</div>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-center">
+                                                                <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full text-[10px] font-bold border border-blue-100">{item.size}</span>
+                                                            </td>
+                                                            <td className="px-4 py-3">
+                                                                <div className="flex items-center justify-center gap-2">
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            const newItems = [...manualOrderForm.items];
+                                                                            if (newItems[idx].quantity > 1) {
+                                                                                newItems[idx].quantity--;
+                                                                                setManualOrderForm({ ...manualOrderForm, items: newItems });
+                                                                            }
+                                                                        }}
+                                                                        className="w-6 h-6 rounded-lg border border-gray-200 flex items-center justify-center hover:bg-gray-100"
+                                                                    >-</button>
+                                                                    <span className="w-6 text-center font-bold">{item.quantity}</span>
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            const newItems = [...manualOrderForm.items];
+                                                                            newItems[idx].quantity++;
+                                                                            setManualOrderForm({ ...manualOrderForm, items: newItems });
+                                                                        }}
+                                                                        className="w-6 h-6 rounded-lg border border-gray-200 flex items-center justify-center hover:bg-gray-100"
+                                                                    >+</button>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-right font-bold text-green-700">
+                                                                {(item.unitPrice * item.quantity).toFixed(2)} ₺
+                                                            </td>
+                                                            <td className="px-4 py-3 text-right">
+                                                                <button
+                                                                    onClick={() => {
+                                                                        const newItems = manualOrderForm.items.filter((_, i) => i !== idx);
+                                                                        setManualOrderForm({ ...manualOrderForm, items: newItems });
+                                                                    }}
+                                                                    className="text-red-400 hover:text-red-600 transition-colors"
+                                                                >
+                                                                    <Trash2 size={16} />
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                                <tfoot className="bg-gray-50/50">
+                                                    <tr>
+                                                        <td colSpan={3} className="px-4 py-4 text-right font-bold text-gray-500 uppercase text-xs">Genel Toplam</td>
+                                                        <td className="px-4 py-4 text-right font-extrabold text-lg text-green-600">
+                                                            {manualOrderForm.items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0).toFixed(2)} ₺
+                                                        </td>
+                                                        <td></td>
+                                                    </tr>
+                                                </tfoot>
+                                            </table>
+                                        </div>
+                                    ) : (
+                                        <div className="py-12 border-2 border-dashed border-gray-100 rounded-2xl flex flex-col items-center justify-center text-gray-400 bg-gray-50/50">
+                                            <HardDrive size={40} className="mb-2 opacity-20" />
+                                            <p className="text-sm font-medium">Henüz ürün eklenmedi</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
-                            <div className="h-14 bg-gray-100 border-t flex justify-end items-center px-4 gap-3">
-                                <button onClick={() => setIsManualOrderModalOpen(false)} className="desktop-btn w-24">İptal</button>
-                                <button onClick={handleSaveManualOrder} className="desktop-btn bg-green-600 text-white border-green-700 hover:bg-green-700 w-40 font-bold">
-                                    Siparişi Tamamla
-                                </button>
+                            <div className="p-6 border-t bg-gray-50 flex justify-between items-center shrink-0">
+                                <p className="text-xs text-gray-500">* İşaretli alanlar zorunludur.</p>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => setIsManualOrderModalOpen(false)}
+                                        className="px-6 py-2.5 text-sm font-bold text-gray-600 hover:bg-gray-200 rounded-xl transition-colors"
+                                    >
+                                        İptal
+                                    </button>
+                                    <button
+                                        onClick={handleSaveManualOrder}
+                                        disabled={!manualOrderForm.customerName || !manualOrderForm.storeName || manualOrderForm.items.length === 0}
+                                        className="px-8 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-green-100 transition-all active:scale-95 flex items-center gap-2"
+                                    >
+                                        <Save size={18} /> Siparişi Tamamla
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 )
             }
+
         </div>
     );
 };
