@@ -25,6 +25,7 @@ const INITIAL_DB: Database = {
     sessionTimeoutMinutes: 5,
     enableSessionTimeout: false,
     orderFetchDays: 2,
+    enableOrderVisibilityLimit: true, // v1.6.4: Varsayılan açık
     stockSyncSettings: {
       enabled: true,
       minStockThreshold: 10,

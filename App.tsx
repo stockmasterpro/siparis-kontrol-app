@@ -1173,6 +1173,7 @@ const App: React.FC = () => {
     const fetchDays = db.settings.orderFetchDays || 30;
     const thresholdDate = new Date();
     thresholdDate.setDate(thresholdDate.getDate() - fetchDays);
+    thresholdDate.setHours(0, 0, 0, 0); // O günün başlangıcından itibaren say (Kullanıcı talebi)
 
     // Active Count Logic: 
     // 1. If override present (from OrderManagement filters), use it.
@@ -1191,7 +1192,7 @@ const App: React.FC = () => {
 
     return {
       active: activeCount,
-      cancelled: db.orders.filter(o => o.status === OrderStatus.CANCELLED && new Date(o.orderDate) >= thresholdDate).length,
+      cancelled: db.orders.filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_') && new Date(o.orderDate) >= thresholdDate).length,
       suspended: db.orders.filter(
         o =>
           o.isSuspended &&

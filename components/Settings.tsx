@@ -799,8 +799,8 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
 
                                 <div className="flex items-center justify-between border p-3 rounded bg-gray-50">
                                     <div>
-                                        <h4 className="font-bold text-sm">Sipariş Görünürlük Sınırı</h4>
-                                        <p className="text-xs text-gray-500">Siparişlerin belirli bir süre sonra listeden gizlenmesini sağlar (Sadece filtre uygulanmadığında geçerlidir).</p>
+                                        <h4 className="font-bold text-sm">Sipariş Çekme ve Görünürlük Sınırı</h4>
+                                        <p className="text-xs text-gray-500">Pazaryerinden kaç gün öncesine kadar siparişlerin çekileceğini ve listede gösterileceğini belirler.</p>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <button

@@ -52,11 +52,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     // Ben başlangıçta PRİORİTY + olanları seçili getireceğim.
   }, []);
 
+  const validBarcodesSet = useMemo(() => {
+    const barcodes = new Set<string>();
+    db.products.forEach(p => {
+      if (p.variants) {
+        p.variants.forEach(v => {
+          if (v.barcode) {
+            barcodes.add(v.barcode);
+          }
+        });
+      }
+    });
+    return barcodes;
+  }, [db.products]);
+
   const totalProducts = db.products.length;
 
   // --- Ay Bazlı Filtreleme ---
   const filteredOrders = useMemo(() => {
-    let baseOrders = db.orders.filter(o => !o.isSuspended && o.status !== OrderStatus.CANCELLED);
+    let baseOrders = db.orders.filter(o => {
+      if (o.isSuspended || o.status === OrderStatus.CANCELLED) return false;
+      // Barkodları tanımlı mı kontrolü
+      return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
+    });
 
     // Ülke: yalnızca API'den türetilen countryCode (fullData dahil)
     if (selectedCountries.length > 0) {
@@ -75,7 +93,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     });
 
     return filtered;
-  }, [db.orders, selectedMonth, selectedCountries]);
+  }, [db.orders, selectedMonth, selectedCountries, validBarcodesSet]);
 
   const filteredReturns = useMemo(() => {
     let baseReturns = db.returns;
@@ -230,6 +248,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         const dayOrders = db.orders.filter(o => {
           if (o.isSuspended || o.storeName !== config.storeName || o.status === OrderStatus.CANCELLED) return false;
 
+          // Barkodları tanımlı mı kontrolü
+          const allBarcodesExist = o.items.every(item =>
+            item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode)
+          );
+          if (!allBarcodesExist) return false;
+
           // Apply Country Filter
           if (selectedCountries.length > 0) {
             const codeUpper = getEffectiveOrderCountryCode(o).toUpperCase();
@@ -252,7 +276,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       return dayData;
     });
-  }, [chartDays, db.orders, db.apiConfigs, db.returns, selectedMonth, selectedCountries]);
+  }, [chartDays, db.orders, db.apiConfigs, db.returns, selectedMonth, selectedCountries, validBarcodesSet]);
 
   const chartMonths = useMemo(() => {
     const months = [];
@@ -280,6 +304,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         const monthOrders = db.orders.filter(o => {
           if (o.isSuspended || o.storeName !== config.storeName || o.status === OrderStatus.CANCELLED) return false;
 
+          // Barkodları tanımlı mı kontrolü
+          const allBarcodesExist = o.items.every(item =>
+            item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode)
+          );
+          if (!allBarcodesExist) return false;
+
           // Apply Country Filter
           if (selectedCountries.length > 0) {
             const codeUpper = getEffectiveOrderCountryCode(o).toUpperCase();
@@ -302,7 +332,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       return monthData;
     });
-  }, [chartMonths, db.orders, db.apiConfigs, db.returns, selectedCountries]);
+  }, [chartMonths, db.orders, db.apiConfigs, db.returns, selectedCountries, validBarcodesSet]);
 
   // --- Ay Seçenekleri ---
   const getMonthOptions = () => {
@@ -326,11 +356,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const recentOrders = db.orders.filter(o =>
-      !o.isSuspended &&
-      new Date(o.orderDate) >= thirtyDaysAgo &&
-      o.status !== OrderStatus.CANCELLED
-    );
+    const recentOrders = db.orders.filter(o => {
+      if (o.isSuspended || o.status === OrderStatus.CANCELLED) return false;
+      if (new Date(o.orderDate) < thirtyDaysAgo) return false;
+
+      // Barkodları tanımlı mı kontrolü
+      return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
+    });
 
     const productSales: { [barcode: string]: number } = {};
     recentOrders.forEach(order => {
@@ -368,7 +400,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     });
 
     return criticalItems.sort((a, b) => a.daysOfStock - b.daysOfStock).slice(0, 15);
-  }, [db.orders, db.products]);
+  }, [db.orders, db.products, validBarcodesSet]);
 
   // --- Rapor Oluşturma ---
   const generateExcelReport = () => {
@@ -389,6 +421,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
     const reportOrders = db.orders.filter(o => {
       if (o.isSuspended || o.status === OrderStatus.CANCELLED) return false;
+      
+      // Barkodları tanımlı mı kontrolü
+      const allBarcodesExist = o.items.every(item =>
+        item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode)
+      );
+      if (!allBarcodesExist) return false;
+
       const orderDate = new Date(o.orderDate);
       const isDateMatch = orderDate >= start && orderDate <= end;
       if (!isDateMatch) return false;

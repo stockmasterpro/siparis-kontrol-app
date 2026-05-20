@@ -45,12 +45,10 @@ function setupAutoUpdater() {
     console.log('[UPDATE] Update available:', info.version);
 
     // Windows System Notification
-    new Notification({
-      title: 'Sipariş Kontrol - Güncelleme Mevcut',
-      body: `Yeni sürüm (${info.version}) bulundu. Arka planda indiriliyor...`,
-      icon: getIconPath(),
-      silent: true
-    }).show();
+    showSystemNotification(
+      'Sipariş Kontrol - Güncelleme Mevcut',
+      `Yeni sürüm (${info.version}) bulundu. Arka planda indiriliyor...`
+    );
 
     if (mainWindow) {
       mainWindow.webContents.send('update-message', {
@@ -89,12 +87,17 @@ function setupAutoUpdater() {
     console.log('[UPDATE] Update downloaded.');
 
     // Windows System Notification
-    new Notification({
-      title: 'Sipariş Kontrol - Güncelleme Hazır',
-      body: `Yeni sürüm (${info.version}) başarıyla indirildi. Yüklemek için onayınız bekleniyor.`,
-      icon: getIconPath(),
-      silent: true
-    }).show();
+    showSystemNotification(
+      'Sipariş Kontrol - Güncelleme Hazır',
+      `Yeni sürüm (${info.version}) başarıyla indirildi. Yüklemek için onayınız bekleniyor.`,
+      () => {
+        if (mainWindow) {
+          if (mainWindow.isMinimized()) mainWindow.restore();
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    );
 
     if (mainWindow) {
       mainWindow.webContents.send('update-message', {
@@ -326,6 +329,56 @@ process.on('unhandledRejection', (reason, promise) => {
 
 let mainWindow = null;
 let tray = null;
+const activeNotifications = new Set();
+
+// Helper to show native notifications safely preventing garbage collection
+function showSystemNotification(title, body, onClick = null) {
+  if (!Notification.isSupported()) return null;
+
+  const iconPath = getIconPath();
+  const notification = new Notification({
+    title: title || 'StockMaster Pro',
+    body: body || '',
+    icon: iconPath,
+    silent: true
+  });
+
+  activeNotifications.add(notification);
+
+  notification.on('click', () => {
+    if (onClick) {
+      try {
+        onClick();
+      } catch (err) {
+        console.error('[NOTIFICATION-CLICK-CALLBACK-ERROR]', err);
+      }
+    } else if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.setAlwaysOnTop(true);
+          mainWindow.setAlwaysOnTop(false);
+          mainWindow.focus();
+        }
+      }, 100);
+    }
+    activeNotifications.delete(notification);
+  });
+
+  notification.on('close', () => {
+    activeNotifications.delete(notification);
+  });
+
+  // Safe timeout fallback to clear references
+  setTimeout(() => {
+    activeNotifications.delete(notification);
+  }, 60000);
+
+  notification.show();
+  return notification;
+}
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
@@ -765,34 +818,8 @@ ipcMain.handle('show-notification', async (event, options) => {
 
   if (options.playSound) safePlaySound();
 
-  if (Notification.isSupported()) {
-    const iconPath = getIconPath();
-    const notification = new Notification({
-      title: options.title || 'StockMaster Pro',
-      body: options.body || '',
-      icon: iconPath,
-      silent: true
-    });
-
-    notification.on('click', () => {
-      if (mainWindow) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.show();
-        mainWindow.focus();
-        setTimeout(() => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.setAlwaysOnTop(true);
-            mainWindow.setAlwaysOnTop(false);
-            mainWindow.focus();
-          }
-        }, 100);
-      }
-    });
-
-    notification.show();
-    return true;
-  }
-  return false;
+  const notification = showSystemNotification(options.title, options.body);
+  return !!notification;
 });
 
 // Select Notification Sound IPC

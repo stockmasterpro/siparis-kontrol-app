@@ -642,8 +642,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         let list = db.orders;
 
         if (activeTab === 'cancelled') {
-            // İade alınanları İptal Edilenler sayfasında gösterme
-            list = list.filter(o => o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id));
+            // İade alınanları ve eski sürüm arşiv kayıtlarını İptal Edilenler sayfasında gösterme
+            list = list.filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_') && !db.returns.some(r => r.orderId === o.id));
         } else if (activeTab === 'suspended') {
             list = list.filter(
                 o =>
@@ -810,7 +810,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         let list = db.orders;
 
         if (tab === 'cancelled') {
-            list = list.filter(o => o.status === OrderStatus.CANCELLED);
+            list = list.filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_'));
         } else if (tab === 'suspended') {
             list = list.filter(
                 o =>
@@ -1417,7 +1417,12 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }));
         } else {
             // Her sipariş için her ürün kalemini ayrı satır olarak ekle
-            orders.forEach(o => {
+            // Filtreleme: Eğer Askıdakiler (suspended) sekmesindeysek, 'Taşıma Durumunda' ve 'Teslim Edildi' olanları kesinlikle hariç tut.
+            const filteredForExport = activeTab === 'suspended' 
+                ? orders.filter(o => o.status !== OrderStatus.SHIPPING && o.status !== OrderStatus.DELIVERED)
+                : orders;
+
+            filteredForExport.forEach(o => {
                 o.items.forEach((item, index) => {
                     const config = db.apiConfigs.find(c => c.storeName === o.storeName);
                     const countryCode = getEffectiveOrderCountryCode(o);

@@ -398,20 +398,28 @@ export const syncOrderStatusToMarketplaces = async (
 const fetchOrdersFromTrendyolSapigwLegacy = async (
   config: ApiConfig,
   filters: {
-    status?: string;
+    status?: string | string[];
     startDate?: number;
     endDate?: number;
     page?: number;
     size?: number;
+    orderNumber?: string;
   }
 ): Promise<any[]> => {
   await rateLimitDelay();
   const params = new URLSearchParams();
-  if (filters.status) params.append('status', filters.status);
+  if (filters.status) {
+    if (Array.isArray(filters.status)) {
+      filters.status.forEach(s => params.append('status', s));
+    } else {
+      params.append('status', filters.status);
+    }
+  }
   if (filters.startDate) params.append('startDate', filters.startDate.toString());
   if (filters.endDate) params.append('endDate', filters.endDate.toString());
   if (filters.page !== undefined) params.append('page', filters.page.toString());
   if (filters.size !== undefined) params.append('size', filters.size.toString());
+  if (filters.orderNumber) params.append('orderNumber', filters.orderNumber);
   params.append('orderBy', 'LastUpdateDate');
   params.append('order', 'DESC');
 
@@ -437,21 +445,29 @@ const fetchOrdersFromTrendyolSapigwLegacy = async (
 export const fetchOrdersFromTrendyol = async (
   config: ApiConfig,
   filters: {
-    status?: string;
+    status?: string | string[];
     startDate?: number;
     endDate?: number;
     page?: number;
     size?: number;
+    orderNumber?: string;
   }
 ): Promise<any[]> => {
   try {
     await rateLimitDelay();
 
     const params = new URLSearchParams();
-    if (filters.status) params.append('status', filters.status);
+    if (filters.status) {
+      if (Array.isArray(filters.status)) {
+        filters.status.forEach(s => params.append('status', s));
+      } else {
+        params.append('status', filters.status);
+      }
+    }
     if (filters.startDate !== undefined) params.append('startDate', String(filters.startDate));
     if (filters.endDate !== undefined) params.append('endDate', String(filters.endDate));
     if (filters.page !== undefined) params.append('page', String(filters.page));
+    if (filters.orderNumber !== undefined) params.append('orderNumber', filters.orderNumber);
     const size = Math.min(filters.size ?? 200, 200);
     params.append('size', String(size));
     params.append('orderByField', 'PackageLastModifiedDate');
@@ -870,34 +886,96 @@ export const syncMarketplaceOrders = async (
       }
     } else {
       try {
-        const fetchDays = db.settings.orderFetchDays || 30;
+        const fetchDays = db.settings.enableOrderVisibilityLimit 
+          ? (db.settings.orderFetchDays || 2) 
+          : 30;
         const nowMs = Date.now();
         const horizonMs = fetchDays * 86400000;
         const twoWeeksMs = 14 * 86400000;
         const dedupeKeys = new Set<string>();
 
+        // 1. Yeni Siparişleri Çek (status: 'Created')
         for (let windowEnd = nowMs; windowEnd > nowMs - horizonMs; windowEnd -= twoWeeksMs) {
           const windowStart = Math.max(windowEnd - twoWeeksMs, nowMs - horizonMs);
           let page = 0;
           while (true) {
             const pageOrders = await fetchOrdersFromTrendyol(config, {
+              status: 'Created',
               startDate: windowStart,
               endDate: windowEnd,
               page: page,
               size: 200
             });
-
             if (pageOrders.length === 0) break;
-
             for (const o of pageOrders) {
               const dedupeKey = `${config.storeName}::${o.orderNumber || ''}::${o.shipmentPackageId ?? o.id ?? ''}`;
               if (dedupeKeys.has(dedupeKey)) continue;
               dedupeKeys.add(dedupeKey);
               content.push(o);
             }
-
             if (pageOrders.length < 200) break;
             page++;
+          }
+        }
+
+        // 2. İşleme Alınan Siparişleri Çek (status: 'Picking')
+        for (let windowEnd = nowMs; windowEnd > nowMs - horizonMs; windowEnd -= twoWeeksMs) {
+          const windowStart = Math.max(windowEnd - twoWeeksMs, nowMs - horizonMs);
+          let page = 0;
+          while (true) {
+            const pageOrders = await fetchOrdersFromTrendyol(config, {
+              status: 'Picking',
+              startDate: windowStart,
+              endDate: windowEnd,
+              page: page,
+              size: 200
+            });
+            if (pageOrders.length === 0) break;
+            for (const o of pageOrders) {
+              const dedupeKey = `${config.storeName}::${o.orderNumber || ''}::${o.shipmentPackageId ?? o.id ?? ''}`;
+              if (dedupeKeys.has(dedupeKey)) continue;
+              dedupeKeys.add(dedupeKey);
+              content.push(o);
+            }
+            if (pageOrders.length < 200) break;
+            page++;
+          }
+        }
+
+        // 3. Durum Değişikliği Tespiti ve Otomatik Güncelleme
+        // Veritabanımızda aktif (NEW veya PROCESSING) olan ama çekilen aktif listesinde bulunmayan siparişlerin
+        // güncel durumunu (Kargolandı, İptal, Teslim Edildi) tekil sorgular ile alıp content'e ekleriz.
+        const fetchedKeys = new Set(content.map(o => `${config.storeName}::${o.orderNumber}::${o.shipmentPackageId || ''}`));
+        
+        const activeLocalOrders = currentDbOrders.filter(o => 
+          o.storeName === config.storeName &&
+          (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING) &&
+          !o.id.includes('_OLD_') &&
+          // Son 30 güne ait aktif yerel siparişleri kontrol et (aşırı eskilere bakıp API'yi yormamak için)
+          (Date.now() - new Date(o.orderDate).getTime() < 30 * 86400000)
+        );
+
+        for (const localOrder of activeLocalOrders) {
+          const key = `${localOrder.storeName}::${localOrder.marketplaceOrderId}::${localOrder.shipmentPackageId || ''}`;
+          if (!fetchedKeys.has(key)) {
+            console.log(`[ORDER-SYNC] Aktif listede olmayan sipariş tespit edildi, detay güncelleniyor: ${localOrder.marketplaceOrderId}`);
+            try {
+              const freshOrders = await fetchOrdersFromTrendyol(config, {
+                orderNumber: localOrder.marketplaceOrderId
+              });
+              if (freshOrders && freshOrders.length > 0) {
+                const matchingPkg = freshOrders.find(fo => 
+                  !localOrder.shipmentPackageId || !fo.shipmentPackageId || 
+                  String(fo.shipmentPackageId) === String(localOrder.shipmentPackageId)
+                ) || freshOrders[0];
+                
+                if (matchingPkg) {
+                  content.push(matchingPkg);
+                }
+              }
+            } catch (e) {
+              console.error(`[ORDER-SYNC] Tekil sipariş detay hatası (${localOrder.marketplaceOrderId}):`, e);
+            }
           }
         }
       } catch (error) {
@@ -912,9 +990,12 @@ export const syncMarketplaceOrders = async (
         continue;
       }
 
+      // --- [DATE PARSING & OFFSET FIX] ---
+      const rawOrderDate = apiOrder.orderDate || apiOrder.createdDate || Date.now();
+      const orderTimestamp = typeof rawOrderDate === 'string' ? new Date(rawOrderDate).getTime() : Number(rawOrderDate);
+      
       // 3 Saatlik zaman kayması düzeltmesi (Trendyol API timestamp offset sorunu)
-      const apiOrderDate = apiOrder.orderDate || apiOrder.createdDate || Date.now();
-      const orderDate = new Date(apiOrderDate - (3 * 3600 * 1000));
+      const orderDate = new Date(orderTimestamp - (3 * 3600 * 1000));
 
       let mappedStatus = OrderStatus.NEW;
       const status = (apiOrder.status || apiOrder.shipmentPackageStatus || '').toString().toLowerCase().trim();
@@ -933,14 +1014,63 @@ export const syncMarketplaceOrders = async (
         !o.id.includes('_OLD_')
       );
 
-      // --- IMPORT FILTER RULE ---
-      // Eğer sipariş sistemde YOKSA ve statüsü Yeni veya İşleniyor DEĞİLSE içeri alma.
-      // Yani: Kargolanmış eski bir sipariş ilk kez çekildiğinde sisteme girmesin.
-      // Ama mevcut bir sipariş kargolandıysa güncellensin.
+      // Itemları Hazırla
+      const orderItems: any[] = (apiOrder.lines || []).map((line: any) => {
+        const productName = line.productName || line.name || line.merchantSku || 'Ürün adı mevcut değil';
+        let color = line.attributes?.find((attr: any) => ['Renk', 'Color', 'RENK'].includes(attr.attributeName))?.attributeValue || line.productColor || line.color || '';
+
+        // Fallback color from DB
+        if (!color && (line.barcode || line.stockCode)) {
+          const searchBarcode = line.barcode || line.stockCode;
+          const product = currentDbProducts.find(p => p.variants.some(v => v.barcode === searchBarcode));
+          if (product) {
+            const variant = product.variants.find(v => v.barcode === searchBarcode);
+            if (variant) color = variant.color;
+          }
+        }
+
+        return {
+          orderItemId: String(line.orderItemId || line.id),
+          barcode: line.barcode || line.stockCode || 'NO-BARCODE',
+          productName: productName,
+          sku: line.merchantSku,
+          color: color,
+          size: line.attributes?.find((attr: any) => ['Beden', 'Size', 'BEDEN'].includes(attr.attributeName))?.attributeValue || line.size || '',
+          productSize: line.productSize || line.size || '',
+          quantity: line.quantity,
+          unitPrice: line.price,
+          costPrice: (() => {
+            const p = currentDbProducts.find(prod => prod.variants.some(v => v.barcode === (line.barcode || line.stockCode)));
+            const v = p?.variants.find(varnt => varnt.barcode === (line.barcode || line.stockCode));
+            return v?.costPrice || p?.costPrice;
+          })(),
+          totalPrice: line.price * line.quantity,
+          vatRate: line.vatRate,
+          commission: line.commission,
+          lineGrossAmount: line.lineGrossAmount,
+          fullData: line // Satır bazlı ham veriyi sakla
+        };
+      });
+
+      // --- [STRICT-IMPORT-FILTER v1.6.6] ---
+      // Eğer sipariş sistemde YOKSA:
       if (existingOrderIndex === -1) {
+        // 1. Statü Kontrolü: Sadece 'Yeni' veya 'İşleme Alınan' siparişleri sisteme ilk kez dahil et.
         if (mappedStatus !== OrderStatus.NEW && mappedStatus !== OrderStatus.PROCESSING) {
-          // [SKIP-OLD-ORDER]
           continue;
+        }
+
+        // 2. Tarih Kontrolü: Eğer 'Sipariş Çekme Sınırı' aktifse, belirlenen günden eski siparişleri sisteme alma.
+        if (db.settings.enableOrderVisibilityLimit) {
+          const limitDays = db.settings.orderFetchDays || 2;
+          const limitDate = new Date();
+          limitDate.setDate(limitDate.getDate() - limitDays);
+          limitDate.setHours(0, 0, 0, 0); // O günün başlangıcı (00:00)
+          
+          if (orderDate.getTime() < limitDate.getTime()) {
+            console.log(`[ORDER-SYNC] Tarih sınırına takıldı: ${apiOrder.orderNumber} (${orderDate.toLocaleString()})`);
+            continue;
+          }
         }
       }
 
@@ -1019,10 +1149,12 @@ export const syncMarketplaceOrders = async (
             console.log(`[ORDER-SYNC] Sipariş ${apiOrder.orderNumber} için kargo kodsuz İPTAL bildirimi atlandı (Mevcut kargo: ${existingCargoCode}).`);
             continue;
           }
-          // İçerik değişikliği kontrolü (Adet bazlı)
+          // İçerik değişikliği kontrolü (Adet ve Barkod bazlı)
           const currentQty = existingOrder.items.reduce((a, b) => a + b.quantity, 0);
-          const newQty = (apiOrder.lines || []).reduce((a: any, b: any) => a + b.quantity, 0);
-          const isContentChanged = currentQty !== newQty;
+          const newQty = orderItems.reduce((a, b) => a + b.quantity, 0);
+          const existingBarcodes = existingOrder.items.map(i => i.barcode).sort().join(',');
+          const newBarcodes = orderItems.map(i => i.barcode).sort().join(',');
+          const isContentChanged = currentQty !== newQty || existingBarcodes !== newBarcodes;
 
           if (isCancelledStatus || isContentChanged) {
             console.log(`[ORDER-UPDATE] Sipariş ${apiOrder.orderNumber} iptal/değişim algılandı. Arşivleniyor...`);
@@ -1064,13 +1196,21 @@ export const syncMarketplaceOrders = async (
             // Mevcut siparişi "bulunamadı" durumuna getir ki aşağıda yepyeni bir sipariş olarak eklensin
             existingOrderIndex = -1;
           } else {
-            // Sadece statü/kargo güncellemesi
+            // Sadece statü/kargo güncellemesi ve ürün detayları güncellemesi
             if (existingOrder.status !== mappedStatus) {
               currentDbOrders[existingOrderIndex].status = mappedStatus;
+              
+              // [FIX] Eğer sipariş kargolandıysa veya teslim edildiyse artık askıda kalmamalı.
+              if (mappedStatus === OrderStatus.SHIPPING || mappedStatus === OrderStatus.DELIVERED) {
+                if (currentDbOrders[existingOrderIndex].isSuspended) {
+                  currentDbOrders[existingOrderIndex].isSuspended = false;
+                  currentDbOrders[existingOrderIndex].wasSuspended = true;
+                }
+              }
+
               // If it was already resolved, keep it resolved
               if (existingOrder.wasSuspended) {
                 currentDbOrders[existingOrderIndex].isSuspended = false;
-                currentDbOrders[existingOrderIndex].wasSuspended = true;
               }
             }
             const newCargoCode = String(apiOrder.cargoTrackingNumber || apiOrder.trackingNumber || '-');
@@ -1084,6 +1224,10 @@ export const syncMarketplaceOrders = async (
               currentDbOrders[existingOrderIndex].cargoCompanyName = cargoName;
             }
             currentDbOrders[existingOrderIndex].fullData = apiOrder;
+
+            // HER GÜNCELLEMEDE ÜRÜN DETAYLARINI (isim, renk, beden, fiyat, kdv, komisyon vb.) TAZELE
+            currentDbOrders[existingOrderIndex].items = orderItems;
+
             continue; // Başka işlem yapma, sonraki siparişe geç
           }
         } // Else block closure for cargo code check
@@ -1095,44 +1239,6 @@ export const syncMarketplaceOrders = async (
       // Eğer gelen statü İPTAL ise ve biz zaten yukarıda eskisini iptal edip arşivlediysek,
       // bu "yeni" iptal kaydını tekrar eklemeye gerek yok.
       if (mappedStatus === OrderStatus.CANCELLED) continue;
-
-      // Itemları Hazırla
-      const orderItems: any[] = (apiOrder.lines || []).map((line: any) => {
-        const productName = line.productName || line.name || line.merchantSku || 'Ürün adı mevcut değil';
-        let color = line.attributes?.find((attr: any) => ['Renk', 'Color', 'RENK'].includes(attr.attributeName))?.attributeValue || line.productColor || line.color || '';
-
-        // Fallback color from DB
-        if (!color && (line.barcode || line.stockCode)) {
-          const searchBarcode = line.barcode || line.stockCode;
-          const product = currentDbProducts.find(p => p.variants.some(v => v.barcode === searchBarcode));
-          if (product) {
-            const variant = product.variants.find(v => v.barcode === searchBarcode);
-            if (variant) color = variant.color;
-          }
-        }
-
-        return {
-          orderItemId: String(line.orderItemId || line.id),
-          barcode: line.barcode || line.stockCode || 'NO-BARCODE',
-          productName: productName,
-          sku: line.merchantSku,
-          color: color,
-          size: line.attributes?.find((attr: any) => ['Beden', 'Size', 'BEDEN'].includes(attr.attributeName))?.attributeValue || line.size || '',
-          productSize: line.productSize || line.size || '',
-          quantity: line.quantity,
-          unitPrice: line.price,
-          costPrice: (() => {
-            const p = currentDbProducts.find(prod => prod.variants.some(v => v.barcode === (line.barcode || line.stockCode)));
-            const v = p?.variants.find(varnt => varnt.barcode === (line.barcode || line.stockCode));
-            return v?.costPrice || p?.costPrice;
-          })(),
-          totalPrice: line.price * line.quantity,
-          vatRate: line.vatRate,
-          commission: line.commission,
-          lineGrossAmount: line.lineGrossAmount,
-          fullData: line // Satır bazlı ham veriyi sakla
-        };
-      });
 
       // SUSPEND KONTROLÜ: Tüm barkodlar sistemde var mı?
       // "bir barkod tanımlı olmaz ise askıda kalır ... sipariş siparişler sayfasına düşmez"
