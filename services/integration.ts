@@ -894,37 +894,13 @@ export const syncMarketplaceOrders = async (
         const twoWeeksMs = 14 * 86400000;
         const dedupeKeys = new Set<string>();
 
-        // 1. Yeni Siparişleri Çek (status: 'Created')
+        // 1. Siparişleri Çek (status: 'Created', 'Picking', 'Shipped', 'Delivered')
         for (let windowEnd = nowMs; windowEnd > nowMs - horizonMs; windowEnd -= twoWeeksMs) {
           const windowStart = Math.max(windowEnd - twoWeeksMs, nowMs - horizonMs);
           let page = 0;
           while (true) {
             const pageOrders = await fetchOrdersFromTrendyol(config, {
-              status: 'Created',
-              startDate: windowStart,
-              endDate: windowEnd,
-              page: page,
-              size: 200
-            });
-            if (pageOrders.length === 0) break;
-            for (const o of pageOrders) {
-              const dedupeKey = `${config.storeName}::${o.orderNumber || ''}::${o.shipmentPackageId ?? o.id ?? ''}`;
-              if (dedupeKeys.has(dedupeKey)) continue;
-              dedupeKeys.add(dedupeKey);
-              content.push(o);
-            }
-            if (pageOrders.length < 200) break;
-            page++;
-          }
-        }
-
-        // 2. İşleme Alınan Siparişleri Çek (status: 'Picking')
-        for (let windowEnd = nowMs; windowEnd > nowMs - horizonMs; windowEnd -= twoWeeksMs) {
-          const windowStart = Math.max(windowEnd - twoWeeksMs, nowMs - horizonMs);
-          let page = 0;
-          while (true) {
-            const pageOrders = await fetchOrdersFromTrendyol(config, {
-              status: 'Picking',
+              status: ['Created', 'Picking', 'Shipped', 'Delivered'],
               startDate: windowStart,
               endDate: windowEnd,
               page: page,
@@ -949,7 +925,7 @@ export const syncMarketplaceOrders = async (
         
         const activeLocalOrders = currentDbOrders.filter(o => 
           o.storeName === config.storeName &&
-          (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING) &&
+          (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING || o.status === OrderStatus.SHIPPING) &&
           !o.id.includes('_OLD_') &&
           // Son 30 güne ait aktif yerel siparişleri kontrol et (aşırı eskilere bakıp API'yi yormamak için)
           (Date.now() - new Date(o.orderDate).getTime() < 30 * 86400000)
@@ -1055,8 +1031,13 @@ export const syncMarketplaceOrders = async (
       // --- [STRICT-IMPORT-FILTER v1.6.6] ---
       // Eğer sipariş sistemde YOKSA:
       if (existingOrderIndex === -1) {
-        // 1. Statü Kontrolü: Sadece 'Yeni' veya 'İşleme Alınan' siparişleri sisteme ilk kez dahil et.
-        if (mappedStatus !== OrderStatus.NEW && mappedStatus !== OrderStatus.PROCESSING) {
+        // 1. Statü Kontrolü: Yeni, İşleme Alındı, Taşımada veya Teslim Edildi durumundaki siparişleri sisteme ilk kez dahil et.
+        if (
+          mappedStatus !== OrderStatus.NEW &&
+          mappedStatus !== OrderStatus.PROCESSING &&
+          mappedStatus !== OrderStatus.SHIPPING &&
+          mappedStatus !== OrderStatus.DELIVERED
+        ) {
           continue;
         }
 
@@ -1853,5 +1834,131 @@ export const approveMarketplaceClaim = async (config: ApiConfig, claimId: string
   } catch (error) {
     console.error('approveMarketplaceClaim error:', error);
     throw error;
+  }
+};
+
+/**
+ * Sadece taşımadaki siparişlerin durumunu Trendyol'dan günceller.
+ */
+export const syncOnlyShippingOrders = async (
+  db: Database
+): Promise<{
+  updatedProducts: Product[],
+  updatedOrders: Order[],
+  updatedCount: number,
+  barcodesToSync: { [key: string]: number }
+}> => {
+  if (db.apiConfigs.length === 0) {
+    return {
+      updatedProducts: db.products,
+      updatedOrders: db.orders,
+      updatedCount: 0,
+      barcodesToSync: {}
+    };
+  }
+
+  if (globalSyncLock) {
+    console.warn('[SYNC-LOCK] Senkronizasyon zaten devam ediyor.');
+    return {
+      updatedProducts: db.products,
+      updatedOrders: db.orders,
+      updatedCount: 0,
+      barcodesToSync: {}
+    };
+  }
+  globalSyncLock = true;
+
+  try {
+    let updatedCount = 0;
+    let currentDbProducts = [...db.products];
+    let currentDbOrders = [...db.orders];
+    const barcodesToSync: { [key: string]: number } = {};
+
+    const shippingOrders = currentDbOrders.filter(o => 
+      o.status === OrderStatus.SHIPPING &&
+      !o.id.includes('_OLD_') &&
+      (Date.now() - new Date(o.orderDate).getTime() < 30 * 86400000)
+    );
+
+    for (const order of shippingOrders) {
+      const config = db.apiConfigs.find(c => c.storeName === order.storeName && c.type !== 'MANUAL');
+      if (!config) continue;
+
+      try {
+        console.log(`[SYNC-SHIPPING-ONLY] Sipariş sorgulanıyor: ${order.marketplaceOrderId}`);
+        const freshOrders = await fetchOrdersFromTrendyol(config, {
+          orderNumber: order.marketplaceOrderId
+        });
+
+        if (freshOrders && freshOrders.length > 0) {
+          const matchingPkg = freshOrders.find(fo => 
+            !order.shipmentPackageId || !fo.shipmentPackageId || 
+            String(fo.shipmentPackageId) === String(order.shipmentPackageId)
+          ) || freshOrders[0];
+
+          if (matchingPkg) {
+            const status = (matchingPkg.status || matchingPkg.shipmentPackageStatus || '').toString().toLowerCase().trim();
+            let mappedStatus = order.status;
+
+            if (status === 'shipped' || status === 'shipping') mappedStatus = OrderStatus.SHIPPING;
+            else if (status === 'delivered' || status === 'completed') mappedStatus = OrderStatus.DELIVERED;
+            else if (status === 'cancelled' || status === 'canceled') mappedStatus = OrderStatus.CANCELLED;
+
+            if (order.status !== mappedStatus) {
+              const existingIdx = currentDbOrders.findIndex(o => o.id === order.id);
+              if (existingIdx > -1) {
+                // Eğer İPTAL ise stok iade yap
+                if (mappedStatus === OrderStatus.CANCELLED && !order.isSuspended) {
+                  order.items.forEach(item => {
+                    const product = currentDbProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
+                    if (product) {
+                      const variant = product.variants.find(v => v.barcode === item.barcode);
+                      if (variant) {
+                        const whId = Object.keys(variant.stocks)[0] || 'wh1';
+                        const currentStock = variant.stocks[whId] || 0;
+                        const newStock = currentStock + item.quantity;
+                        const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, whId, newStock);
+                        currentDbProducts = result.updatedProducts;
+
+                        const updatedProduct = currentDbProducts.find(p => p.id === product.id);
+                        if (updatedProduct) {
+                          updatedProduct.variants.forEach(pv => {
+                            if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
+                              const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + b, 0);
+                              barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                            }
+                          });
+                        }
+                      }
+                    }
+                  });
+
+                  currentDbOrders[existingIdx].status = OrderStatus.CANCELLED;
+                  currentDbOrders[existingIdx].id = `${order.id}_OLD_${Date.now()}`;
+                } else {
+                  currentDbOrders[existingIdx].status = mappedStatus;
+                  if (mappedStatus === OrderStatus.DELIVERED) {
+                    currentDbOrders[existingIdx].isSuspended = false;
+                    currentDbOrders[existingIdx].wasSuspended = true;
+                  }
+                }
+                updatedCount++;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`[SYNC-SHIPPING-ONLY] Hata (${order.marketplaceOrderId}):`, e);
+      }
+    }
+
+    return {
+      updatedProducts: currentDbProducts,
+      updatedOrders: currentDbOrders,
+      updatedCount,
+      barcodesToSync
+    };
+  } finally {
+    globalSyncLock = false;
   }
 };
