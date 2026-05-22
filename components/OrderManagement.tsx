@@ -367,7 +367,19 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (saved) {
             try {
                 const config = JSON.parse(saved);
-                const mergedElements = [...config.elements];
+                const mergedElements = config.elements.map((el: any) => {
+                    const defEl = DEFAULT_PRINT_CONFIG.elements.find(e => e.id === el.id);
+                    if (defEl && defEl.tableColumns && el.tableColumns) {
+                        const mergedCols = [...el.tableColumns];
+                        defEl.tableColumns.forEach(defCol => {
+                            if (!mergedCols.find(c => c.key === defCol.key)) {
+                                mergedCols.push(defCol);
+                            }
+                        });
+                        return { ...el, tableColumns: mergedCols };
+                    }
+                    return el;
+                });
                 DEFAULT_PRINT_CONFIG.elements.forEach(defEl => {
                     if (!mergedElements.find(e => e.id === defEl.id)) {
                         mergedElements.push(defEl);
