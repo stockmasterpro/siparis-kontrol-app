@@ -32,11 +32,13 @@ interface PrintElement {
     fontFamily?: string;
     content?: string; // For notes or custom text
     width?: number; // For container width
+    height?: number; // For container height (e.g. images)
     visible: boolean;
     isBarcode?: boolean;
     barcodeHeight?: number;
     forceUppercase?: boolean;
     tableColumns?: { key: string; label: string; visible: boolean }[]; // For items table customization
+    isImage?: boolean; // For image elements
 }
 
 interface PrintConfig {
@@ -66,6 +68,7 @@ const DEFAULT_PRINT_CONFIG: PrintConfig = {
                 { key: 'size', label: 'Beden', visible: true },
                 { key: 'quantity', label: 'Adet', visible: true },
                 { key: 'sku', label: 'SKU', visible: true },
+                { key: 'barcode', label: 'Barkod', visible: true },
                 { key: 'price', label: 'Fiyat', visible: true }
             ]
         },
@@ -74,6 +77,9 @@ const DEFAULT_PRINT_CONFIG: PrintConfig = {
         { id: 'n3', label: 'Not 3', key: 'customNote3', x: 20, y: 290, fontSize: 12, width: 150, visible: false, content: '' },
         { id: 'n4', label: 'Not 4', key: 'customNote4', x: 20, y: 305, fontSize: 12, width: 150, visible: false, content: '' },
         { id: 'n5', label: 'Not 5', key: 'customNote5', x: 20, y: 320, fontSize: 12, width: 150, visible: false, content: '' },
+        { id: 'img1', label: 'Görsel 1', key: 'customImage1', x: 20, y: 230, fontSize: 12, width: 40, height: 20, visible: false, content: '', isImage: true },
+        { id: 'img2', label: 'Görsel 2', key: 'customImage2', x: 150, y: 10, fontSize: 12, width: 40, height: 20, visible: false, content: '', isImage: true },
+        { id: 'img3', label: 'Görsel 3', key: 'customImage3', x: 20, y: 10, fontSize: 12, width: 40, height: 20, visible: false, content: '', isImage: true },
     ]
 };
 
@@ -819,7 +825,20 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING)
             );
         } else if (tab === 'returned') {
-            list = db.returns;
+            let retList = db.returns || [];
+            if (!showAllOrders && !dateFilterStart && !dateFilterEnd) {
+                const fetchDays = db.settings.orderFetchDays || 30;
+                const thresholdDate = new Date();
+                thresholdDate.setDate(thresholdDate.getDate() - fetchDays);
+                retList = retList.filter(r => new Date(r.returnDate) >= thresholdDate);
+            }
+            const groups = new Set();
+            retList.forEach(r => {
+                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const storeName = associatedOrder ? associatedOrder.storeName : '-';
+                groups.add(`${r.marketplaceOrderId}::${storeName}`);
+            });
+            return groups.size;
         } else {
             list = list.filter(o => !o.isSuspended && o.status !== OrderStatus.CANCELLED);
             list = list.filter(o => !isInternationalOrder(o));
@@ -830,7 +849,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             const fetchDays = db.settings.orderFetchDays || 30;
             const thresholdDate = new Date();
             thresholdDate.setDate(thresholdDate.getDate() - fetchDays);
-            list = list.filter(o => tab === 'returned' ? new Date(o.returnDate) >= thresholdDate : new Date(o.orderDate) >= thresholdDate);
+            list = list.filter(o => new Date(o.orderDate) >= thresholdDate);
         }
 
         return list.length;
@@ -873,7 +892,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     // Get paginated orders
     const getPaginatedOrders = () => {
-        const filtered = activeTab === 'returned' ? getFilteredReturns() : getFilteredOrders();
+        const filtered = activeTab === 'returned' ? getGroupedReturns() : getFilteredOrders();
         const startIndex = (currentPage - 1) * itemsPerPage;
         const endIndex = startIndex + itemsPerPage;
         return filtered.slice(startIndex, endIndex);
@@ -881,7 +900,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     // Get total pages
     const getTotalPages = () => {
-        const filtered = activeTab === 'returned' ? getFilteredReturns() : getFilteredOrders();
+        const filtered = activeTab === 'returned' ? getGroupedReturns() : getFilteredOrders();
         const total = Math.ceil(filtered.length / itemsPerPage);
         return total > 0 ? total : 1;
     };
@@ -932,6 +951,59 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             );
         }
         return list;
+    };
+
+    const getGroupedReturns = () => {
+        const list = getFilteredReturns();
+        const groups: { [key: string]: any } = {};
+
+        list.forEach(r => {
+            const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+            const storeName = associatedOrder ? associatedOrder.storeName : '-';
+            const key = `${r.marketplaceOrderId}::${storeName}`;
+            
+            if (!groups[key]) {
+                groups[key] = {
+                    id: r.id,
+                    marketplaceOrderId: r.marketplaceOrderId,
+                    storeName: storeName,
+                    customerName: r.customerName || (associatedOrder ? associatedOrder.customerName : '-'),
+                    returnQuantity: 0,
+                    returnDate: r.returnDate,
+                    originalRecords: [],
+                    groupedItems: []
+                };
+            }
+            
+            const group = groups[key];
+            group.originalRecords.push(r);
+            group.returnQuantity += r.returnQuantity;
+            if (new Date(r.returnDate) > new Date(group.returnDate)) {
+                group.returnDate = r.returnDate;
+            }
+            
+            const itemKey = `${r.item.productName}::${r.item.color}`;
+            let groupedItem = group.groupedItems.find((gi: any) => `${gi.productName}::${gi.color}` === itemKey);
+            if (!groupedItem) {
+                groupedItem = {
+                    productName: r.item.productName,
+                    color: r.item.color,
+                    sizes: [],
+                    barcodes: []
+                };
+                group.groupedItems.push(groupedItem);
+            }
+            
+            const sizeStr = r.item.productSize || r.item.size || '-';
+            if (!groupedItem.sizes.includes(sizeStr)) {
+                groupedItem.sizes.push(sizeStr);
+            }
+            if (r.item.barcode && !groupedItem.barcodes.includes(r.item.barcode)) {
+                groupedItem.barcodes.push(r.item.barcode);
+            }
+        });
+
+        return Object.values(groups);
     };
 
     // --- ACTIONS ---
@@ -1401,20 +1473,26 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
         let data: any[] = [];
         if (activeTab === 'returned') {
-            data = getFilteredReturns().map(r => ({
-                'Mağaza': '',
-                'Sipariş No': r.marketplaceOrderId,
-                'Müşteri': r.customerName,
-                'Ürün': r.item.productName,
-                'SKU': r.item.sku,
-                'Barkod': r.item.barcode,
-                'Renk': r.item.color,
-                'Beden': r.item.productSize || r.item.size || db.products.find(p => p.variants.some(v => v.barcode === r.item.barcode))?.variants.find(v => v.barcode === r.item.barcode)?.size || '-',
-                'İade Adet': r.returnQuantity,
-                'Birim Fiyat': r.item.unitPrice,
-                'Toplam Fiyat': r.item.unitPrice * r.returnQuantity,
-                'Tarih': r.returnDate
-            }));
+            getGroupedReturns().forEach(r => {
+                r.groupedItems.forEach((gi: any) => {
+                    const price = r.originalRecords.find((or: any) => or.item.productName === gi.productName)?.item.unitPrice || 0;
+                    const qty = r.originalRecords.filter((or: any) => or.item.productName === gi.productName && or.item.color === gi.color).reduce((sum: number, or: any) => sum + or.returnQuantity, 0);
+                    data.push({
+                        'Mağaza': r.storeName,
+                        'Sipariş No': r.marketplaceOrderId,
+                        'Müşteri': r.customerName,
+                        'Ürün': gi.productName,
+                        'SKU': r.originalRecords.find((or: any) => or.item.productName === gi.productName)?.item.sku || '',
+                        'Barkod': gi.barcodes.join(', '),
+                        'Renk': gi.color,
+                        'Beden': gi.sizes.join(', '),
+                        'İade Adet': qty,
+                        'Birim Fiyat': price,
+                        'Toplam Fiyat': price * qty,
+                        'Tarih': r.returnDate
+                    });
+                });
+            });
         } else {
             // Her sipariş için her ürün kalemini ayrı satır olarak ekle
             // Filtreleme: Eğer Askıdakiler (suspended) sekmesindeysek, 'Taşıma Durumunda' ve 'Teslim Edildi' olanları kesinlikle hariç tut.
@@ -1699,19 +1777,24 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         }
     };
 
-    const handleDeleteReturnRecord = async (returnRecord: ReturnRecord) => {
-        requestConfirm('Bu iade kaydını silmek istediğinize emin misiniz? Bu işlem stokları etkilemez.', () => {
+    const handleDeleteReturnRecord = async (ret: any) => {
+        const records: ReturnRecord[] = ret.originalRecords ? ret.originalRecords : [ret];
+        const recordIds = new Set(records.map(r => r.id));
+        const orderIds = new Set(records.map(r => r.orderId));
+
+        requestConfirm('Seçili iade kayıtlarını silmek istediğinize emin misiniz? Bu işlem stokları etkilemez.', () => {
             updateDB(prev => {
                 // İade kaydını sil
-                const newReturns = prev.returns.filter(r => r.id !== returnRecord.id);
+                const newReturns = prev.returns.filter(r => !recordIds.has(r.id));
 
                 // Eğer sipariş tam iade durumundaysa (İptal Edildi), siparişi de sistemden tamamen sil
-                const associatedOrder = prev.orders.find(o => o.id === returnRecord.orderId);
                 let newOrders = prev.orders;
-
-                if (associatedOrder && associatedOrder.status === OrderStatus.CANCELLED) {
-                    newOrders = prev.orders.filter(o => o.id !== returnRecord.orderId);
-                }
+                orderIds.forEach(orderId => {
+                    const associatedOrder = prev.orders.find(o => o.id === orderId);
+                    if (associatedOrder && associatedOrder.status === OrderStatus.CANCELLED) {
+                        newOrders = newOrders.filter(o => o.id !== orderId);
+                    }
+                });
 
                 return {
                     ...prev,
@@ -1748,51 +1831,56 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         });
     };
 
-    const handleUndoReturn = async (returnRecord: ReturnRecord) => {
-        requestConfirm('Bu iade işlemini geri almak istediğinize emin misiniz? İade edilen ürün stoğu geri düşülecektir.', async () => {
+    const handleUndoReturn = async (ret: any) => {
+        const records: ReturnRecord[] = ret.originalRecords ? ret.originalRecords : [ret];
+        const recordIds = new Set(records.map(r => r.id));
+        const orderIds = new Set(records.map(r => r.orderId));
 
+        requestConfirm('Bu iade işlemini geri almak istediğinize emin misiniz? İade edilen ürün stoğu geri düşülecektir.', async () => {
             let currentProducts = [...db.products];
             const barcodesToSync: { [key: string]: number } = {};
 
             // 1. Stoğu geri düş (İade işlemi stoğu artırmıştı, şimdi azaltacağız)
-            const product = currentProducts.find(p => p.variants.some(v => v.barcode === returnRecord.item.barcode));
-            if (product) {
-                const variant = product.variants.find(v => v.barcode === returnRecord.item.barcode);
-                if (variant) {
-                    const whId = Object.keys(variant.stocks)[0] || 'wh1';
-                    const currentStock = variant.stocks[whId] || 0;
-                    // İade edilen miktarı geri düşüyoruz (Stok artmıştı, şimdi azalıyor)
-                    const newStock = Math.max(0, currentStock - returnRecord.returnQuantity);
+            records.forEach(returnRecord => {
+                const product = currentProducts.find(p => p.variants.some(v => v.barcode === returnRecord.item.barcode));
+                if (product) {
+                    const variant = product.variants.find(v => v.barcode === returnRecord.item.barcode);
+                    if (variant) {
+                        const whId = Object.keys(variant.stocks)[0] || 'wh1';
+                        const currentStock = variant.stocks[whId] || 0;
+                        // İade edilen miktarı geri düşüyoruz
+                        const newStock = Math.max(0, currentStock - returnRecord.returnQuantity);
 
-                    const result = updateLocalStockWithConsistency(
-                        currentProducts,
-                        product.id,
-                        variant.color,
-                        variant.size,
-                        whId,
-                        newStock
-                    );
-                    currentProducts = result.updatedProducts;
+                        const result = updateLocalStockWithConsistency(
+                            currentProducts,
+                            product.id,
+                            variant.color,
+                            variant.size,
+                            whId,
+                            newStock
+                        );
+                        currentProducts = result.updatedProducts;
 
-                    // Sync listesine ekle - SADECE ilgili varyantın (Renk/Beden) tüm barkodlarını ekle
-                    const updatedProduct = currentProducts.find(p => p.id === product.id);
-                    if (updatedProduct) {
-                        updatedProduct.variants.forEach(pv => {
-                            if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                                const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + Number(b), 0);
-                                barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
-                            }
-                        });
+                        // Sync listesine ekle - SADECE ilgili varyantın (Renk/Beden) tüm barkodlarını ekle
+                        const updatedProduct = currentProducts.find(p => p.id === product.id);
+                        if (updatedProduct) {
+                            updatedProduct.variants.forEach(pv => {
+                                if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
+                                    const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + Number(b), 0);
+                                    barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                                }
+                            });
+                        }
                     }
                 }
-            }
+            });
 
             // 2. İade kaydını sil
-            const newReturns = db.returns.filter(r => r.id !== returnRecord.id);
+            const newReturns = db.returns.filter(r => !recordIds.has(r.id));
 
             // 3. Sipariş durumunu geri al (Eğer İptal Edildi ise Teslim Edildi'ye çek)
             const updatedOrders = db.orders.map(o => {
-                if (o.id === returnRecord.orderId && o.status === OrderStatus.CANCELLED) {
+                if (orderIds.has(o.id) && o.status === OrderStatus.CANCELLED) {
                     return { ...o, status: OrderStatus.DELIVERED };
                 }
                 return o;
@@ -1927,6 +2015,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         fontSize: `${el.fontSize}pt`,
                         fontFamily: el.fontFamily || 'Arial, sans-serif',
                         width: el.width ? `${el.width}mm` : 'auto',
+                        height: el.height ? `${el.height}mm` : 'auto',
                         fontWeight: 'bold',
                         color: 'black',
                         whiteSpace: 'pre-wrap',
@@ -1967,6 +2056,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                 if (col.key === 'sku') {
                                                     return <td key={col.key} className="border border-black p-1 text-center font-mono" style={{ fontFamily: el.fontFamily || 'monospace' }}>{item.sku || ''}</td>;
                                                 }
+                                                if (col.key === 'barcode') {
+                                                    return <td key={col.key} className="border border-black p-1 text-center font-mono" style={{ fontFamily: el.fontFamily || 'monospace' }}>{item.barcode || ''}</td>;
+                                                }
                                                 if (col.key === 'price') {
                                                     return <td key={col.key} className="border border-black p-1 text-right">{item.unitPrice.toFixed(2)}</td>;
                                                 }
@@ -1975,14 +2067,16 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                         </tr>
                                     ))}
                                 </tbody>
-                                <tfoot>
-                                    <tr className="bg-gray-50">
-                                        <td colSpan={visibleCols.length - 1} className="border border-black p-1 text-right font-bold uppercase">Toplam</td>
-                                        <td className="border border-black p-1 text-right font-bold">
-                                            {orderToPrint.items.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0).toFixed(2)} ₺
-                                        </td>
-                                    </tr>
-                                </tfoot>
+                                {visibleCols.some(c => c.key === 'price') && (
+                                    <tfoot>
+                                        <tr className="bg-gray-50">
+                                            <td colSpan={visibleCols.length - 1} className="border border-black p-1 text-right font-bold uppercase">Toplam</td>
+                                            <td className="border border-black p-1 text-right font-bold">
+                                                {orderToPrint.items.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0).toFixed(2)} ₺
+                                            </td>
+                                        </tr>
+                                    </tfoot>
+                                )}
                             </table>
                         );
                     }
@@ -2002,6 +2096,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     } else if (el.key === 'totalPrice') {
                         const total = orderToPrint.items.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0);
                         content = `${total.toFixed(2)} ₺`;
+                    } else if (el.isImage) {
+                        content = el.content ? <img src={el.content} style={{ width: '100%', height: '100%', objectFit: 'contain' }} alt="Görsel" /> : <div className="border border-dashed border-gray-300 w-full h-full flex items-center justify-center text-[8px] text-gray-400">Görsel Seçilmedi</div>;
                     } else {
                         // @ts-ignore
                         content = orderToPrint[el.key] || '';
@@ -2043,7 +2139,19 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (saved) {
             try {
                 const config = JSON.parse(saved);
-                const mergedElements = [...config.elements];
+                const mergedElements = config.elements.map((el: any) => {
+                    const defEl = DEFAULT_PRINT_CONFIG.elements.find(e => e.id === el.id);
+                    if (defEl && defEl.tableColumns && el.tableColumns) {
+                        const mergedCols = [...el.tableColumns];
+                        defEl.tableColumns.forEach(defCol => {
+                            if (!mergedCols.find(c => c.key === defCol.key)) {
+                                mergedCols.push(defCol);
+                            }
+                        });
+                        return { ...el, tableColumns: mergedCols };
+                    }
+                    return el;
+                });
                 DEFAULT_PRINT_CONFIG.elements.forEach(defEl => {
                     if (!mergedElements.find(e => e.id === defEl.id)) {
                         mergedElements.push(defEl);
@@ -2092,7 +2200,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         let elementsHTML = '';
 
         printConfig.elements.filter(e => e.visible).forEach(el => {
-            const elStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; width: ${el.width ? el.width + 'mm' : 'auto'}; font-weight: bold; color: black; white-space: pre-wrap; text-transform: ${el.forceUppercase ? 'uppercase' : 'none'};`;
+            const elStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; width: ${el.width ? el.width + 'mm' : 'auto'}; height: ${el.height ? el.height + 'mm' : 'auto'}; font-weight: bold; color: black; white-space: pre-wrap; text-transform: ${el.forceUppercase ? 'uppercase' : 'none'};`;
 
             let content = '';
 
@@ -2115,6 +2223,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         else if (col.key === 'size') val = item.productSize || item.size;
                         else if (col.key === 'quantity') val = String(item.quantity);
                         else if (col.key === 'sku') val = `<span style="font-family: ${el.fontFamily || 'monospace'};">${item.sku || ''}</span>`;
+                        else if (col.key === 'barcode') val = `<span style="font-family: ${el.fontFamily || 'monospace'};">${item.barcode || ''}</span>`;
                         else if (col.key === 'price') val = item.unitPrice.toFixed(2);
                         row += `<td class="border border-black p-1 text-${align}">${val}</td>`;
                     });
@@ -2123,6 +2232,15 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 }).join('');
 
                 const totalPrice = orderToPrint.items.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0).toFixed(2);
+                const showPrice = visibleCols.some(c => c.key === 'price');
+                const tfootHTML = showPrice ? `
+            <tfoot>
+              <tr style="background-color: #f9fafb;">
+                <td colspan="${visibleCols.length - 1}" class="border border-black p-1 text-right" style="font-weight: bold; text-transform: uppercase;">Toplam</td>
+                <td class="border border-black p-1 text-right" style="font-weight: bold;">${totalPrice} ₺</td>
+              </tr>
+            </tfoot>
+                ` : '';
 
                 content = `
           <table style="width: 100%; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; border-collapse: collapse; border: 1px solid black;">
@@ -2130,12 +2248,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             <tbody>
               ${tableRows}
             </tbody>
-            <tfoot>
-              <tr style="background-color: #f9fafb;">
-                <td colspan="${visibleCols.length - 1}" class="border border-black p-1 text-right" style="font-weight: bold; text-transform: uppercase;">Toplam</td>
-                <td class="border border-black p-1 text-right" style="font-weight: bold;">${totalPrice} ₺</td>
-              </tr>
-            </tfoot>
+            ${tfootHTML}
           </table>
         `;
             }
@@ -2157,6 +2270,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             } else if (el.key === 'totalPrice') {
                 const total = orderToPrint.items.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0);
                 content = `${total.toFixed(2)} ₺`;
+            } else if (el.isImage) {
+                content = el.content ? `<img src="${el.content}" style="width: 100%; height: 100%; object-fit: contain;" />` : '';
             } else {
                 // @ts-ignore
                 const value = orderToPrint[el.key];
@@ -3111,12 +3226,18 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         {activeTab === 'returned' && getPaginatedOrders().map((ret: any) => (
                             <tr key={ret.id}>
                                 <td><span className="bg-purple-100 text-purple-800 px-1 text-[10px] rounded">İADE</span></td>
-                                <td>-</td>
+                                <td>{ret.storeName}</td>
                                 <td>{ret.marketplaceOrderId}</td>
                                 <td>{ret.customerName}</td>
                                 <td>
-                                    {ret.item.productName} <br />
-                                    <span className="text-gray-500 text-[10px]">{ret.item.color} - {ret.item.size} {ret.item.productSize ? `(${ret.item.productSize})` : ''} ({ret.item.barcode})</span>
+                                    {ret.groupedItems.map((gi: any, idx: number) => (
+                                        <div key={idx} className="mb-1 last:mb-0">
+                                            <span>{gi.productName}</span> <br />
+                                            <span className="text-gray-500 text-[10px]">
+                                                {gi.color} - Bedenler: {gi.sizes.join(', ')} ({gi.barcodes.join(', ')})
+                                            </span>
+                                        </div>
+                                    ))}
                                 </td>
                                 <td className="text-center font-bold text-red-600">{ret.returnQuantity}</td>
                                 <td className="text-xs">{safeFormatDate(ret.returnDate, true)}</td>
@@ -3153,7 +3274,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         <div className="flex items-center justify-between p-3 border-t bg-gray-50">
                             <div className="flex items-center gap-2">
                                 <span className="text-sm text-gray-600">
-                                    {(activeTab === 'returned' ? getFilteredReturns() : getFilteredOrders()).length} siparişden {(currentPage - 1) * itemsPerPage + 1} - {Math.min(currentPage * itemsPerPage, (activeTab === 'returned' ? getFilteredReturns() : getFilteredOrders()).length)} arası gösteriliyor
+                                    {(activeTab === 'returned' ? getGroupedReturns() : getFilteredOrders()).length} siparişden {(currentPage - 1) * itemsPerPage + 1} - {Math.min(currentPage * itemsPerPage, (activeTab === 'returned' ? getGroupedReturns() : getFilteredOrders()).length)} arası gösteriliyor
                                 </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -3487,15 +3608,24 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                             </select>
                                         </div>
 
-                                        <div className="mt-4 border-t pt-2">
+                                        <div className="mt-4 border-t pt-2 flex gap-2">
                                             <button
                                                 onClick={() => {
                                                     const nextNote = printConfig.elements.find(e => e.key.startsWith('customNote') && !e.visible);
                                                     if (nextNote) handleElementChange(nextNote.id, 'visible', true);
                                                 }}
-                                                className="w-full py-2 border-2 border-dashed border-gray-300 rounded text-[10px] text-gray-500 hover:border-blue-500 hover:text-blue-500 transition-colors uppercase font-bold"
+                                                className="flex-1 py-2 border-2 border-dashed border-gray-300 rounded text-[10px] text-gray-500 hover:border-blue-500 hover:text-blue-500 transition-colors uppercase font-bold"
                                             >
-                                                + Yeni Not Alanı Ekle
+                                                + Not Ekle
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    const nextImg = printConfig.elements.find(e => e.key.startsWith('customImage') && !e.visible);
+                                                    if (nextImg) handleElementChange(nextImg.id, 'visible', true);
+                                                }}
+                                                className="flex-1 py-2 border-2 border-dashed border-gray-300 rounded text-[10px] text-gray-500 hover:border-blue-500 hover:text-blue-500 transition-colors uppercase font-bold"
+                                            >
+                                                + Görsel Ekle
                                             </button>
                                         </div>
                                     </div>
@@ -3523,26 +3653,30 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                 <label className="text-[10px] text-gray-500 block">Üstten (mm)</label>
                                                                 <input type="number" className="border w-full p-1" value={el.y} onChange={e => handleElementChange(el.id, 'y', Number(e.target.value))} />
                                                             </div>
-                                                            <div>
-                                                                <label className="text-[10px] text-gray-500 block">Font Boyutu</label>
-                                                                <input type="number" className="border w-full p-1" value={el.fontSize} onChange={e => handleElementChange(el.id, 'fontSize', Number(e.target.value))} />
-                                                            </div>
-                                                            <div>
-                                                                <label className="text-[10px] text-gray-500 block">Yazı Tipi</label>
-                                                                <select
-                                                                    className="border w-full p-1 text-[10px]"
-                                                                    value={el.fontFamily || 'Arial'}
-                                                                    onChange={e => handleElementChange(el.id, 'fontFamily', e.target.value)}
-                                                                >
-                                                                    <option value="Arial">Arial</option>
-                                                                    <option value="'Courier New'">Courier New</option>
-                                                                    <option value="'Times New Roman'">Times New Roman</option>
-                                                                    <option value="Verdana">Verdana</option>
-                                                                    <option value="Tahoma">Tahoma</option>
-                                                                    <option value="'Trebuchet MS'">Trebuchet MS</option>
-                                                                    <option value="Impact">Impact</option>
-                                                                </select>
-                                                            </div>
+                                                            {!el.isImage && (
+                                                                <>
+                                                                    <div>
+                                                                        <label className="text-[10px] text-gray-500 block">Font Boyutu</label>
+                                                                        <input type="number" className="border w-full p-1" value={el.fontSize} onChange={e => handleElementChange(el.id, 'fontSize', Number(e.target.value))} />
+                                                                    </div>
+                                                                    <div>
+                                                                        <label className="text-[10px] text-gray-500 block">Yazı Tipi</label>
+                                                                        <select
+                                                                            className="border w-full p-1 text-[10px]"
+                                                                            value={el.fontFamily || 'Arial'}
+                                                                            onChange={e => handleElementChange(el.id, 'fontFamily', e.target.value)}
+                                                                        >
+                                                                            <option value="Arial">Arial</option>
+                                                                            <option value="'Courier New'">Courier New</option>
+                                                                            <option value="'Times New Roman'">Times New Roman</option>
+                                                                            <option value="Verdana">Verdana</option>
+                                                                            <option value="Tahoma">Tahoma</option>
+                                                                            <option value="'Trebuchet MS'">Trebuchet MS</option>
+                                                                            <option value="Impact">Impact</option>
+                                                                        </select>
+                                                                    </div>
+                                                                </>
+                                                            )}
                                                         </div>
 
                                                         {(el.key === 'items' || el.key === 'deliveryAddress' || el.key.startsWith('customNote') || el.key === 'sku') && (
@@ -3606,39 +3740,83 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                             </div>
                                                         )}
 
-                                                        <div className="flex flex-col gap-2 pt-1 border-t border-gray-100 mt-1">
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    id={`is-barcode-${el.id}`}
-                                                                    className="w-3 h-3 cursor-pointer"
-                                                                    checked={el.isBarcode || false}
-                                                                    onChange={e => handleElementChange(el.id, 'isBarcode', e.target.checked)}
-                                                                />
-                                                                <label htmlFor={`is-barcode-${el.id}`} className="text-[9px] text-blue-700 font-bold cursor-pointer uppercase">Barkod Olarak Yazdır</label>
-                                                            </div>
-                                                            {el.isBarcode && (
-                                                                <div className="pl-5">
-                                                                    <label className="text-[10px] text-gray-500 block">Barkod Yüksekliği (mm)</label>
+                                                        {!el.isImage && (
+                                                            <div className="flex flex-col gap-2 pt-1 border-t border-gray-100 mt-1">
+                                                                <div className="flex items-center gap-2">
                                                                     <input
-                                                                        type="number"
-                                                                        className="border w-full p-1 text-xs"
-                                                                        value={el.barcodeHeight || 20}
-                                                                        onChange={e => handleElementChange(el.id, 'barcodeHeight', Number(e.target.value))}
+                                                                        type="checkbox"
+                                                                        id={`is-barcode-${el.id}`}
+                                                                        className="w-3 h-3 cursor-pointer"
+                                                                        checked={el.isBarcode || false}
+                                                                        onChange={e => handleElementChange(el.id, 'isBarcode', e.target.checked)}
+                                                                    />
+                                                                    <label htmlFor={`is-barcode-${el.id}`} className="text-[9px] text-blue-700 font-bold cursor-pointer uppercase">Barkod Olarak Yazdır</label>
+                                                                </div>
+                                                                {el.isBarcode && (
+                                                                    <div className="pl-5">
+                                                                        <label className="text-[10px] text-gray-500 block">Barkod Yüksekliği (mm)</label>
+                                                                        <input
+                                                                            type="number"
+                                                                            className="border w-full p-1 text-xs"
+                                                                            value={el.barcodeHeight || 20}
+                                                                            onChange={e => handleElementChange(el.id, 'barcodeHeight', Number(e.target.value))}
+                                                                        />
+                                                                    </div>
+                                                                )}
+                                                                <div className="flex items-center gap-2">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        id={`force-up-${el.id}`}
+                                                                        className="w-3 h-3 cursor-pointer"
+                                                                        checked={el.forceUppercase || false}
+                                                                        onChange={e => handleElementChange(el.id, 'forceUppercase', e.target.checked)}
+                                                                    />
+                                                                    <label htmlFor={`force-up-${el.id}`} className="text-[9px] text-gray-700 font-bold cursor-pointer uppercase">Büyük Harf Yap</label>
+                                                                </div>
+                                                            </div>
+                                                        )}
+
+                                                        {el.isImage && (
+                                                            <div className="space-y-2 pt-1 border-t border-gray-100 mt-1">
+                                                                <div>
+                                                                    <label className="text-[10px] text-gray-500 block font-bold">Görsel Genişliği (mm)</label>
+                                                                    <input type="number" className="border w-full p-1" value={el.width} onChange={e => handleElementChange(el.id, 'width', Number(e.target.value))} />
+                                                                </div>
+                                                                <div>
+                                                                    <label className="text-[10px] text-gray-500 block font-bold">Görsel Yüksekliği (mm)</label>
+                                                                    <input type="number" className="border w-full p-1" value={el.height || 20} onChange={e => handleElementChange(el.id, 'height', Number(e.target.value))} />
+                                                                </div>
+                                                                <div>
+                                                                    <label className="text-[10px] text-gray-500 block font-bold">Dosya Seç (PC)</label>
+                                                                    <input
+                                                                        type="file"
+                                                                        accept="image/*"
+                                                                        onChange={(e) => {
+                                                                            const file = e.target.files?.[0];
+                                                                            if (file) {
+                                                                                const reader = new FileReader();
+                                                                                reader.onload = (event) => {
+                                                                                    handleElementChange(el.id, 'content', event.target?.result);
+                                                                                };
+                                                                                reader.readAsDataURL(file);
+                                                                            }
+                                                                        }}
+                                                                        className="text-[10px] w-full mt-0.5"
                                                                     />
                                                                 </div>
-                                                            )}
-                                                            <div className="flex items-center gap-2">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    id={`force-up-${el.id}`}
-                                                                    className="w-3 h-3 cursor-pointer"
-                                                                    checked={el.forceUppercase || false}
-                                                                    onChange={e => handleElementChange(el.id, 'forceUppercase', e.target.checked)}
-                                                                />
-                                                                <label htmlFor={`force-up-${el.id}`} className="text-[9px] text-gray-700 font-bold cursor-pointer uppercase">Büyük Harf Yap</label>
+                                                                {el.content && (
+                                                                    <div className="border p-1 bg-gray-50 flex items-center justify-between mt-1 rounded">
+                                                                        <span className="text-[9px] text-gray-500 truncate max-w-[150px]">Görsel yüklendi</span>
+                                                                        <button
+                                                                            onClick={() => handleElementChange(el.id, 'content', '')}
+                                                                            className="text-red-500 hover:underline text-[9px]"
+                                                                        >
+                                                                            Kaldır
+                                                                        </button>
+                                                                    </div>
+                                                                )}
                                                             </div>
-                                                        </div>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
