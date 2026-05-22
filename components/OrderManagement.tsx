@@ -4,7 +4,7 @@ import { Database, Order, OrderStatus, OrderItem, ReturnRecord, Product, UserRol
 import { RefreshCcw, Printer, Play, Filter, PauseCircle, AlertTriangle, Loader2, RotateCcw, ChevronDown, CheckSquare, Square, FileSpreadsheet, LayoutTemplate, Save, Eye, ArrowLeftRight, Bell, FileText, SearchCheck, HardDrive, ArrowUp, ArrowDown, Trash, Trash2, ZoomIn, ZoomOut, Plus, Globe } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from 'xlsx';
-import { syncBarcodeStock, updateLocalStockWithConsistency, syncOrderStatusToMarketplaces, fetchOrdersFromTrendyol, syncMarketplaceOrders, syncBarcodeStockBatchMultiple, syncOnlyShippingOrders } from '../services/integration';
+import { syncBarcodeStock, updateLocalStockWithConsistency, syncOrderStatusToMarketplaces, fetchOrdersFromTrendyol, syncMarketplaceOrders, syncBarcodeStockBatchMultiple } from '../services/integration';
 // @ts-ignore
 import JsBarcode from 'jsbarcode';
 
@@ -131,6 +131,10 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     const [statusFilterOpen, setStatusFilterOpen] = useState(false);
     const [selectedStatuses, setSelectedStatuses] = useState<OrderStatus[]>([
+        OrderStatus.NEW,
+        OrderStatus.PROCESSING
+    ]);
+    const [suspendedStatuses, setSuspendedStatuses] = useState<OrderStatus[]>([
         OrderStatus.NEW,
         OrderStatus.PROCESSING
     ]);
@@ -629,48 +633,6 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         }
     };
 
-    const handleSyncShippingOrdersOnly = async () => {
-        setIsSyncing(true);
-        console.log('[SHIPPING-SYNC] Sadece taşımadaki siparişler güncelleniyor...');
-
-        try {
-            const result = await syncOnlyShippingOrders(db);
-
-            await updateDB(prev => ({
-                ...prev,
-                products: result.updatedProducts,
-                orders: result.updatedOrders
-            }));
-
-            // OTOMATİK STOK GÜNCELLEME (Tüm mağazalara)
-            if (db.settings.enableAutoStockSync && Object.keys(result.barcodesToSync).length > 0) {
-                const itemsToSync = Object.entries(result.barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
-                await syncBarcodeStockBatchMultiple(
-                    db.apiConfigs,
-                    itemsToSync,
-                    db.settings,
-                    (count) => setNotification({ type: 'success', message: `${count} barkod için stok güncelleme başladı...` }),
-                    () => setNotification({ type: 'success', message: 'Stok güncelleme bitti.' })
-                );
-            }
-
-            if (result.updatedCount > 0) {
-                setNotification({
-                    type: 'success',
-                    message: `${result.updatedCount} taşımadaki sipariş güncellendi.`
-                });
-            } else {
-                setNotification({ type: 'success', message: 'Taşımadaki siparişlerin tamamı güncel.' });
-            }
-        } catch (error) {
-            console.error('[SHIPPING-SYNC-ERROR]', error);
-            setNotification({ type: 'error', message: `Taşımadaki siparişleri güncelleme hatası: ${(error as Error).message}` });
-        } finally {
-            setIsSyncing(false);
-            setAutoRefreshTrigger(prev => prev + 1);
-        }
-    };
-
     const toggleStatusFilter = (status: OrderStatus) => {
         if (selectedStatuses.includes(status)) {
             if (selectedStatuses.length > 1) {
@@ -678,6 +640,16 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }
         } else {
             setSelectedStatuses([...selectedStatuses, status]);
+        }
+    };
+
+    const toggleSuspendedStatusFilter = (status: OrderStatus) => {
+        if (suspendedStatuses.includes(status)) {
+            if (suspendedStatuses.length > 1) {
+                setSuspendedStatuses(suspendedStatuses.filter(s => s !== status));
+            }
+        } else {
+            setSuspendedStatuses([...suspendedStatuses, status]);
         }
     };
 
@@ -709,7 +681,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 o =>
                     o.isSuspended &&
                     o.status !== OrderStatus.CANCELLED &&
-                    (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING)
+                    suspendedStatuses.includes(o.status)
             );
         } else if (activeTab === 'returned') {
             return []; // We handle this separately in render
@@ -2702,14 +2674,33 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                             )}
                         </div>
                     )}
+                    {activeTab === 'suspended' && (
+                        <div className="relative" ref={statusDropdownRef}>
+                            <button
+                                onClick={() => setStatusFilterOpen(!statusFilterOpen)}
+                                className="desktop-btn bg-white"
+                            >
+                                <Filter size={12} className="mr-1" /> Durum ({suspendedStatuses.length}) <ChevronDown size={10} className="ml-1" />
+                            </button>
+                            {statusFilterOpen && (
+                                <div className="absolute top-full right-0 mt-1 bg-white border border-gray-400 shadow-lg p-2 z-[100] w-48 rounded">
+                                    {[OrderStatus.NEW, OrderStatus.PROCESSING, OrderStatus.SHIPPING].map(status => (
+                                        <label key={status} className="flex items-center gap-2 mb-1 cursor-pointer hover:bg-gray-100 p-1 rounded">
+                                            <input
+                                                type="checkbox"
+                                                checked={suspendedStatuses.includes(status)}
+                                                onChange={() => toggleSuspendedStatusFilter(status)}
+                                            />
+                                            <span className="text-xs">{status}</span>
+                                        </label>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
                     <button onClick={handleUpdateStatuses} disabled={isSyncing} className="desktop-btn desktop-btn-primary border-blue-600">
                         <RefreshCcw className={`w-3 h-3 mr-1 ${isSyncing ? 'animate-spin' : ''}`} /> Manuel Sipariş Çek
                     </button>
-                    {activeTab === 'active' && (
-                        <button onClick={handleSyncShippingOrdersOnly} disabled={isSyncing} className="desktop-btn bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100">
-                            <RefreshCcw className={`w-3 h-3 mr-1 ${isSyncing ? 'animate-spin' : ''}`} /> Taşımadaki Siparişleri Güncelle
-                        </button>
-                    )}
                     <button onClick={() => setIsManualOrderModalOpen(true)} className="desktop-btn bg-white border-green-500 text-green-700 hover:bg-green-50">
                         <Plus className="w-3 h-3 mr-1" /> Sipariş Oluştur
                     </button>

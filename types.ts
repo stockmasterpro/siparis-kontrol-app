@@ -191,6 +191,7 @@ export interface AppSettings {
   sessionTimeoutMinutes: number; // Oturum zaman aşımı (dakika)
   enableSessionTimeout: boolean; // Oturum zaman aşımı aktif/pasif
   orderFetchDays: number; // Sipariş çekme zaman aralığı (gün)
+  shippedOrderFetchDays?: number; // Taşıma durumundaki siparişleri çekme geçmişi (gün)
   stockSyncSettings: {
     enabled: boolean;
     minStockThreshold: number;

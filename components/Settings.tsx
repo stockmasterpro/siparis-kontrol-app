@@ -823,6 +823,23 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
 
                                 <div className="flex items-center justify-between border p-3 rounded bg-gray-50">
                                     <div>
+                                        <h4 className="font-bold text-sm">Kargodaki Siparişleri Çekme Geçmişi</h4>
+                                        <p className="text-xs text-gray-500">Taşıma durumundaki (kargolanmış) siparişlerin kaç gün geriye dönük çekileceğini belirler.</p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            type="number"
+                                            className="border p-1 rounded w-20 text-center"
+                                            value={db.settings.shippedOrderFetchDays ?? 14}
+                                            onChange={(e) => updateDB(prev => ({ ...prev, settings: { ...prev.settings, shippedOrderFetchDays: Math.max(1, Number(e.target.value)) } }))}
+                                            min="1"
+                                        />
+                                        <span className="text-sm text-gray-600">gün</span>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-between border p-3 rounded bg-gray-50">
+                                    <div>
                                         <h4 className="font-bold text-sm">Alt Limit Detaylarını Göster</h4>
                                         <p className="text-xs text-gray-500">Ana sayfadaki stok uyarısında Renk/Beden detaylarını gösterir.</p>
                                     </div>
