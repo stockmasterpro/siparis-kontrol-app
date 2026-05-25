@@ -975,16 +975,16 @@ export const syncMarketplaceOrders = async (
         
         const activeLocalOrders = currentDbOrders.filter(o => 
           o.storeName === config.storeName &&
-          (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING) &&
+          (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING || o.status === OrderStatus.SHIPPING) &&
           !o.id.includes('_OLD_') &&
-          // Son 30 güne ait aktif yerel siparişleri kontrol et (aşırı eskilere bakıp API'yi yormamak için)
+          // Son 30 güne ait aktif ve taşıma durumundaki yerel siparişleri kontrol et (aşırı eskilere bakıp API'yi yormamak için)
           (Date.now() - new Date(o.orderDate).getTime() < 30 * 86400000)
         );
 
         for (const localOrder of activeLocalOrders) {
           const key = `${localOrder.storeName}::${localOrder.marketplaceOrderId}::${localOrder.shipmentPackageId || ''}`;
           if (!fetchedKeys.has(key)) {
-            console.log(`[ORDER-SYNC] Aktif listede olmayan sipariş tespit edildi, detay güncelleniyor: ${localOrder.marketplaceOrderId}`);
+            console.log(`[ORDER-SYNC] Aktif/Taşıma durumunda olup listede olmayan sipariş tespit edildi, detay güncelleniyor: ${localOrder.marketplaceOrderId}`);
             try {
               const freshOrders = await fetchOrdersFromTrendyol(config, {
                 orderNumber: localOrder.marketplaceOrderId
