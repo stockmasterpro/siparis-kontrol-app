@@ -127,6 +127,14 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         { name: 'Ukrayna', code: 'UA' }
     ];
 
+    const getCountryName = (code: string): string => {
+        if (!code) return 'YURT DIŞI';
+        const codeUpper = code.toUpperCase();
+        if (codeUpper === 'TR') return '';
+        const found = PRIORITY_COUNTRIES.find(c => c.code.toUpperCase() === codeUpper);
+        return found ? found.name.toLocaleUpperCase('tr-TR') : codeUpper;
+    };
+
     // Status Filter State
 
     const [statusFilterOpen, setStatusFilterOpen] = useState(false);
@@ -671,7 +679,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
 
     const getFilteredOrders = () => {
-        let list = db.orders;
+        let list = db.orders.filter(o => !o.isDeleted);
 
         if (activeTab === 'cancelled') {
             // İade alınanları ve eski sürüm arşiv kayıtlarını İptal Edilenler sayfasında gösterme
@@ -1345,7 +1353,17 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             // 2. DB'yi Güncelle (Senkronizasyondan ÖNCE yap ki sync güncel veriyi okusun)
 
-            const newOrders = db.orders.filter(o => o.id !== orderId);
+            const newOrders = db.orders.map(o => {
+                if (o.id === orderId && o.status === OrderStatus.CANCELLED) {
+                    return { ...o, isDeleted: true };
+                }
+                return o;
+            }).filter(o => {
+                if (o.id === orderId) {
+                    return o.status === OrderStatus.CANCELLED;
+                }
+                return true;
+            });
             const newReturns = db.returns.filter(r => r.orderId !== orderId);
 
             updateDB({
@@ -1463,7 +1481,17 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             updateDB({
                 ...db,
-                orders: db.orders.filter(o => !selectedOrders.includes(o.id)),
+                orders: db.orders.map(o => {
+                    if (selectedOrders.includes(o.id) && o.status === OrderStatus.CANCELLED) {
+                        return { ...o, isDeleted: true };
+                    }
+                    return o;
+                }).filter(o => {
+                    if (selectedOrders.includes(o.id)) {
+                        return o.status === OrderStatus.CANCELLED;
+                    }
+                    return true;
+                }),
                 products: currentProducts
             });
 
@@ -3214,11 +3242,17 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                 <td>
                                     <div className="flex flex-col gap-1">
                                         <span>{order.status}</span>
-                                        {isInternationalOrder(order) && (
-                                            <span className="bg-orange-100 text-orange-700 text-[10px] px-1 py-0.5 rounded font-bold w-fit">
-                                                YURT DIŞI
-                                            </span>
-                                        )}
+                                        {(() => {
+                                            if (!isInternationalOrder(order)) return null;
+                                            const cCode = getEffectiveOrderCountryCode(order);
+                                            const countryName = getCountryName(cCode);
+                                            if (!countryName) return null;
+                                            return (
+                                                <span className="bg-orange-100 text-orange-700 text-[10px] px-1 py-0.5 rounded font-bold w-fit">
+                                                    {countryName}
+                                                </span>
+                                            );
+                                        })()}
                                     </div>
                                 </td>
                                 <td>{order.storeName}</td>

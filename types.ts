@@ -106,6 +106,7 @@ export interface Order {
   identityNumber?: string; // T.C. Kimlik No
   postalCode?: string; // Posta Kodu
   fullData?: any; // API'den gelen ham verinin tamamı (İleride lazım olursa diye)
+  isDeleted?: boolean; // Soft delete flag for cancelled orders
 }
 
 export interface ReturnRecord {

@@ -325,6 +325,12 @@ Mağaza: ${claim.storeName}
             const idsArray = Array.from(selectedClaimIds);
             const claimsToApprove = claims.filter(c => idsArray.includes(c.id));
 
+            let currentProducts = [...db.products];
+            let currentOrders = [...db.orders];
+            let currentReturns = [...db.returns];
+            let currentReturnClaims = [...db.returnClaims];
+            const barcodesToSync: { [key: string]: number } = {};
+
             for (const claim of claimsToApprove) {
                 const config = db.apiConfigs.find(c => c.storeName === claim.storeName);
                 if (!config) {
@@ -339,12 +345,100 @@ Mağaza: ${claim.storeName}
                     }
                     const success = await approveMarketplaceClaim(config, claim.claimId, [claim.claimLineItemId]);
                     if (success) {
-                        // Automated Local Sync
-                        const result = await processLocalReturn(claim);
-                        successCount++;
-                        if (result.stockUpdated) {
-                            stockUpdatedCount++;
+                        // Process the return details atomically
+                        const order = currentOrders.find(o => o.marketplaceOrderId === claim.orderNumber && o.storeName === claim.storeName);
+                        if (!order) {
+                            if (db.settings.enableReturnExceptionReport) {
+                                downloadMissingReport(claim, "Sipariş sistemde (yerel veritabanında) bulunamadı.");
+                            }
+                            currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
+                            successCount++;
+                            continue;
                         }
+
+                        const item = order.items.find(i =>
+                            (claim.orderLineItemId && i.orderItemId && String(i.orderItemId) === String(claim.orderLineItemId)) ||
+                            i.barcode === claim.barcode
+                        );
+                        if (!item) {
+                            if (db.settings.enableReturnExceptionReport) {
+                                downloadMissingReport(claim, "Barkod bu siparişin kalemleri arasında bulunamadı.");
+                            }
+                            currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
+                            successCount++;
+                            continue;
+                        }
+
+                        const product = currentProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
+                        const variant = product?.variants.find(v => v.barcode === item.barcode);
+                        if (!product || !variant) {
+                            if (db.settings.enableReturnExceptionReport) {
+                                downloadMissingReport(claim, "Barkod ürün kartında kayıtlı değil. Stok iadesi yapılamadı.");
+                            }
+                            currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
+                            successCount++;
+                            continue;
+                        }
+
+                        // Update stocks
+                        const whId = 'wh1';
+                        const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
+                        const currentStock = variant.stocks[whId] || 0;
+                        const newStock = currentStock + returnQty;
+
+                        const result = updateLocalStockWithConsistency(
+                            currentProducts,
+                            product.id,
+                            variant.color,
+                            variant.size,
+                            whId,
+                            newStock
+                        );
+                        currentProducts = result.updatedProducts;
+
+                        // Add barcode to sync
+                        const up = currentProducts.find(p => p.id === product.id);
+                        if (up) {
+                            up.variants.forEach(pv => {
+                                if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
+                                    const total = Object.values(pv.stocks).reduce<number>((a, b) => a + (Number(b) || 0), 0);
+                                    barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                                }
+                            });
+                        }
+
+                        // Add new return record
+                        const newReturnRecord: ReturnRecord = {
+                            id: uuidv4(),
+                            orderId: order.id,
+                            marketplaceOrderId: order.marketplaceOrderId,
+                            customerName: order.customerName,
+                            item: item,
+                            returnQuantity: returnQty,
+                            returnDate: new Date().toISOString()
+                        };
+                        currentReturns.push(newReturnRecord);
+
+                        // Update orders in the loop
+                        currentOrders = currentOrders.map(o => {
+                            if (o.id === order.id) {
+                                const totalOrdered = o.items.reduce((sum, it) => sum + it.quantity, 0);
+                                const totalReturned = currentReturns
+                                    .filter(r => r.orderId === o.id)
+                                    .reduce((sum, r) => sum + r.returnQuantity, 0);
+
+                                if (totalReturned >= totalOrdered) {
+                                    return { ...o, status: OrderStatus.CANCELLED };
+                                }
+                            }
+                            return o;
+                        });
+
+                        // Remove from claim list
+                        currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
+
+                        successCount++;
+                        stockUpdatedCount++;
                     } else {
                         failCount++;
                     }
@@ -352,6 +446,21 @@ Mağaza: ${claim.storeName}
                     console.error(e);
                     failCount++;
                 }
+            }
+
+            // Single atomic DB update
+            updateDB({
+                ...db,
+                products: currentProducts,
+                orders: currentOrders,
+                returns: currentReturns,
+                returnClaims: currentReturnClaims
+            });
+
+            // Batch sync stocks
+            if (db.settings.enableAutoStockSync && Object.keys(barcodesToSync).length > 0) {
+                const itemsToSync = Object.entries(barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
+                await syncBarcodeStockBatchMultiple(db.apiConfigs, itemsToSync, db.settings);
             }
 
             let finalMsg = `${successCount} iade onaylandı.`;

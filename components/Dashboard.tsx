@@ -18,7 +18,12 @@ const getLocalMonth = () => {
 };
 
 export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
+  const [filterType, setFilterType] = useState<'day' | 'month' | 'year' | 'range'>('month');
+  const [selectedDay, setSelectedDay] = useState<string>(new Date().toISOString().split('T')[0]);
   const [selectedMonth, setSelectedMonth] = useState<string>(getLocalMonth());
+  const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportStartDate, setReportStartDate] = useState('');
   const [reportEndDate, setReportEndDate] = useState('');
@@ -68,10 +73,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
   const totalProducts = db.products.length;
 
-  // --- Ay Bazlı Filtreleme ---
+  // --- Tarih Bazlı Filtreleme ---
   const filteredOrders = useMemo(() => {
     let baseOrders = db.orders.filter(o => {
-      if (o.isSuspended) return false;
+      if (o.isSuspended || o.isDeleted) return false;
       // İptal edilmiş ve iadesi olmayan siparişleri filtrele (iade edilenler toplam siparişte kalmalı)
       if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
       
@@ -87,16 +92,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       });
     }
 
-    if (!selectedMonth) return baseOrders;
+    if (filterType === 'day') {
+      if (!selectedDay) return baseOrders;
+      return baseOrders.filter(o => {
+        const d = new Date(o.orderDate);
+        const dayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return dayStr === selectedDay;
+      });
+    } else if (filterType === 'month') {
+      if (!selectedMonth) return baseOrders;
+      const [year, month] = selectedMonth.split('-');
+      return baseOrders.filter(o => {
+        const d = new Date(o.orderDate);
+        return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
+      });
+    } else if (filterType === 'year') {
+      if (!selectedYear) return baseOrders;
+      const yr = parseInt(selectedYear);
+      return baseOrders.filter(o => {
+        const d = new Date(o.orderDate);
+        return d.getFullYear() === yr;
+      });
+    } else if (filterType === 'range') {
+      if (!startDate && !endDate) return baseOrders;
+      return baseOrders.filter(o => {
+        const d = new Date(o.orderDate);
+        if (startDate && d < new Date(startDate)) return false;
+        if (endDate) {
+          const endLimit = new Date(endDate);
+          endLimit.setHours(23, 59, 59, 999);
+          if (d > endLimit) return false;
+        }
+        return true;
+      });
+    }
 
-    const [year, month] = selectedMonth.split('-');
-    let filtered = baseOrders.filter(o => {
-      const d = new Date(o.orderDate);
-      return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
-    });
-
-    return filtered;
-  }, [db.orders, selectedMonth, selectedCountries, validBarcodesSet, db.returns]);
+    return baseOrders;
+  }, [db.orders, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, selectedCountries, validBarcodesSet, db.returns]);
 
   const filteredReturns = useMemo(() => {
     let baseReturns = db.returns;
@@ -110,16 +142,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       });
     }
 
-    if (!selectedMonth) return baseReturns;
-    const [year, month] = selectedMonth.split('-');
+    if (filterType === 'day') {
+      if (!selectedDay) return baseReturns;
+      return baseReturns.filter(r => {
+        const d = new Date(r.returnDate);
+        const dayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return dayStr === selectedDay;
+      });
+    } else if (filterType === 'month') {
+      if (!selectedMonth) return baseReturns;
+      const [year, month] = selectedMonth.split('-');
+      return baseReturns.filter(r => {
+        const d = new Date(r.returnDate);
+        return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
+      });
+    } else if (filterType === 'year') {
+      if (!selectedYear) return baseReturns;
+      const yr = parseInt(selectedYear);
+      return baseReturns.filter(r => {
+        const d = new Date(r.returnDate);
+        return d.getFullYear() === yr;
+      });
+    } else if (filterType === 'range') {
+      if (!startDate && !endDate) return baseReturns;
+      return baseReturns.filter(r => {
+        const d = new Date(r.returnDate);
+        if (startDate && d < new Date(startDate)) return false;
+        if (endDate) {
+          const endLimit = new Date(endDate);
+          endLimit.setHours(23, 59, 59, 999);
+          if (d > endLimit) return false;
+        }
+        return true;
+      });
+    }
 
-    return baseReturns.filter(r => {
-      const d = new Date(r.returnDate);
-      return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
-    });
-  }, [db.returns, db.orders, selectedMonth, selectedCountries]);
+    return baseReturns;
+  }, [db.returns, db.orders, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, selectedCountries]);
 
-  // GLOBAL STATS (Filtered by month)
+  // GLOBAL STATS (Filtered by selected range/period)
   const totalOrders = filteredOrders.length;
   
   const cancelledOrdersCount = useMemo(() => {
@@ -137,14 +198,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       });
     }
 
-    if (!selectedMonth) return baseOrders.length;
+    if (filterType === 'day') {
+      if (!selectedDay) return 0;
+      return baseOrders.filter(o => {
+        const d = new Date(o.orderDate);
+        const dayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return dayStr === selectedDay;
+      }).length;
+    } else if (filterType === 'month') {
+      if (!selectedMonth) return baseOrders.length;
+      const [year, month] = selectedMonth.split('-');
+      return baseOrders.filter(o => {
+        const d = new Date(o.orderDate);
+        return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
+      }).length;
+    } else if (filterType === 'year') {
+      if (!selectedYear) return 0;
+      const yr = parseInt(selectedYear);
+      return baseOrders.filter(o => {
+        const d = new Date(o.orderDate);
+        return d.getFullYear() === yr;
+      }).length;
+    } else if (filterType === 'range') {
+      if (!startDate && !endDate) return baseOrders.length;
+      return baseOrders.filter(o => {
+        const d = new Date(o.orderDate);
+        if (startDate && d < new Date(startDate)) return false;
+        if (endDate) {
+          const endLimit = new Date(endDate);
+          endLimit.setHours(23, 59, 59, 999);
+          if (d > endLimit) return false;
+        }
+        return true;
+      }).length;
+    }
 
-    const [year, month] = selectedMonth.split('-');
-    return baseOrders.filter(o => {
-      const d = new Date(o.orderDate);
-      return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
-    }).length;
-  }, [db.orders, selectedMonth, selectedCountries, validBarcodesSet, db.returns]);
+    return baseOrders.length;
+  }, [db.orders, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, selectedCountries, validBarcodesSet, db.returns]);
 
   const returnedOrdersCount = useMemo(() => {
     return filteredOrders.filter(o => db.returns.some(r => r.orderId === o.id)).length;
@@ -153,6 +243,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   const netOrdersCount = totalOrders - returnedOrdersCount;
 
   const pendingOrders = filteredOrders.filter(o => o.status === OrderStatus.NEW).length;
+  const shippingOrdersCount = filteredOrders.filter(o => o.status === OrderStatus.SHIPPING).length;
+  const deliveredOrdersCount = filteredOrders.filter(o => o.status === OrderStatus.DELIVERED).length;
 
   const grossRevenue = useMemo(() => {
     return filteredOrders
@@ -238,7 +330,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       const linkedReturns = db.returns.filter(r => storeOrderIds.has(r.orderId));
       const storeReturnsValue = linkedReturns.reduce((acc, r) => acc + (r.item.unitPrice * r.returnQuantity), 0);
 
-      // Count cancelled orders for this store using the same logic
+      // Count cancelled orders for this store using the same logic (keeping soft-deleted cancelled orders)
       let storeCancelledOrdersBase = db.orders.filter(o => {
         if (o.isSuspended || o.storeName !== config.storeName) return false;
         if (!(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id))) return false;
@@ -251,11 +343,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         });
       }
       let storeCancelledCount = storeCancelledOrdersBase.length;
-      if (selectedMonth) {
-        const [year, month] = selectedMonth.split('-');
+      if (filterType === 'day') {
+        if (selectedDay) {
+          storeCancelledCount = storeCancelledOrdersBase.filter(o => {
+            const d = new Date(o.orderDate);
+            const dayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            return dayStr === selectedDay;
+          }).length;
+        }
+      } else if (filterType === 'month') {
+        if (selectedMonth) {
+          const [year, month] = selectedMonth.split('-');
+          storeCancelledCount = storeCancelledOrdersBase.filter(o => {
+            const d = new Date(o.orderDate);
+            return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
+          }).length;
+        }
+      } else if (filterType === 'year') {
+        if (selectedYear) {
+          const yr = parseInt(selectedYear);
+          storeCancelledCount = storeCancelledOrdersBase.filter(o => {
+            const d = new Date(o.orderDate);
+            return d.getFullYear() === yr;
+          }).length;
+        }
+      } else if (filterType === 'range') {
         storeCancelledCount = storeCancelledOrdersBase.filter(o => {
           const d = new Date(o.orderDate);
-          return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
+          if (startDate && d < new Date(startDate)) return false;
+          if (endDate) {
+            const endLimit = new Date(endDate);
+            endLimit.setHours(23, 59, 59, 999);
+            if (d > endLimit) return false;
+          }
+          return true;
         }).length;
       }
 
@@ -278,12 +399,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         yesterdayCount: yStats.netCount
       };
     });
-  }, [db.apiConfigs, filteredOrders, db.returns, selectedCountries, selectedMonth, validBarcodesSet]);
+  }, [db.apiConfigs, filteredOrders, db.returns, selectedCountries, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, validBarcodesSet]);
 
   // --- Real Data Aggregation ---
   // 1. Günlük Satış Özeti (Dinamik)
   const chartDays = useMemo(() => {
-    if (selectedMonth) {
+    if (filterType === 'month' && selectedMonth) {
       const [year, month] = selectedMonth.split('-');
       const y = parseInt(year);
       const m = parseInt(month) - 1;
@@ -291,6 +412,27 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       return Array.from({ length: daysInMonth }, (_, i) => {
         return `${y}-${String(m + 1).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`;
       });
+    } else if (filterType === 'range' && startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const days = [];
+      let temp = new Date(start);
+      let limit = 0;
+      while (temp <= end && limit < 90) {
+        days.push(`${temp.getFullYear()}-${String(temp.getMonth() + 1).padStart(2, '0')}-${String(temp.getDate()).padStart(2, '0')}`);
+        temp.setDate(temp.getDate() + 1);
+        limit++;
+      }
+      return days;
+    } else if (filterType === 'day' && selectedDay) {
+      const days = [];
+      const targetDate = new Date(selectedDay);
+      for (let i = 14; i >= 0; i--) {
+        const d = new Date(targetDate);
+        d.setDate(d.getDate() - i);
+        days.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+      }
+      return days;
     } else {
       const days = [];
       const today = new Date();
@@ -301,12 +443,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       }
       return days;
     }
-  }, [selectedMonth]);
+  }, [selectedMonth, filterType, startDate, endDate, selectedDay]);
 
   const dailyChartData = useMemo(() => {
     return chartDays.map(dateStr => {
       const dateObj = new Date(dateStr);
-      const dayName = selectedMonth
+      const dayName = (filterType === 'month' && selectedMonth)
         ? dateStr.split('-')[2]
         : dateObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
 
@@ -314,7 +456,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       db.apiConfigs.forEach(config => {
         const dayOrders = db.orders.filter(o => {
-          if (o.isSuspended || o.storeName !== config.storeName) return false;
+          if (o.isSuspended || o.isDeleted || o.storeName !== config.storeName) return false;
           // İptal edilmiş ve iadesi olmayanları filtrele
           if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
 
@@ -350,14 +492,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       return dayData;
     });
-  }, [chartDays, db.orders, db.apiConfigs, db.returns, selectedMonth, selectedCountries, validBarcodesSet]);
+  }, [chartDays, db.orders, db.apiConfigs, db.returns, filterType, selectedMonth, selectedCountries, validBarcodesSet]);
 
   const chartMonths = useMemo(() => {
     const months = [];
     let referenceDate = new Date();
-    if (selectedMonth) {
+    if (filterType === 'month' && selectedMonth) {
       const [year, month] = selectedMonth.split('-');
       referenceDate = new Date(parseInt(year), parseInt(month) - 1, 1);
+    } else if (filterType === 'day' && selectedDay) {
+      referenceDate = new Date(selectedDay);
+    } else if (filterType === 'range' && endDate) {
+      referenceDate = new Date(endDate);
     }
 
     for (let i = trendMonthCount - 1; i >= 0; i--) {
@@ -368,7 +514,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       months.push({ yearMonth, monthName });
     }
     return months;
-  }, [selectedMonth, trendMonthCount]);
+  }, [selectedMonth, filterType, selectedDay, endDate, trendMonthCount]);
 
   const monthlyTrendData = useMemo(() => {
     return chartMonths.map(month => {
@@ -376,7 +522,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       db.apiConfigs.forEach(config => {
         const monthOrders = db.orders.filter(o => {
-          if (o.isSuspended || o.storeName !== config.storeName) return false;
+          if (o.isSuspended || o.isDeleted || o.storeName !== config.storeName) return false;
           // İptal edilmiş ve iadesi olmayanları filtrele
           if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
 
@@ -425,6 +571,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       if (months.length > 60) break;
     }
     return months;
+  };
+
+  const getYearOptions = () => {
+    const years = [];
+    const currentYear = new Date().getFullYear();
+    for (let yr = currentYear; yr >= currentYear - 5; yr--) {
+      years.push({ value: yr.toString(), label: yr.toString() });
+    }
+    return years;
   };
 
   // --- Stok Azalma Analizi ---
@@ -620,30 +775,110 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
   return (
     <div className="space-y-6">
-      {/* Ay Filtresi */}
+      {/* Tarih Filtresi Segment Grubu */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-        <div className="flex items-center gap-4">
-          <label className="text-gray-700 font-medium">Ay Seçin:</label>
-          <select
-            className="border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(e.target.value)}
-          >
-            <option value="">Tüm Zamanlar</option>
-            {getMonthOptions().map(month => (
-              <option key={month.value} value={month.value}>
-                {month.label}
-              </option>
-            ))}
-          </select>
-          {selectedMonth && (
-            <button
-              className="text-blue-600 hover:text-blue-800 text-sm"
-              onClick={() => setSelectedMonth('')}
-            >
-              Filtreyi Temizle
-            </button>
-          )}
+        <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+          <div className="flex items-center gap-2">
+            <span className="text-gray-700 font-medium text-sm">Filtre Türü:</span>
+            <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1">
+              <button
+                type="button"
+                onClick={() => setFilterType('day')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${filterType === 'day' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'}`}
+              >
+                Günlük
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType('month')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${filterType === 'month' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'}`}
+              >
+                Aylık
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType('year')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${filterType === 'year' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'}`}
+              >
+                Yıllık
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterType('range')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${filterType === 'range' ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'}`}
+              >
+                Tarih Aralığı
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            {filterType === 'day' && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 font-medium">Gün Seçin:</span>
+                <input
+                  type="date"
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                  value={selectedDay}
+                  onChange={(e) => setSelectedDay(e.target.value)}
+                />
+              </div>
+            )}
+
+            {filterType === 'month' && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 font-medium">Ay Seçin:</span>
+                <select
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[150px]"
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                >
+                  <option value="">Tüm Zamanlar</option>
+                  {getMonthOptions().map(month => (
+                    <option key={month.value} value={month.value}>
+                      {month.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {filterType === 'year' && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 font-medium">Yıl Seçin:</span>
+                <select
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-[100px]"
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(e.target.value)}
+                >
+                  {getYearOptions().map(yr => (
+                    <option key={yr.value} value={yr.value}>
+                      {yr.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {filterType === 'range' && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 font-medium">Aralık:</span>
+                <input
+                  type="date"
+                  className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                />
+                <span className="text-gray-400 text-xs font-semibold">ve</span>
+                <input
+                  type="date"
+                  className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+            )}
+          </div>
 
           <div className="flex-1"></div>
 
@@ -761,6 +996,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
           <p className="text-3xl font-bold text-gray-800 mt-2">{totalProducts}</p>
         </div>
 
+        {/* Bekleyen Sipariş & Durum Takibi */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h3 className="text-gray-500 text-sm font-medium">Bekleyen ve Sevk Durumları</h3>
+          <div className="mt-2 space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-gray-500 text-sm">Bekleyen Sipariş</span>
+              <span className="font-bold text-orange-600 text-lg">{pendingOrders}</span>
+            </div>
+            <div className="flex justify-between items-center border-t pt-1">
+              <span className="text-gray-500 text-xs">Taşıma Durumunda</span>
+              <span className="font-bold text-blue-500 text-sm">{shippingOrdersCount}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-500 text-xs">Teslim Edilenler</span>
+              <span className="font-bold text-green-600 text-sm">{deliveredOrdersCount}</span>
+            </div>
+          </div>
+        </div>
+
         {/* Sipariş İstatistikleri */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <h3 className="text-gray-500 text-sm font-medium">Sipariş İstatistikleri</h3>
@@ -782,12 +1036,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
               <span className="font-bold text-red-600 text-sm">{cancelledOrdersCount}</span>
             </div>
           </div>
-        </div>
-
-        {/* Bekleyen Sipariş */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <h3 className="text-gray-500 text-sm font-medium">Bekleyen Sipariş</h3>
-          <p className="text-3xl font-bold text-orange-600 mt-2">{pendingOrders}</p>
         </div>
 
         {/* Ciro İstatistikleri */}
