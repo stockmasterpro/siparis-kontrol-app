@@ -71,7 +71,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   // --- Ay Bazlı Filtreleme ---
   const filteredOrders = useMemo(() => {
     let baseOrders = db.orders.filter(o => {
-      if (o.isSuspended || o.status === OrderStatus.CANCELLED) return false;
+      if (o.isSuspended) return false;
+      // İptal edilmiş ve iadesi olmayan siparişleri filtrele (iade edilenler toplam siparişte kalmalı)
+      if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
+      
       // Barkodları tanımlı mı kontrolü
       return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
     });
@@ -93,7 +96,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     });
 
     return filtered;
-  }, [db.orders, selectedMonth, selectedCountries, validBarcodesSet]);
+  }, [db.orders, selectedMonth, selectedCountries, validBarcodesSet, db.returns]);
 
   const filteredReturns = useMemo(() => {
     let baseReturns = db.returns;
@@ -118,11 +121,41 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
   // GLOBAL STATS (Filtered by month)
   const totalOrders = filteredOrders.length;
+  
+  const cancelledOrdersCount = useMemo(() => {
+    let baseOrders = db.orders.filter(o => {
+      if (o.isSuspended) return false;
+      // Sadece iptal edilmiş ve iadesi olmayanlar
+      if (!(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id))) return false;
+      return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
+    });
+
+    if (selectedCountries.length > 0) {
+      baseOrders = baseOrders.filter(o => {
+        const codeUpper = getEffectiveOrderCountryCode(o).toUpperCase();
+        return selectedCountries.some(code => codeUpper === code.toUpperCase());
+      });
+    }
+
+    if (!selectedMonth) return baseOrders.length;
+
+    const [year, month] = selectedMonth.split('-');
+    return baseOrders.filter(o => {
+      const d = new Date(o.orderDate);
+      return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
+    }).length;
+  }, [db.orders, selectedMonth, selectedCountries, validBarcodesSet, db.returns]);
+
+  const returnedOrdersCount = useMemo(() => {
+    return filteredOrders.filter(o => db.returns.some(r => r.orderId === o.id)).length;
+  }, [filteredOrders, db.returns]);
+
+  const netOrdersCount = totalOrders - returnedOrdersCount;
+
   const pendingOrders = filteredOrders.filter(o => o.status === OrderStatus.NEW).length;
 
   const grossRevenue = useMemo(() => {
     return filteredOrders
-      .filter(o => o.status !== OrderStatus.CANCELLED)
       .reduce((acc, order) => acc + order.items.reduce((sum, item) => sum + item.totalPrice, 0), 0);
   }, [filteredOrders]);
 
@@ -138,22 +171,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   // --- Günlük İstatistik Hesaplama Yardımcısı ---
   const getStatsForDate = (dateStr: string, orders: typeof filteredOrders) => {
     const dayOrders = orders.filter(o => {
-      if (o.status === OrderStatus.CANCELLED) return false;
+      if (o.isSuspended) return false;
       const d = new Date(o.orderDate);
       const localDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       return localDateStr === dateStr;
     });
 
-    const dailyGross = dayOrders.reduce((acc, order) => acc + order.items.reduce((sum, item) => sum + item.totalPrice, 0), 0);
+    const dayTotalOrders = dayOrders.filter(o => !(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)));
+    const dayReturned = dayTotalOrders.filter(o => db.returns.some(r => r.orderId === o.id));
 
-    const dailyReturns = dayOrders.reduce((total, order) => {
+    const dailyGross = dayTotalOrders.reduce((acc, order) => acc + order.items.reduce((sum, item) => sum + item.totalPrice, 0), 0);
+
+    const dailyReturns = dayTotalOrders.reduce((total, order) => {
       const linkedReturns = db.returns.filter(r => r.orderId === order.id);
       return total + linkedReturns.reduce((sum, r) => sum + (r.item.unitPrice * r.returnQuantity), 0);
     }, 0);
 
     return {
+      grossRevenue: dailyGross,
+      returnsValue: dailyReturns,
       revenue: dailyGross - dailyReturns,
-      count: dayOrders.length
+      totalCount: dayTotalOrders.length,
+      netCount: dayTotalOrders.length - dayReturned.length
     };
   };
 
@@ -173,8 +212,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
   const todayRevenue = todayStats.revenue;
   const yesterdayRevenue = yesterdayStats.revenue;
-  const todayCount = todayStats.count;
-  const yesterdayCount = yesterdayStats.count;
+  const todayCount = todayStats.netCount;
+  const yesterdayCount = yesterdayStats.netCount;
 
   // --- Mağaza Bazlı Analiz (Filtreli) ---
   const storeAnalytics = useMemo(() => {
@@ -186,31 +225,60 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
     return db.apiConfigs.map(config => {
       const storeOrders = filteredOrders.filter(o => o.storeName === config.storeName);
-      const storePendingOrders = storeOrders.filter(o => o.status === OrderStatus.NEW).length;
+      const storeTotalOrdersList = storeOrders.filter(o => !(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)));
+      const storeCancelledOrders = storeOrders.filter(o => o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id));
+      const storeReturnedOrders = storeTotalOrdersList.filter(o => db.returns.some(r => r.orderId === o.id));
+      const storeNetOrders = storeTotalOrdersList.filter(o => !db.returns.some(r => r.orderId === o.id));
 
-      const storeGrossRevenue = storeOrders
-        .filter(o => o.status !== OrderStatus.CANCELLED)
-        .reduce((acc, order) => acc + order.items.reduce((sum, item) => sum + item.totalPrice, 0), 0);
+      const storePendingOrders = storeTotalOrdersList.filter(o => o.status === OrderStatus.NEW).length;
 
-      const storeOrderIds = new Set(storeOrders.map(o => o.id));
+      const storeGrossRevenue = storeTotalOrdersList.reduce((acc, order) => acc + order.items.reduce((sum, item) => sum + item.totalPrice, 0), 0);
+
+      const storeOrderIds = new Set(storeTotalOrdersList.map(o => o.id));
       const linkedReturns = db.returns.filter(r => storeOrderIds.has(r.orderId));
       const storeReturnsValue = linkedReturns.reduce((acc, r) => acc + (r.item.unitPrice * r.returnQuantity), 0);
+
+      // Count cancelled orders for this store using the same logic
+      let storeCancelledOrdersBase = db.orders.filter(o => {
+        if (o.isSuspended || o.storeName !== config.storeName) return false;
+        if (!(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id))) return false;
+        return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
+      });
+      if (selectedCountries.length > 0) {
+        storeCancelledOrdersBase = storeCancelledOrdersBase.filter(o => {
+          const codeUpper = getEffectiveOrderCountryCode(o).toUpperCase();
+          return selectedCountries.some(code => codeUpper === code.toUpperCase());
+        });
+      }
+      let storeCancelledCount = storeCancelledOrdersBase.length;
+      if (selectedMonth) {
+        const [year, month] = selectedMonth.split('-');
+        storeCancelledCount = storeCancelledOrdersBase.filter(o => {
+          const d = new Date(o.orderDate);
+          return d.getFullYear() === parseInt(year) && (d.getMonth() + 1) === parseInt(month);
+        }).length;
+      }
 
       const tStats = getStatsForDate(todayStr, storeOrders);
       const yStats = getStatsForDate(yesterdayStr, storeOrders);
 
       return {
         storeName: config.storeName,
-        totalOrders: storeOrders.length,
+        totalOrders: storeTotalOrdersList.length,
+        cancelledOrders: storeCancelledCount,
+        returnedOrders: storeReturnedOrders.length,
+        netOrders: storeNetOrders.length,
         pendingOrders: storePendingOrders,
+        grossRevenue: storeGrossRevenue,
+        returnsValue: storeReturnsValue,
         revenue: storeGrossRevenue - storeReturnsValue,
         todayRevenue: tStats.revenue,
         yesterdayRevenue: yStats.revenue,
-        todayCount: tStats.count,
-        yesterdayCount: yStats.count
+        todayCount: tStats.netCount,
+        yesterdayCount: yStats.netCount
       };
     });
-  }, [db.apiConfigs, filteredOrders, db.returns]);
+  }, [db.apiConfigs, filteredOrders, db.returns, selectedCountries, selectedMonth, validBarcodesSet]);
 
   // --- Real Data Aggregation ---
   // 1. Günlük Satış Özeti (Dinamik)
@@ -246,7 +314,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       db.apiConfigs.forEach(config => {
         const dayOrders = db.orders.filter(o => {
-          if (o.isSuspended || o.storeName !== config.storeName || o.status === OrderStatus.CANCELLED) return false;
+          if (o.isSuspended || o.storeName !== config.storeName) return false;
+          // İptal edilmiş ve iadesi olmayanları filtrele
+          if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
 
           // Barkodları tanımlı mı kontrolü
           const allBarcodesExist = o.items.every(item =>
@@ -271,7 +341,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         const linkedReturns = db.returns.filter(r => dayOrderIds.has(r.orderId));
         const dailyReturnsDeduction = linkedReturns.reduce((acc, r) => acc + (r.item.unitPrice * r.returnQuantity), 0);
 
+        const returnedCount = dayOrders.filter(o => db.returns.some(r => r.orderId === o.id)).length;
+        const netOrdersCount = dayOrders.length - returnedCount;
+
         dayData[config.storeName] = dailyGross - dailyReturnsDeduction;
+        dayData[`${config.storeName}_netOrders`] = netOrdersCount;
       });
 
       return dayData;
@@ -302,7 +376,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       db.apiConfigs.forEach(config => {
         const monthOrders = db.orders.filter(o => {
-          if (o.isSuspended || o.storeName !== config.storeName || o.status === OrderStatus.CANCELLED) return false;
+          if (o.isSuspended || o.storeName !== config.storeName) return false;
+          // İptal edilmiş ve iadesi olmayanları filtrele
+          if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
 
           // Barkodları tanımlı mı kontrolü
           const allBarcodesExist = o.items.every(item =>
@@ -420,7 +496,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     }
 
     const reportOrders = db.orders.filter(o => {
-      if (o.isSuspended || o.status === OrderStatus.CANCELLED) return false;
+      if (o.isSuspended) return false;
+      // İptal edilmiş ve iadesi olmayanları filtrele (iade edilenler rapora insin)
+      if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
       
       // Barkodları tanımlı mı kontrolü
       const allBarcodesExist = o.items.every(item =>
@@ -478,12 +556,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
             'Barkod': item.barcode,
             'Renk': item.color || '-',
             'Beden': item.size || '-',
-            'Toplam Adet': 0,
-            'Toplam Ciro': 0
+            'Toplam Sipariş Adet': 0,
+            'Toplam Sipariş Ciro': 0,
+            'Toplam İade Adet': 0,
+            'Toplam İade Ciro': 0,
+            'Net Sipariş Adet': 0,
+            'Net Sipariş Ciro': 0
           };
         }
-        groupedData[key]['Toplam Adet'] += item.quantity;
-        groupedData[key]['Toplam Ciro'] += item.totalPrice;
+
+        const itemReturns = db.returns.filter(r => r.orderId === order.id && r.item.barcode === item.barcode);
+        const itemReturnedQty = itemReturns.reduce((sum, r) => sum + r.returnQuantity, 0);
+        const itemReturnedCiro = itemReturns.reduce((sum, r) => sum + (r.item.unitPrice * r.returnQuantity), 0);
+
+        groupedData[key]['Toplam Sipariş Adet'] += item.quantity;
+        groupedData[key]['Toplam Sipariş Ciro'] += item.totalPrice;
+        groupedData[key]['Toplam İade Adet'] += itemReturnedQty;
+        groupedData[key]['Toplam İade Ciro'] += itemReturnedCiro;
+        groupedData[key]['Net Sipariş Adet'] = groupedData[key]['Toplam Sipariş Adet'] - groupedData[key]['Toplam İade Adet'];
+        groupedData[key]['Net Sipariş Ciro'] = groupedData[key]['Toplam Sipariş Ciro'] - groupedData[key]['Toplam İade Ciro'];
       });
     });
 
@@ -663,29 +754,66 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        {/* Toplam Ürün */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <h3 className="text-gray-500 text-sm font-medium">Toplam Ürün</h3>
           <p className="text-3xl font-bold text-gray-800 mt-2">{totalProducts}</p>
         </div>
+
+        {/* Sipariş İstatistikleri */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <h3 className="text-gray-500 text-sm font-medium">Toplam Sipariş</h3>
-          <p className="text-3xl font-bold text-gray-800 mt-2">{totalOrders}</p>
+          <h3 className="text-gray-500 text-sm font-medium">Sipariş İstatistikleri</h3>
+          <div className="mt-2 space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-gray-500 text-sm">Toplam Sipariş</span>
+              <span className="font-bold text-blue-600 text-lg">{totalOrders}</span>
+            </div>
+            <div className="flex justify-between items-center border-t pt-1">
+              <span className="text-gray-500 text-xs">Net Sipariş</span>
+              <span className="font-bold text-indigo-600 text-sm">{netOrdersCount}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-500 text-xs">İade Sipariş</span>
+              <span className="font-bold text-orange-600 text-sm">{returnedOrdersCount}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-500 text-xs">İptal Sipariş</span>
+              <span className="font-bold text-red-600 text-sm">{cancelledOrdersCount}</span>
+            </div>
+          </div>
         </div>
+
+        {/* Bekleyen Sipariş */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <h3 className="text-gray-500 text-sm font-medium">Bekleyen Sipariş</h3>
           <p className="text-3xl font-bold text-orange-600 mt-2">{pendingOrders}</p>
         </div>
+
+        {/* Ciro İstatistikleri */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <h3 className="text-gray-500 text-sm font-medium">Net Ciro</h3>
-          <p className="text-3xl font-bold text-green-600 mt-2">{totalRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</p>
-          <div className="mt-4 flex flex-col gap-1 text-sm border-t pt-3">
+          <h3 className="text-gray-500 text-sm font-medium">Ciro İstatistikleri</h3>
+          <div className="mt-2 space-y-1">
+            <div className="flex justify-between items-center">
+              <span className="text-gray-500 text-xs">Brüt Ciro:</span>
+              <span className="font-semibold text-gray-700 text-sm">{grossRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-gray-500 text-xs text-red-500">İade Ciro:</span>
+              <span className="font-semibold text-red-600 text-sm">{totalReturnsValue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+            </div>
+            <div className="flex justify-between items-center border-t pt-1">
+              <span className="text-gray-700 font-semibold text-xs">Net Ciro:</span>
+              <span className="font-bold text-green-600 text-sm">{totalRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-col gap-1 text-[11px] border-t pt-2">
             <div className="flex justify-between">
-              <span className="text-gray-500">Bugün:</span>
+              <span className="text-gray-500">Bugün Net:</span>
               <span className="font-semibold text-green-600">{todayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">Dün:</span>
+              <span className="text-gray-500">Dün Net:</span>
               <span className="font-semibold text-green-600">{yesterdayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
             </div>
           </div>
@@ -697,36 +825,65 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         {storeAnalytics.map((store, index) => (
           <div key={store.storeName} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
             <h3 className="text-lg font-bold text-gray-800 mb-4">{store.storeName}</h3>
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-gray-600 text-sm">Toplam Sipariş</span>
-                <span className="font-semibold text-blue-600">{store.totalOrders}</span>
+            
+            {/* Sipariş Kırılımı */}
+            <div className="grid grid-cols-2 gap-2 text-xs border-b pb-3 mb-3">
+              <div>
+                <span className="text-gray-500 block">Toplam Sipariş</span>
+                <span className="font-bold text-blue-600 text-sm">{store.totalOrders}</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-600 text-sm">Bekleyen Sipariş</span>
-                <span className="font-semibold text-orange-500">{store.pendingOrders}</span>
+              <div>
+                <span className="text-gray-500 block">Net Sipariş</span>
+                <span className="font-bold text-indigo-600 text-sm">{store.netOrders}</span>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-600 text-sm">Ciro</span>
-                <span className="font-semibold text-green-600">{store.revenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+              <div>
+                <span className="text-gray-500 block">İade Sipariş</span>
+                <span className="font-bold text-orange-600 text-sm">{store.returnedOrders}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">İptal Sipariş</span>
+                <span className="font-bold text-red-600 text-sm">{store.cancelledOrders}</span>
               </div>
             </div>
-            <div className="mt-4 flex flex-col gap-2 text-sm border-t pt-3">
-              <div className="flex justify-between items-center text-xs opacity-80">
+
+            {/* Ciro Kırılımı */}
+            <div className="grid grid-cols-3 gap-1 text-[11px] border-b pb-3 mb-3">
+              <div>
+                <span className="text-gray-500 block">Brüt Ciro</span>
+                <span className="font-bold text-gray-700">{store.grossRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block text-red-500">İade Ciro</span>
+                <span className="font-bold text-red-600">{store.returnsValue.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block text-green-600 font-semibold">Net Ciro</span>
+                <span className="font-bold text-green-600">{store.revenue.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺</span>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-center text-xs mb-3">
+              <span className="text-gray-600 font-medium">Bekleyen Sipariş</span>
+              <span className="font-bold text-orange-500">{store.pendingOrders}</span>
+            </div>
+
+            {/* Bugün/Dün Karşılaştırması */}
+            <div className="mt-4 flex flex-col gap-2 text-xs border-t pt-3">
+              <div className="flex justify-between items-center opacity-85">
                 <span className="text-gray-500 italic">Bugünkü Sipariş</span>
-                <span className="font-bold text-gray-700">{store.todayCount} Adet</span>
+                <span className="font-bold text-gray-700">{store.todayCount} Net Adet</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Bugünkü Ciro</span>
+                <span className="text-gray-600">Bugünkü Net Ciro</span>
                 <span className="font-semibold text-green-600">{store.todayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
               </div>
               <div className="h-px bg-gray-100 my-1"></div>
-              <div className="flex justify-between items-center text-xs opacity-80">
+              <div className="flex justify-between items-center opacity-85">
                 <span className="text-gray-500 italic">Dünkü Sipariş</span>
-                <span className="font-bold text-gray-700">{store.yesterdayCount} Adet</span>
+                <span className="font-bold text-gray-700">{store.yesterdayCount} Net Adet</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Dünkü Ciro</span>
+                <span className="text-gray-600">Dünkü Net Ciro</span>
                 <span className="font-semibold text-green-600">{store.yesterdayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
               </div>
             </div>
@@ -743,7 +900,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" />
               <YAxis />
-              <Tooltip formatter={(value) => `${Number(value).toLocaleString('tr-TR')} ₺`} />
+              <Tooltip
+                formatter={(value, name, props) => {
+                  const netOrders = props.payload[`${name}_netOrders`] || 0;
+                  return [`${Number(value).toLocaleString('tr-TR')} ₺ (${netOrders} Net Sipariş)`, name];
+                }}
+              />
               <Legend />
               {db.apiConfigs.map((config, index) => {
                 const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
