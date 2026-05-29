@@ -76,7 +76,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   // --- Tarih Bazlı Filtreleme ---
   const filteredOrders = useMemo(() => {
     let baseOrders = db.orders.filter(o => {
-      if (o.isSuspended || o.isDeleted) return false;
+      if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_')) return false;
       // İptal edilmiş ve iadesi olmayan siparişleri filtrele (iade edilenler toplam siparişte kalmalı)
       if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
       
@@ -185,7 +185,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   
   const cancelledOrdersCount = useMemo(() => {
     let baseOrders = db.orders.filter(o => {
-      if (o.isSuspended) return false;
+      if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_')) return false;
       // Sadece iptal edilmiş ve iadesi olmayanlar
       if (!(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id))) return false;
       return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
@@ -241,6 +241,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   }, [filteredOrders, db.returns]);
 
   const netOrdersCount = totalOrders - returnedOrdersCount;
+
+  const totalItemsQty = useMemo(() => {
+    return filteredOrders.reduce((sum, o) => sum + o.items.reduce((acc, item) => acc + item.quantity, 0), 0);
+  }, [filteredOrders]);
+
+  const returnedItemsQty = useMemo(() => {
+    return filteredOrders.reduce((sum, order) => {
+      const linkedReturns = db.returns.filter(r => r.orderId === order.id);
+      return sum + linkedReturns.reduce((acc, r) => acc + r.returnQuantity, 0);
+    }, 0);
+  }, [filteredOrders, db.returns]);
+
+  const netItemsQty = totalItemsQty - returnedItemsQty;
 
   const pendingOrders = filteredOrders.filter(o => o.status === OrderStatus.NEW).length;
   const shippingOrdersCount = filteredOrders.filter(o => o.status === OrderStatus.SHIPPING).length;
@@ -339,9 +352,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       const netItemsQty = totalItemsQty - returnedItemsQty;
 
-      // Count cancelled orders for this store using the same logic (keeping soft-deleted cancelled orders)
+      // Count cancelled orders for this store using the same logic (excluding soft-deleted cancelled orders)
       let storeCancelledOrdersBase = db.orders.filter(o => {
-        if (o.isSuspended || o.storeName !== config.storeName) return false;
+        if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_') || o.storeName !== config.storeName) return false;
         if (!(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id))) return false;
         return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
       });
@@ -473,7 +486,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       db.apiConfigs.forEach(config => {
         const dayOrders = db.orders.filter(o => {
-          if (o.isSuspended || o.isDeleted || o.storeName !== config.storeName) return false;
+          if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_') || o.storeName !== config.storeName) return false;
           // İptal edilmiş ve iadesi olmayanları filtrele
           if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
 
@@ -539,7 +552,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       db.apiConfigs.forEach(config => {
         const monthOrders = db.orders.filter(o => {
-          if (o.isSuspended || o.isDeleted || o.storeName !== config.storeName) return false;
+          if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_') || o.storeName !== config.storeName) return false;
           // İptal edilmiş ve iadesi olmayanları filtrele
           if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
 
@@ -605,7 +618,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
     const recentOrders = db.orders.filter(o => {
-      if (o.isSuspended || o.status === OrderStatus.CANCELLED) return false;
+      if (o.isSuspended || o.status === OrderStatus.CANCELLED || o.id.includes('_OLD_')) return false;
       if (new Date(o.orderDate) < thirtyDaysAgo) return false;
 
       // Barkodları tanımlı mı kontrolü
@@ -668,7 +681,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     }
 
     const reportOrders = db.orders.filter(o => {
-      if (o.isSuspended) return false;
+      if (o.isSuspended || o.id.includes('_OLD_')) return false;
       // İptal edilmiş ve iadesi olmayanları filtrele (iade edilenler rapora insin)
       if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
       
@@ -922,7 +935,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
                         onClick={() => {
                           const allCodes = Array.from(new Set([
                             ...PRIORITY_COUNTRIES.map(c => c.code),
-                            ...db.orders.map(o => getEffectiveOrderCountryCode(o)).filter(c => c && c !== 'TR')
+                            ...db.orders.filter(o => !o.id.includes('_OLD_')).map(o => getEffectiveOrderCountryCode(o)).filter(c => c && c !== 'TR')
                           ]));
                           setSelectedCountries(allCodes as string[]);
                         }}
@@ -966,6 +979,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
                     {/* Diğer Ülkeler */}
                     {db.orders
+                      .filter(o => !o.id.includes('_OLD_'))
                       .map(o => getEffectiveOrderCountryCode(o))
                       .filter((c, i, a) => c && c !== 'TR' && !PRIORITY_COUNTRIES.some(p => p.code === c) && a.indexOf(c) === i)
                       .map(code => (
@@ -1043,15 +1057,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
           <div className="mt-2 space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-gray-500 text-sm">Toplam Sipariş Adeti</span>
-              <span className="font-bold text-blue-600 text-lg">{totalOrders}</span>
+              <span className="font-bold text-blue-600 text-base">{totalOrders} Sipariş / {totalItemsQty} Adet</span>
             </div>
             <div className="flex justify-between items-center border-t pt-1">
               <span className="text-gray-500 text-xs">Net Sipariş Adeti</span>
-              <span className="font-bold text-indigo-600 text-sm">{netOrdersCount}</span>
+              <span className="font-bold text-indigo-600 text-sm">{netOrdersCount} Sipariş / {netItemsQty} Adet</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-gray-500 text-xs">İade Sipariş Adeti</span>
-              <span className="font-bold text-orange-600 text-sm">{returnedOrdersCount}</span>
+              <span className="font-bold text-orange-600 text-sm">{returnedOrdersCount} Sipariş / {returnedItemsQty} Adet</span>
             </div>
           </div>
         </div>
