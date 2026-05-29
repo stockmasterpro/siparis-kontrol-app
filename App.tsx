@@ -1185,8 +1185,7 @@ const App: React.FC = () => {
       activeCount = db.orders.filter(o =>
         !o.isSuspended &&
         o.status !== OrderStatus.CANCELLED &&
-        (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING) && // Sadece işlem bekleyenler
-        new Date(o.orderDate) >= thresholdDate
+        (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING) // Sadece işlem bekleyenler
       ).length;
     }
 
@@ -1196,8 +1195,7 @@ const App: React.FC = () => {
       suspended: db.orders.filter(
         o =>
           o.isSuspended &&
-          (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING) &&
-          new Date(o.orderDate) >= thresholdDate
+          (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING)
       ).length,
       returned: db.returns.filter(r => new Date(r.returnDate) >= thresholdDate).length,
       newQuestions: (db.questions || []).filter(q => q.status === QuestionStatus.WAITING_FOR_ANSWER).length,

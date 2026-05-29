@@ -1790,14 +1790,31 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             const allReturns = [...db.returns, ...newReturnRecords];
             const updatedOrders = db.orders.map(o => {
                 if (o.id === returnOrderTarget.id) {
+                    const updatedItems = o.items.map(item => {
+                        const returnedQty = returnQuantities[item.barcode] || 0;
+                        if (returnedQty > 0) {
+                            const newQty = Math.max(0, item.quantity - returnedQty);
+                            return {
+                                ...item,
+                                quantity: newQty,
+                                totalPrice: newQty * item.unitPrice
+                            };
+                        }
+                        return item;
+                    }).filter(item => item.quantity > 0);
+
                     const totalOrdered = o.items.reduce((sum, item) => sum + item.quantity, 0);
                     const totalReturned = allReturns
                         .filter(r => r.orderId === o.id)
                         .reduce((sum, r) => sum + r.returnQuantity, 0);
 
-                    if (totalReturned >= totalOrdered) {
-                        return { ...o, status: OrderStatus.CANCELLED };
-                    }
+                    const newStatus = totalReturned >= totalOrdered ? OrderStatus.CANCELLED : o.status;
+
+                    return {
+                        ...o,
+                        items: updatedItems,
+                        status: newStatus
+                    };
                 }
                 return o;
             });
