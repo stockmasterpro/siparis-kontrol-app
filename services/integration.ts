@@ -1182,8 +1182,50 @@ export const syncMarketplaceOrders = async (
           const newBarcodes = orderItems.map(i => i.barcode).sort().join(',');
           const isContentChanged = currentQty !== newQty || existingBarcodes !== newBarcodes;
 
-          if (isCancelledStatus || isContentChanged) {
-            console.log(`[ORDER-UPDATE] Sipariş ${apiOrder.orderNumber} iptal/değişim algılandı. Arşivleniyor...`);
+          if (isCancelledStatus) {
+            console.log(`[ORDER-UPDATE] Sipariş ${apiOrder.orderNumber} tamamen iptal edildi. Statü güncelleniyor ve stoklar iade ediliyor...`);
+
+            // 1. STOK İADE (Eğer askıda değilse ve daha önce düşülmüşse)
+            if (!existingOrder.isSuspended) {
+              existingOrder.items.forEach(item => {
+                const product = currentDbProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
+                if (product) {
+                  const variant = product.variants.find(v => v.barcode === item.barcode);
+                  if (variant) {
+                    const whId = Object.keys(variant.stocks)[0] || 'wh1';
+                    const currentStock = variant.stocks[whId] || 0;
+                    const newStock = currentStock + item.quantity;
+
+                    const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, whId, newStock);
+                    currentDbProducts = result.updatedProducts;
+
+                    // Stok senkronizasyon listesine ekle - ÖNEMLİ: Tüm varyant barkodlarını ekle
+                    const updatedProduct = currentDbProducts.find(p => p.id === product.id);
+                    if (updatedProduct) {
+                      updatedProduct.variants.forEach(pv => {
+                        if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
+                          const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + b, 0);
+                          barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                        }
+                      });
+                    }
+                  }
+                }
+              });
+            }
+
+            // 2. SİPARİŞİ İPTAL ET (Orijinal ID'yi koru, sadece status'ü CANCELLED yap!)
+            currentDbOrders[existingOrderIndex].status = OrderStatus.CANCELLED;
+
+            // Eğer yeni kargo kodu varsa güncelle
+            const updatedCargoCode = String(apiOrder.cargoTrackingNumber || apiOrder.trackingNumber || '-');
+            if (updatedCargoCode !== '-') {
+              currentDbOrders[existingOrderIndex].cargoCode = updatedCargoCode;
+            }
+
+            continue; // Sipariş tamamen iptal edildiği için sonraki kayda geç.
+          } else if (isContentChanged) {
+            console.log(`[ORDER-UPDATE] Sipariş ${apiOrder.orderNumber} içerik değişikliği (kısmi iptal vb.) algılandı. Arşivleniyor...`);
 
             // 1. STOK İADE (Eğer askıda değilse ve daha önce düşülmüşse)
             if (!existingOrder.isSuspended) {
