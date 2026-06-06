@@ -924,6 +924,28 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         printedFilter
     ]);
 
+    // Reset to page 1 when any filter or tab changes
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [
+        searchTerm,
+        orderSearch,
+        customerSearch,
+        barcodeSearch,
+        productNameSearch,
+        selectedStores,
+        cargoSearch,
+        sellerSearch,
+        stockSearch,
+        dateFilterStart,
+        dateFilterEnd,
+        printedFilter,
+        selectedCountries,
+        skuSearch,
+        selectedStatuses,
+        activeTab
+    ]);
+
     // Get paginated orders
     const getPaginatedOrders = () => {
         const filtered = activeTab === 'returned' ? getGroupedReturns() : getFilteredOrders();
@@ -975,15 +997,102 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     const getFilteredReturns = () => {
         let list = db.returns || [];
+
+        // Filter by 30 days visibility limit if showAllOrders is false
+        if (!showAllOrders && !dateFilterStart && !dateFilterEnd) {
+            const fetchDays = db.settings.orderFetchDays || 30;
+            const thresholdDate = new Date();
+            thresholdDate.setDate(thresholdDate.getDate() - fetchDays);
+            list = list.filter(r => new Date(r.returnDate) >= thresholdDate);
+        }
+
+        // Mağaza (çoklu seçim)
+        if (selectedStores.length > 0) {
+            list = list.filter(r => {
+                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const storeName = associatedOrder ? associatedOrder.storeName : '-';
+                return selectedStores.includes(storeName);
+            });
+        }
+
+        // Kargo arama
+        if (cargoSearch) {
+            const lower = cargoSearch.toLowerCase();
+            list = list.filter(r => {
+                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const cargoCode = associatedOrder ? String(associatedOrder.cargoCode || '') : '';
+                return cargoCode.toLowerCase().includes(lower);
+            });
+        }
+
+        // SKU arama
+        if (skuSearch) {
+            const lower = skuSearch.toLowerCase();
+            list = list.filter(r => (r.item.sku || '').toLowerCase().includes(lower));
+        }
+
+        // Sipariş No arama
+        if (orderSearch) {
+            const lower = orderSearch.toLowerCase();
+            list = list.filter(r => (r.marketplaceOrderId || '').toLowerCase().includes(lower));
+        }
+
+        // Müşteri adı arama
+        if (customerSearch) {
+            const lower = customerSearch.toLowerCase();
+            list = list.filter(r => {
+                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const name = r.customerName || (associatedOrder ? associatedOrder.customerName : '');
+                return name.toLowerCase().includes(lower);
+            });
+        }
+
+        // Ürün adı arama
+        if (productNameSearch) {
+            const lower = productNameSearch.toLowerCase();
+            list = list.filter(r => (r.item.productName || '').toLowerCase().includes(lower));
+        }
+
+        // Tarih filtresi (İade Tarihi filter)
+        if (dateFilterStart || dateFilterEnd) {
+            list = list.filter(r => {
+                const retDate = new Date(r.returnDate);
+                if (dateFilterStart && retDate < new Date(dateFilterStart)) return false;
+                if (dateFilterEnd) {
+                    const endDate = new Date(dateFilterEnd);
+                    endDate.setHours(23, 59, 59, 999);
+                    if (retDate > endDate) return false;
+                }
+                return true;
+            });
+        }
+
+        // Ülke Filtresi
+        if (selectedCountries.length > 0) {
+            list = list.filter(r => {
+                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                if (!associatedOrder) return false;
+                const codeUpper = getEffectiveOrderCountryCode(associatedOrder).toUpperCase();
+                return selectedCountries.some(code => codeUpper === code.toUpperCase());
+            });
+        }
+
+        // Genel Arama (searchTerm)
         if (searchTerm) {
             const lower = searchTerm.toLowerCase();
-            list = list.filter(r =>
-                (r.customerName || '').toLowerCase().includes(lower) ||
-                (r.marketplaceOrderId || '').toLowerCase().includes(lower) ||
-                (r.item.productName || '').toLowerCase().includes(lower) ||
-                (r.item.barcode || '').includes(lower)
-            );
+            list = list.filter(r => {
+                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const customerMatch = (r.customerName || (associatedOrder ? associatedOrder.customerName : '')).toLowerCase().includes(lower);
+                const orderMatch = (r.marketplaceOrderId || '').toLowerCase().includes(lower);
+                const storeMatch = (associatedOrder ? associatedOrder.storeName : '').toLowerCase().includes(lower);
+                const cargoMatch = (associatedOrder ? String(associatedOrder.cargoCode || '') : '').toLowerCase().includes(lower);
+                const productNameMatch = (r.item.productName || '').toLowerCase().includes(lower);
+                const skuMatch = (r.item.sku || '').toLowerCase().includes(lower);
+                const barcodeMatch = (r.item.barcode || '').toLowerCase().includes(lower);
+                return customerMatch || orderMatch || storeMatch || cargoMatch || productNameMatch || skuMatch || barcodeMatch;
+            });
         }
+
         return list;
     };
 
@@ -1002,6 +1111,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     marketplaceOrderId: r.marketplaceOrderId,
                     storeName: storeName,
                     customerName: r.customerName || (associatedOrder ? associatedOrder.customerName : '-'),
+                    cargoCode: associatedOrder ? associatedOrder.cargoCode : '-',
+                    orderDate: associatedOrder ? associatedOrder.orderDate : null,
+                    itemsCount: associatedOrder ? associatedOrder.items.length : 0,
                     returnQuantity: 0,
                     returnDate: r.returnDate,
                     originalRecords: [],
@@ -1037,7 +1149,42 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }
         });
 
-        return Object.values(groups);
+        const result = Object.values(groups);
+
+        if (sortBy) {
+            result.sort((a: any, b: any) => {
+                let comparison = 0;
+                switch (sortBy) {
+                    case 'date':
+                        comparison = new Date(a.returnDate).getTime() - new Date(b.returnDate).getTime();
+                        break;
+                    case 'orderDate':
+                        comparison = new Date(a.orderDate || 0).getTime() - new Date(b.orderDate || 0).getTime();
+                        break;
+                    case 'orderNumber':
+                        comparison = (a.marketplaceOrderId || '').localeCompare(b.marketplaceOrderId || '', 'tr', { numeric: true, sensitivity: 'base' });
+                        break;
+                    case 'customerName':
+                        comparison = (a.customerName || '').localeCompare(b.customerName || '', 'tr', { sensitivity: 'base' });
+                        break;
+                    case 'sku':
+                        const aSku = a.originalRecords[0]?.item.sku || '';
+                        const bSku = b.originalRecords[0]?.item.sku || '';
+                        comparison = aSku.localeCompare(bSku, 'tr', { numeric: true, sensitivity: 'base' });
+                        break;
+                    case 'productName':
+                        const aName = a.groupedItems[0]?.productName || '';
+                        const bName = b.groupedItems[0]?.productName || '';
+                        comparison = aName.localeCompare(bName, 'tr', { sensitivity: 'base' });
+                        break;
+                }
+                return sortOrder === 'asc' ? comparison : -comparison;
+            });
+        } else {
+            result.sort((a: any, b: any) => new Date(b.returnDate).getTime() - new Date(a.returnDate).getTime());
+        }
+
+        return result;
     };
 
     // --- ACTIONS ---
@@ -1786,44 +1933,13 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 }
             });
 
-            // 1. Siparişin tamamen iade edilip edilmediğini kontrol et
             const allReturns = [...db.returns, ...newReturnRecords];
-            const updatedOrders = db.orders.map(o => {
-                if (o.id === returnOrderTarget.id) {
-                    const updatedItems = o.items.map(item => {
-                        const returnedQty = returnQuantities[item.barcode] || 0;
-                        if (returnedQty > 0) {
-                            const newQty = Math.max(0, item.quantity - returnedQty);
-                            return {
-                                ...item,
-                                quantity: newQty,
-                                totalPrice: newQty * item.unitPrice
-                            };
-                        }
-                        return item;
-                    }).filter(item => item.quantity > 0);
-
-                    const totalOrdered = o.items.reduce((sum, item) => sum + item.quantity, 0);
-                    const totalReturned = allReturns
-                        .filter(r => r.orderId === o.id)
-                        .reduce((sum, r) => sum + r.returnQuantity, 0);
-
-                    const newStatus = totalReturned >= totalOrdered ? OrderStatus.CANCELLED : o.status;
-
-                    return {
-                        ...o,
-                        items: updatedItems,
-                        status: newStatus
-                    };
-                }
-                return o;
-            });
 
             updateDB({
                 ...db,
                 products: currentProducts,
                 returns: allReturns,
-                orders: updatedOrders
+                orders: db.orders
             });
 
             // Sync if enabled - Barkod bazlı stok gönderimi
@@ -2947,10 +3063,118 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                             </th>
                             {activeTab === 'returned' ? (
                                 <>
-                                    <th>İade Edilen Ürün</th>
-                                    <th>İade Adet</th>
-                                    <th>İade Tarihi</th>
-                                    <th>İşlem</th>
+                                    <th style={{ width: columnWidths['cargo'] || 'auto' }}>
+                                        <div className="resizable-header">
+                                            <div className="flex flex-col">
+                                                <span>Kargo</span>
+                                                <input
+                                                    type="text"
+                                                    className="text-xs border rounded px-1 py-0.5 mt-1"
+                                                    placeholder="Kargo ara..."
+                                                    value={cargoSearch}
+                                                    onChange={(e) => setCargoSearch(e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="resizer-handle" onMouseDown={(e) => handleResizeStart(e, 'cargo', columnWidths['cargo'] || 100)} />
+                                        </div>
+                                    </th>
+                                    <th>Kalem</th>
+                                    <th style={{ width: columnWidths['productName'] || 'auto' }}>
+                                        <div className="resizable-header">
+                                            <div className="flex flex-col">
+                                                <div
+                                                    className="cursor-pointer hover:bg-gray-100 px-1 rounded"
+                                                    onClick={() => {
+                                                        if (sortBy === 'productName') setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                                                        else { setSortBy('productName'); setSortOrder('asc'); }
+                                                    }}
+                                                >
+                                                    Ürün Adı {sortBy === 'productName' && (sortOrder === 'asc' ? '↑' : '↓')}
+                                                </div>
+                                                <input
+                                                    type="text"
+                                                    className="text-xs border rounded px-1 py-0.5 mt-1 w-full min-w-0"
+                                                    placeholder="Ürün adı ara..."
+                                                    value={productNameSearch}
+                                                    onChange={(e) => setProductNameSearch(e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="resizer-handle" onMouseDown={(e) => handleResizeStart(e, 'productName', columnWidths['productName'] || 200)} />
+                                        </div>
+                                    </th>
+                                    <th style={{ width: columnWidths['sku'] || 'auto' }}>
+                                        <div className="resizable-header">
+                                            <div className="flex flex-col">
+                                                <div className="flex items-center gap-1 cursor-pointer hover:bg-gray-200 p-1 rounded" onClick={() => handleSort('sku')} title="Satıcı Stok Koduna göre sırala">
+                                                    <span>Satıcı Stok Kodu</span>
+                                                    {sortBy === 'sku' && (
+                                                        sortOrder === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />
+                                                    )}
+                                                </div>
+                                                <input
+                                                    type="text"
+                                                    className="text-xs border rounded px-1 py-0.5 mt-1"
+                                                    placeholder="SKU ara..."
+                                                    value={skuSearch}
+                                                    onChange={(e) => setSkuSearch(e.target.value)}
+                                                />
+                                            </div>
+                                            <div className="resizer-handle" onMouseDown={(e) => handleResizeStart(e, 'sku', columnWidths['sku'] || 120)} />
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <span
+                                            className="cursor-pointer hover:bg-gray-100 px-1 rounded text-nowrap"
+                                            onClick={() => {
+                                                if (sortBy === 'orderDate') {
+                                                    setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                                                } else {
+                                                    setSortBy('orderDate');
+                                                    setSortOrder('desc');
+                                                }
+                                            }}
+                                        >
+                                            Sipariş Tarihi {sortBy === 'orderDate' && (sortOrder === 'asc' ? '↑' : '↓')}
+                                        </span>
+                                    </th>
+                                    <th className="w-8 text-center" title="Stok Durumu">Stok</th>
+                                    <th>İade Adeti</th>
+                                    <th>
+                                        <div className="flex flex-col">
+                                            <span
+                                                className="cursor-pointer hover:bg-gray-100 px-1 rounded text-nowrap"
+                                                onClick={() => {
+                                                    if (sortBy === 'date') {
+                                                        setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+                                                    } else {
+                                                        setSortBy('date');
+                                                        setSortOrder('desc');
+                                                    }
+                                                }}
+                                            >
+                                                İade Tarihi {sortBy === 'date' && (sortOrder === 'asc' ? '↑' : '↓')}
+                                            </span>
+                                            <div className="flex gap-1 mt-1">
+                                                <input
+                                                    type="date"
+                                                    className="text-xs border rounded px-1 py-0.5 flex-1"
+                                                    placeholder="Başlangıç"
+                                                    value={dateFilterStart}
+                                                    onChange={(e) => setDateFilterStart(e.target.value)}
+                                                    title="Başlangıç Tarihi"
+                                                />
+                                                <input
+                                                    type="date"
+                                                    className="text-xs border rounded px-1 py-0.5 flex-1"
+                                                    placeholder="Bitiş"
+                                                    value={dateFilterEnd}
+                                                    onChange={(e) => setDateFilterEnd(e.target.value)}
+                                                    title="Bitiş Tarihi"
+                                                />
+                                            </div>
+                                        </div>
+                                    </th>
+                                    <th className="w-24 text-center">İşlem</th>
                                 </>
                             ) : (
                                 <>
@@ -3324,47 +3548,92 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         ))}
 
                         {/* Returned Items List */}
-                        {activeTab === 'returned' && getPaginatedOrders().map((ret: any) => (
-                            <tr key={ret.id}>
-                                <td><span className="bg-purple-100 text-purple-800 px-1 text-[10px] rounded">İADE</span></td>
-                                <td>{ret.storeName}</td>
-                                <td>{ret.marketplaceOrderId}</td>
-                                <td>{ret.customerName}</td>
-                                <td>
-                                    {ret.groupedItems.map((gi: any, idx: number) => (
-                                        <div key={idx} className="mb-1 last:mb-0">
-                                            <span>{gi.productName}</span> <br />
-                                            <span className="text-gray-500 text-[10px]">
-                                                {gi.color} - Bedenler: {gi.sizes.join(', ')} ({gi.barcodes.join(', ')})
-                                            </span>
+                        {activeTab === 'returned' && getPaginatedOrders().map((ret: any) => {
+                            const associatedOrder = db.orders.find(o => o.id === ret.originalRecords[0]?.orderId || o.marketplaceOrderId === ret.marketplaceOrderId);
+                            return (
+                                <tr
+                                    key={ret.id}
+                                    className="hover:bg-purple-50/50 cursor-pointer transition-colors"
+                                    onDoubleClick={async () => {
+                                        if (associatedOrder) {
+                                            setDetailOrder(associatedOrder);
+                                            await handleOrderDetailRefresh(associatedOrder);
+                                        } else {
+                                            const mockOrder: any = {
+                                                id: ret.id,
+                                                marketplaceOrderId: ret.marketplaceOrderId,
+                                                storeName: ret.storeName,
+                                                status: 'İade Alındı',
+                                                customerName: ret.customerName,
+                                                cargoCode: ret.cargoCode || '-',
+                                                orderDate: ret.orderDate || new Date().toISOString(),
+                                                items: ret.originalRecords.map((rec: any) => rec.item)
+                                            };
+                                            setDetailOrder(mockOrder);
+                                        }
+                                    }}
+                                >
+                                    <td><span className="bg-purple-100 text-purple-800 px-1 text-[10px] rounded font-bold">İADE</span></td>
+                                    <td>{ret.storeName}</td>
+                                    <td>{ret.marketplaceOrderId}</td>
+                                    <td>{ret.customerName}</td>
+                                    <td>{ret.cargoCode || '-'}</td>
+                                    <td className="text-xs">{ret.itemsCount || 0} Kalem</td>
+                                    <td className="text-[10px] truncate max-w-0" title={ret.groupedItems.map((gi: any) => gi.productName).join(', ')}>
+                                        <div className="flex flex-col">
+                                            <span>{ret.groupedItems[0]?.productName || '-'}</span>
+                                            {ret.groupedItems[0]?.sizes && ret.groupedItems[0].sizes.length > 0 && (
+                                                <span className="text-blue-600 font-bold">Beden: {ret.groupedItems[0].sizes.join(', ')}</span>
+                                            )}
+                                            {ret.groupedItems.length > 1 && (
+                                                <span className="text-purple-600 font-semibold text-[9px] mt-0.5">
+                                                    (+{ret.groupedItems.length - 1} farklı ürün daha)
+                                                </span>
+                                            )}
                                         </div>
-                                    ))}
-                                </td>
-                                <td className="text-center font-bold text-red-600">{ret.returnQuantity}</td>
-                                <td className="text-xs">{safeFormatDate(ret.returnDate, true)}</td>
-                                <td className="text-center">
-                                    <div className="flex gap-1 justify-center">
-                                        <button
-                                            onClick={() => handleDeleteReturnRecord(ret)}
-                                            className="text-red-500 hover:bg-red-50 p-1 rounded transition-colors"
-                                            title="İade Kaydını Sil (Stok Etkilemez)"
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
-                                        <button
-                                            onClick={() => handleUndoReturn(ret)}
-                                            className="text-orange-500 hover:bg-orange-50 p-1 rounded transition-colors"
-                                            title="İadeyi Geri Al (Stoktan Düşer)"
-                                        >
-                                            <RotateCcw size={14} />
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
+                                    </td>
+                                    <td className="text-xs font-mono">
+                                        {ret.originalRecords.map((rec: any, idx: number) => (
+                                            <div key={idx}>{rec.item.sku || '-'}</div>
+                                        ))}
+                                    </td>
+                                    <td className="text-xs">{ret.orderDate ? safeFormatDate(ret.orderDate) : '-'}</td>
+                                    <td className="text-center">
+                                        {associatedOrder && isOrderOutOfStock(associatedOrder) && (
+                                            <div className="group relative inline-block">
+                                                <AlertTriangle className="text-red-600 w-5 h-5 mx-auto" />
+                                                <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-red-600 text-white text-xs p-1 rounded whitespace-nowrap z-50 mb-1">
+                                                    Stok Yetersiz!
+                                                </div>
+                                            </div>
+                                        )}
+                                    </td>
+                                    <td className="text-center font-bold text-red-600">{ret.returnQuantity}</td>
+                                    <td className="text-xs">{safeFormatDate(ret.returnDate, true)}</td>
+                                    <td className="text-center">
+                                        <div className="flex gap-1 justify-center">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleDeleteReturnRecord(ret); }}
+                                                className="text-red-500 hover:bg-red-50 p-1 rounded transition-colors"
+                                                title="İade Kaydını Sil (Stok Etkilemez)"
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleUndoReturn(ret); }}
+                                                className="text-orange-500 hover:bg-orange-50 p-1 rounded transition-colors"
+                                                title="İadeyi Geri Al (Stoktan Düşer)"
+                                            >
+                                                <RotateCcw size={14} />
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            );
+                        })}
 
                         {activeTab === 'returned' && getPaginatedOrders().length === 0 && (
-                            <tr><td colSpan={8} className="text-center text-gray-500 p-4">İade kaydı bulunamadı.</td></tr>
+                            <tr><td colSpan={13} className="text-center text-gray-500 p-4">İade kaydı bulunamadı.</td></tr>
                         )}
                     </tbody>
                 </table>
@@ -3601,10 +3870,12 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                         .reduce((acc, r) => acc + r.returnQuantity, 0);
 
                                                     const remainingQty = item.quantity - totalReturned;
-                                                    if (remainingQty <= 0) return null; // Fully returned items are hidden
+                                                    // Hide fully returned items only when not on returned tab
+                                                    if (activeTab !== 'returned' && remainingQty <= 0) return null;
 
                                                     const currentStock = getStockStatus(item.barcode);
-                                                    const isOutOfStock = remainingQty > currentStock;
+                                                    const qty = activeTab === 'returned' ? item.quantity : remainingQty;
+                                                    const isOutOfStock = qty > currentStock;
 
                                                     return (
                                                         <tr key={idx} className={`border-b last:border-0 ${isOutOfStock ? 'bg-red-100' : 'hover:bg-gray-50'}`}>
@@ -3618,9 +3889,14 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                     <span className="ml-1 text-blue-600 font-bold">({item.productSize})</span>
                                                                 )}
                                                             </td>
-                                                            <td className="p-2 text-center font-bold">{remainingQty}</td>
+                                                            <td className="p-2 text-center font-bold">
+                                                                {qty}
+                                                                {activeTab === 'returned' && totalReturned > 0 && (
+                                                                    <span className="text-red-600 block text-[10px] font-semibold">(İade: {totalReturned})</span>
+                                                                )}
+                                                            </td>
                                                             <td className="p-2 text-right">{item.unitPrice.toFixed(2)} ₺</td>
-                                                            <td className="p-2 text-right font-bold">{(item.unitPrice * remainingQty).toFixed(2)} ₺</td>
+                                                            <td className="p-2 text-right font-bold">{(item.unitPrice * qty).toFixed(2)} ₺</td>
                                                         </tr>
                                                     );
                                                 })}
@@ -3633,7 +3909,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                             const returned = db.returns
                                                                 .filter(r => r.orderId === detailOrder.id && r.item.barcode === i.barcode)
                                                                 .reduce((sum, r) => sum + r.returnQuantity, 0);
-                                                            return acc + (i.unitPrice * (i.quantity - returned));
+                                                            const qty = activeTab === 'returned' ? i.quantity : (i.quantity - returned);
+                                                            return acc + (i.unitPrice * qty);
                                                         }, 0).toFixed(2)} ₺
                                                     </td>
                                                 </tr>

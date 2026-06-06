@@ -240,42 +240,12 @@ Mağaza: ${claim.storeName}
         }
 
         const allReturns = [...db.returns, newReturnRecord];
-        const updatedOrders = db.orders.map(o => {
-            if (o.id === order.id) {
-                const updatedItems = o.items.map(i => {
-                    const isMatchingItem = (claim.orderLineItemId && i.orderItemId && String(i.orderItemId) === String(claim.orderLineItemId)) || i.barcode === claim.barcode;
-                    if (isMatchingItem) {
-                        const newQty = Math.max(0, i.quantity - returnQty);
-                        return {
-                            ...i,
-                            quantity: newQty,
-                            totalPrice: newQty * i.unitPrice
-                        };
-                    }
-                    return i;
-                }).filter(i => i.quantity > 0);
-
-                const totalOrdered = o.items.reduce((sum, it) => sum + it.quantity, 0);
-                const totalReturned = allReturns
-                    .filter(r => r.orderId === o.id)
-                    .reduce((sum, r) => sum + r.returnQuantity, 0);
-
-                const newStatus = totalReturned >= totalOrdered ? OrderStatus.CANCELLED : o.status;
-
-                return {
-                    ...o,
-                    items: updatedItems,
-                    status: newStatus
-                };
-            }
-            return o;
-        });
 
         updateDB(prev => ({
             ...prev,
             products: currentProducts,
             returns: allReturns,
-            orders: updatedOrders,
+            orders: prev.orders,
             returnClaims: prev.returnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId)
         }));
 
@@ -436,38 +406,6 @@ Mağaza: ${claim.storeName}
                         };
                         currentReturns.push(newReturnRecord);
 
-                        // Update orders in the loop
-                        currentOrders = currentOrders.map(o => {
-                            if (o.id === order.id) {
-                                const updatedItems = o.items.map(i => {
-                                    const isMatchingItem = (claim.orderLineItemId && i.orderItemId && String(i.orderItemId) === String(claim.orderLineItemId)) || i.barcode === claim.barcode;
-                                    if (isMatchingItem) {
-                                        const newQty = Math.max(0, i.quantity - returnQty);
-                                        return {
-                                            ...i,
-                                            quantity: newQty,
-                                            totalPrice: newQty * i.unitPrice
-                                        };
-                                    }
-                                    return i;
-                                }).filter(i => i.quantity > 0);
-
-                                const totalOrdered = o.items.reduce((sum, it) => sum + it.quantity, 0);
-                                const totalReturned = currentReturns
-                                    .filter(r => r.orderId === o.id)
-                                    .reduce((sum, r) => sum + r.returnQuantity, 0);
-
-                                const newStatus = totalReturned >= totalOrdered ? OrderStatus.CANCELLED : o.status;
-
-                                return {
-                                    ...o,
-                                    items: updatedItems,
-                                    status: newStatus
-                                };
-                            }
-                            return o;
-                        });
-
                         // Remove from claim list
                         currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
 
@@ -486,7 +424,7 @@ Mağaza: ${claim.storeName}
             updateDB({
                 ...db,
                 products: currentProducts,
-                orders: currentOrders,
+                orders: db.orders,
                 returns: currentReturns,
                 returnClaims: currentReturnClaims
             });

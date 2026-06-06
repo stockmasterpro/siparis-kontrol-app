@@ -1026,7 +1026,7 @@ export const syncMarketplaceOrders = async (
       let mappedStatus = OrderStatus.NEW;
       const status = (apiOrder.status || apiOrder.shipmentPackageStatus || '').toString().toLowerCase().trim();
 
-      if (status === 'shipped' || status === 'shipping') mappedStatus = OrderStatus.SHIPPING;
+      if (status === 'shipped' || status === 'shipping' || status === 'undelivered') mappedStatus = OrderStatus.SHIPPING;
       else if (status === 'delivered' || status === 'completed') mappedStatus = OrderStatus.DELIVERED;
       else if (status === 'cancelled' || status === 'canceled') mappedStatus = OrderStatus.CANCELLED;
       else if (status === 'created' || status === 'new' || status === 'pending') mappedStatus = OrderStatus.NEW;
@@ -1266,19 +1266,23 @@ export const syncMarketplaceOrders = async (
           } else {
             // Sadece statü/kargo güncellemesi ve ürün detayları güncellemesi
             if (existingOrder.status !== mappedStatus) {
-              currentDbOrders[existingOrderIndex].status = mappedStatus;
-              
-              // [FIX] Eğer sipariş kargolandıysa veya teslim edildiyse artık askıda kalmamalı.
-              if (mappedStatus === OrderStatus.SHIPPING || mappedStatus === OrderStatus.DELIVERED) {
-                if (currentDbOrders[existingOrderIndex].isSuspended) {
-                  currentDbOrders[existingOrderIndex].isSuspended = false;
-                  currentDbOrders[existingOrderIndex].wasSuspended = true;
+              const isDowngrade = (existingOrder.status === OrderStatus.SHIPPING || existingOrder.status === OrderStatus.DELIVERED) &&
+                                  (mappedStatus === OrderStatus.NEW || mappedStatus === OrderStatus.PROCESSING);
+              if (!isDowngrade) {
+                currentDbOrders[existingOrderIndex].status = mappedStatus;
+                
+                // [FIX] Eğer sipariş kargolandıysa veya teslim edildiyse artık askıda kalmamalı.
+                if (mappedStatus === OrderStatus.SHIPPING || mappedStatus === OrderStatus.DELIVERED) {
+                  if (currentDbOrders[existingOrderIndex].isSuspended) {
+                    currentDbOrders[existingOrderIndex].isSuspended = false;
+                    currentDbOrders[existingOrderIndex].wasSuspended = true;
+                  }
                 }
-              }
 
-              // If it was already resolved, keep it resolved
-              if (existingOrder.wasSuspended) {
-                currentDbOrders[existingOrderIndex].isSuspended = false;
+                // If it was already resolved, keep it resolved
+                if (existingOrder.wasSuspended) {
+                  currentDbOrders[existingOrderIndex].isSuspended = false;
+                }
               }
             }
             const newCargoCode = String(apiOrder.cargoTrackingNumber || apiOrder.trackingNumber || '-');

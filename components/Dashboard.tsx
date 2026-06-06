@@ -403,6 +403,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         });
       }
 
+      const storeOrdersCount = storeTotalOrdersList.length;
+      const storeReturnedOrdersCount = storeTotalOrdersList.filter(o => db.returns.some(r => r.orderId === o.id)).length;
+      const storeNetOrdersCount = storeOrdersCount - storeReturnedOrdersCount;
+      const storeCancelledOrdersCount = filteredCancelledOrders.length;
+
       const cancelledItemsQty = filteredCancelledOrders.reduce((acc, order) => acc + order.items.reduce((sum, item) => sum + item.quantity, 0), 0);
 
       const tStats = getStatsForDate(todayStr, storeOrders);
@@ -414,6 +419,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         cancelledOrders: cancelledItemsQty,
         returnedOrders: returnedItemsQty,
         netOrders: netItemsQty,
+        ordersCount: storeOrdersCount,
+        returnedOrdersCount: storeReturnedOrdersCount,
+        netOrdersCount: storeNetOrdersCount,
+        cancelledOrdersCount: storeCancelledOrdersCount,
         pendingOrders: storePendingQty,
         pendingOrdersCount: storePendingCount,
         shippingOrders: storeShippingQty,
@@ -1109,20 +1118,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
             {/* Sipariş Kırılımı */}
             <div className="grid grid-cols-2 gap-2 text-xs border-b pb-3 mb-3">
               <div>
-                <span className="text-gray-500 block">Toplam Ürün Adeti</span>
-                <span className="font-bold text-blue-600 text-sm">{store.totalOrders}</span>
+                <span className="text-gray-500 block font-medium">Toplam Sipariş / Ürün</span>
+                <span className="font-bold text-blue-600 text-sm">{(store as any).ordersCount} Sip. / {store.totalOrders} Ürün</span>
               </div>
               <div>
-                <span className="text-gray-500 block">Net Ürün Adeti</span>
-                <span className="font-bold text-indigo-600 text-sm">{store.netOrders}</span>
+                <span className="text-gray-500 block font-medium">Net Sipariş / Ürün</span>
+                <span className="font-bold text-indigo-600 text-sm">{(store as any).netOrdersCount} Sip. / {store.netOrders} Ürün</span>
               </div>
               <div>
-                <span className="text-gray-500 block">İade Ürün Adeti</span>
-                <span className="font-bold text-orange-600 text-sm">{store.returnedOrders}</span>
+                <span className="text-gray-500 block font-medium">İade Sipariş / Ürün</span>
+                <span className="font-bold text-orange-600 text-sm">{(store as any).returnedOrdersCount} Sip. / {store.returnedOrders} Ürün</span>
               </div>
               <div>
-                <span className="text-gray-500 block">İptal Ürün Adeti</span>
-                <span className="font-bold text-red-600 text-sm">{store.cancelledOrders}</span>
+                <span className="text-gray-500 block font-medium">İptal Sipariş / Ürün</span>
+                <span className="font-bold text-red-600 text-sm">{(store as any).cancelledOrdersCount} Sip. / {store.cancelledOrders} Ürün</span>
               </div>
             </div>
 
