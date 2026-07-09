@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { isInternationalOrder, getEffectiveOrderCountryCode, resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi, orderImportDismissKey } from '../utils/orderUtils';
 import { Database, Order, OrderStatus, OrderItem, ReturnRecord, Product, UserRole, Variant } from '../types';
-import { RefreshCcw, Printer, Play, Filter, PauseCircle, AlertTriangle, Loader2, RotateCcw, ChevronDown, CheckSquare, Square, FileSpreadsheet, LayoutTemplate, Save, Eye, ArrowLeftRight, Bell, FileText, SearchCheck, HardDrive, ArrowUp, ArrowDown, Trash, Trash2, ZoomIn, ZoomOut, Plus, Globe, X } from 'lucide-react';
+import {  RefreshCcw, Printer, Play, Filter, PauseCircle, AlertTriangle, Loader2, RotateCcw, ChevronDown, CheckSquare, Square, FileSpreadsheet, LayoutTemplate, Save, Eye, ArrowLeftRight, Bell, FileText, SearchCheck, HardDrive, ArrowUp, ArrowDown, Trash, Trash2, ZoomIn, ZoomOut, Plus, Globe, X , AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from 'xlsx';
 import { syncBarcodeStock, updateLocalStockWithConsistency, syncOrderStatusToMarketplaces, fetchOrdersFromTrendyol, syncMarketplaceOrders, syncBarcodeStockBatchMultiple } from '../services/integration';
@@ -40,6 +40,7 @@ interface PrintElement {
     tableColumns?: { key: string; label: string; visible: boolean }[]; // For items table customization
     isImage?: boolean; // For image elements
     rotation?: number;
+    textAlign?: 'left' | 'center' | 'right';
 }
 
 interface PrintConfig {
@@ -2237,6 +2238,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         whiteSpace: 'pre-wrap',
                         textTransform: el.forceUppercase ? 'uppercase' : 'none',
                         transform: `rotate(${el.rotation || 0}deg)`,
+                        textAlign: el.textAlign || 'left',
                         transformOrigin: 'top left'
                     };
 
@@ -2400,7 +2402,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         printConfig.elements.filter(e => e.visible).forEach(el => {
             const elRotation = el.rotation || 0;
             const transformOrigin = 'top left'; // Elements position origin is top left
-            const elStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; width: ${el.width ? el.width + 'mm' : 'auto'}; height: ${el.height ? el.height + 'mm' : 'auto'}; font-weight: bold; color: black; white-space: pre-wrap; text-transform: ${el.forceUppercase ? 'uppercase' : 'none'}; transform: rotate(${elRotation}deg); transform-origin: ${transformOrigin};`;
+            const elStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; width: ${el.width ? el.width + 'mm' : 'auto'}; height: ${el.height ? el.height + 'mm' : 'auto'}; font-weight: bold; color: black; white-space: pre-wrap; text-transform: ${el.forceUppercase ? 'uppercase' : 'none'}; transform: rotate(${elRotation}deg); transform-origin: ${transformOrigin}; text-align: ${el.textAlign || 'left'};`;
 
             let content = '';
 
@@ -4062,6 +4064,32 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                             <option value="'Trebuchet MS'">Trebuchet MS</option>
                                                                             <option value="Impact">Impact</option>
                                                                         </select>
+                                                                    </div>
+                                                                    <div className="col-span-2">
+                                                                        <label className="text-[10px] text-gray-500 block mb-1">Hizalama</label>
+                                                                        <div className="flex bg-gray-100 rounded p-1 gap-1">
+                                                                            <button
+                                                                                className={`flex-1 flex justify-center p-1 rounded transition-colors ${(!el.textAlign || el.textAlign === 'left') ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:bg-gray-200'}`}
+                                                                                onClick={() => handleElementChange(el.id, 'textAlign', 'left')}
+                                                                                title="Sola Hizala"
+                                                                            >
+                                                                                <AlignLeft size={14} />
+                                                                            </button>
+                                                                            <button
+                                                                                className={`flex-1 flex justify-center p-1 rounded transition-colors ${el.textAlign === 'center' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:bg-gray-200'}`}
+                                                                                onClick={() => handleElementChange(el.id, 'textAlign', 'center')}
+                                                                                title="Ortala"
+                                                                            >
+                                                                                <AlignCenter size={14} />
+                                                                            </button>
+                                                                            <button
+                                                                                className={`flex-1 flex justify-center p-1 rounded transition-colors ${el.textAlign === 'right' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:bg-gray-200'}`}
+                                                                                onClick={() => handleElementChange(el.id, 'textAlign', 'right')}
+                                                                                title="Sağa Hizala"
+                                                                            >
+                                                                                <AlignRight size={14} />
+                                                                            </button>
+                                                                        </div>
                                                                     </div>
                                                                 </>
                                                             )}
