@@ -1244,6 +1244,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
               </div>
             </div>
           </div>
+          )}
+        </div>
         ))}
       </div>
 
