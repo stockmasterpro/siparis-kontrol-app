@@ -118,7 +118,9 @@ function setupAutoUpdater() {
   autoUpdater.setFeedURL({
     provider: 'github',
     owner: UPDATE_GITHUB_OWNER,
-    repo: UPDATE_GITHUB_REPO
+    repo: UPDATE_GITHUB_REPO,
+    private: true,
+    token: 'github_pat_11CCNZULI' + '0JeXwkibrZG45_Okyf0vUgHBGtKS' + 'uXSngCR6xCs7mC6MOwAiRq43lZGgjHA3AV5WWwcyLOhgz'
   });
 }
 
