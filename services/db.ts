@@ -8,7 +8,9 @@ const INITIAL_DB: Database = {
   currentUser: null,
   users: [],
   warehouses: [
-    { id: 'wh1', name: 'Merkez Depo' },
+    { id: 'wh1', name: 'Merkez Depo', isCenter: true },
+    { id: 'wh2', name: 'Depo 1' },
+    { id: 'wh3', name: 'Depo 2' },
   ],
   products: [],
   orders: [],

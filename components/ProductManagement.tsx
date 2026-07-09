@@ -56,8 +56,8 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
     const deleteFileInputRef = useRef<HTMLInputElement>(null);
 
     // Warehouse adding state
-    const [isAddingWarehouse, setIsAddingWarehouse] = useState(false);
-    const [newWarehouseName, setNewWarehouseName] = useState('');
+    const [editingWarehouseId, setEditingWarehouseId] = useState<string | null>(null);
+    const [editingWarehouseName, setEditingWarehouseName] = useState('');
 
     // Variant Filters
     const [variantFilterColor, setVariantFilterColor] = useState('');
@@ -720,16 +720,66 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         }
     };
 
-    const saveNewWarehouse = () => {
-        if (newWarehouseName.trim()) {
-            const name = newWarehouseName.trim();
-            const newWh: Warehouse = { id: uuid(), name };
-            const existingWarehouses = (db.warehouses && db.warehouses.length > 0) ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }];
-            updateDB({ ...db, warehouses: [...existingWarehouses, newWh] });
-            setNotification({ type: 'success', message: `${name} deposu eklendi.` });
-            setNewWarehouseName('');
-            setIsAddingWarehouse(false);
+    const addNewWarehouseDirect = () => {
+        const existingWarehouses = (db.warehouses && db.warehouses.length > 0) ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo', isCenter: true }];
+        
+        let newNum = existingWarehouses.length;
+        let newName = `Depo ${newNum}`;
+        while (existingWarehouses.some(w => w.name === newName)) {
+            newNum++;
+            newName = `Depo ${newNum}`;
         }
+        
+        const newWh: Warehouse = { id: uuid(), name: newName };
+        updateDB({ ...db, warehouses: [...existingWarehouses, newWh] });
+    };
+
+    const deleteWarehouse = (id: string) => {
+        const existingWarehouses = db.warehouses || [];
+        const target = existingWarehouses.find(w => w.id === id);
+        if (target?.isCenter) {
+            setNotification({ type: 'error', message: 'Merkez depo silinemez!' });
+            return;
+        }
+        
+        const confirmDelete = window.confirm(`"${target?.name}" deposunu silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`);
+        if (!confirmDelete) return;
+
+        const updatedWarehouses = existingWarehouses.filter(w => w.id !== id);
+        
+        const updatedProducts = db.products.map(p => ({
+            ...p,
+            variants: p.variants.map(v => {
+                const newStocks = { ...v.stocks };
+                delete newStocks[id];
+                return { ...v, stocks: newStocks };
+            })
+        }));
+
+        setFormData(prev => ({
+            ...prev,
+            variants: prev.variants.map(v => {
+                const newStocks = { ...v.stocks };
+                delete newStocks[id];
+                return { ...v, stocks: newStocks };
+            })
+        }));
+
+        updateDB({ ...db, warehouses: updatedWarehouses, products: updatedProducts });
+        setNotification({ type: 'success', message: 'Depo silindi.' });
+    };
+
+    const renameWarehouse = (id: string, newName: string) => {
+        if (!newName.trim()) return;
+        const existingWarehouses = db.warehouses || [];
+        const updatedWarehouses = existingWarehouses.map(w => w.id === id ? { ...w, name: newName.trim() } : w);
+        updateDB({ ...db, warehouses: updatedWarehouses });
+    };
+    
+    const setCenterWarehouse = (id: string) => {
+        const existingWarehouses = db.warehouses || [];
+        const updatedWarehouses = existingWarehouses.map(w => ({ ...w, isCenter: w.id === id }));
+        updateDB({ ...db, warehouses: updatedWarehouses });
     };
 
     const updateStockForGroup = (color: string, size: string, warehouseId: string, qty: number) => {
@@ -1456,7 +1506,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                 <div className="text-[10px] font-bold text-gray-600 uppercase">Stok ve Fiyat Yönetimi</div>
                                                 <div className="flex gap-2 items-center">
                                                     <button
-                                                        onClick={() => setIsAddingWarehouse(true)}
+                                                        onClick={addNewWarehouseDirect}
                                                         className="desktop-btn bg-purple-100 text-purple-700 border-purple-300 flex items-center"
                                                     ><Plus size={14} className="mr-1" />Depo Ekle</button>
                                                     <input
@@ -1534,11 +1584,47 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                             </th>
                                                             <th style={{ width: '80px', textAlign: 'right' }}>Maliyet</th>
                                                             <th style={{ width: '80px', textAlign: 'right' }}>PSF</th>
-                                                            {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }]).map(w => (
-                                                                <th key={w.id} style={{ width: '130px', textAlign: 'center' }}>
-                                                                    <div className="truncate" title={w.name}>{db.warehouses?.length > 1 ? `ENV. (${w.name})` : `ENV. (${w.name})`}</div>
+                                                            {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo', isCenter: true }]).map(w => (
+                                                                <th key={w.id} style={{ width: '150px', textAlign: 'center' }}>
+                                                                    <div className="flex items-center justify-center gap-1 group relative">
+                                                                        <button 
+                                                                            title="Merkez Yap" 
+                                                                            onClick={() => setCenterWarehouse(w.id)} 
+                                                                            className={`text-sm outline-none ${w.isCenter ? 'text-yellow-500' : 'text-gray-300 hover:text-yellow-400'}`}
+                                                                        >
+                                                                            ★
+                                                                        </button>
+                                                                        {editingWarehouseId === w.id ? (
+                                                                            <input 
+                                                                                autoFocus
+                                                                                className="w-full text-center text-xs text-black border border-blue-400 outline-none rounded"
+                                                                                value={editingWarehouseName}
+                                                                                onChange={e => setEditingWarehouseName(e.target.value)}
+                                                                                onBlur={() => { renameWarehouse(w.id, editingWarehouseName); setEditingWarehouseId(null); }}
+                                                                                onKeyDown={e => { if (e.key === 'Enter') { renameWarehouse(w.id, editingWarehouseName); setEditingWarehouseId(null); } }}
+                                                                            />
+                                                                        ) : (
+                                                                            <span 
+                                                                                className="truncate cursor-pointer hover:underline text-xs" 
+                                                                                title={w.name} 
+                                                                                onClick={() => { setEditingWarehouseId(w.id); setEditingWarehouseName(w.name); }}
+                                                                            >
+                                                                                {w.name}
+                                                                            </span>
+                                                                        )}
+                                                                        {!w.isCenter && (
+                                                                            <button 
+                                                                                onClick={() => deleteWarehouse(w.id)} 
+                                                                                className="text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity ml-1 outline-none"
+                                                                                title="Sil"
+                                                                            >
+                                                                                ✕
+                                                                            </button>
+                                                                        )}
+                                                                    </div>
                                                                 </th>
                                                             ))}
+                                                            <th style={{ width: '90px', textAlign: 'center' }} className="font-bold text-blue-800 bg-blue-50/80">Envanter</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody>
@@ -1551,9 +1637,8 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
 
                                                             return (
                                                                 <>
-                                                                    {paddingTop > 0 && <tr style={{ height: paddingTop }}><td colSpan={(db.warehouses && db.warehouses.length > 0 ? db.warehouses.length : 1) + 4} style={{ padding: 0, border: 0 }}></td></tr>}
-                                                                    {modalStockList.slice(startIndex, endIndex).map(([key, v]) => {
-                                                                        const rowTotal = Object.values(v.stocks).reduce((a: number, b: number) => a + b, 0);
+                                                                    {paddingTop > 0 && <tr style={{ height: paddingTop }}><td colSpan={(db.warehouses && db.warehouses.length > 0 ? db.warehouses.length : 1) + 5} style={{ padding: 0, border: 0 }}></td></tr>}
+                                                                        {modalStockList.slice(startIndex, endIndex).map(([key, v]) => {
                                                                         return (
                                                                             <tr key={key} style={{ height: rowHeight }}>
                                                                                 <td className="text-center">
@@ -1594,7 +1679,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                                                         }}
                                                                                     />
                                                                                 </td>
-                                                                                {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }]).map(w => (
+                                                                                {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo', isCenter: true }]).map(w => (
                                                                                     <td key={w.id} className="text-center p-0">
                                                                                         <input
                                                                                             type="number"
@@ -1604,10 +1689,13 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                                                         />
                                                                                     </td>
                                                                                 ))}
+                                                                                <td className="text-center font-bold text-blue-900 bg-blue-50/50 p-0 select-none">
+                                                                                    {Object.values(v.stocks || {}).reduce((a: number, b: any) => a + Number(b), 0)}
+                                                                                </td>
                                                                             </tr>
                                                                         );
                                                                     })}
-                                                                    {paddingBottom > 0 && <tr style={{ height: paddingBottom }}><td colSpan={(db.warehouses && db.warehouses.length > 0 ? db.warehouses.length : 1) + 4} style={{ padding: 0, border: 0 }}></td></tr>}
+                                                                    {paddingBottom > 0 && <tr style={{ height: paddingBottom }}><td colSpan={(db.warehouses && db.warehouses.length > 0 ? db.warehouses.length : 1) + 5} style={{ padding: 0, border: 0 }}></td></tr>}
                                                                 </>
                                                             );
                                                         })()}
@@ -1895,39 +1983,6 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                 <img src={img.url} className="w-full h-full object-cover" />
                             </button>
                         ))}
-                    </div>
-                </div>
-            )}
-            {isAddingWarehouse && (
-                <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
-                    <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm">
-                        <h3 className="text-lg font-bold text-gray-800 mb-4">Yeni Depo Ekle</h3>
-                        <input
-                            autoFocus
-                            type="text"
-                            placeholder="Örn: Merkez Depo, Mağaza 1"
-                            className="w-full border border-gray-300 rounded-lg p-3 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all mb-4"
-                            value={newWarehouseName}
-                            onChange={(e) => setNewWarehouseName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && saveNewWarehouse()}
-                        />
-                        <div className="flex justify-end gap-2">
-                            <button
-                                type="button"
-                                onClick={() => { setIsAddingWarehouse(false); setNewWarehouseName(''); }}
-                                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors"
-                            >
-                                İptal
-                            </button>
-                            <button
-                                type="button"
-                                onClick={saveNewWarehouse}
-                                disabled={!newWarehouseName.trim()}
-                                className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium transition-colors disabled:opacity-50"
-                            >
-                                Ekle
-                            </button>
-                        </div>
                     </div>
                 </div>
             )}
