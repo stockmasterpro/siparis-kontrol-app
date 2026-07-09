@@ -722,8 +722,11 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
 
     const saveNewWarehouse = () => {
         if (newWarehouseName.trim()) {
-            const newWh: Warehouse = { id: uuid(), name: newWarehouseName };
-            updateDB({ ...db, warehouses: [...db.warehouses, newWh] });
+            const name = newWarehouseName.trim();
+            const newWh: Warehouse = { id: uuid(), name };
+            const existingWarehouses = (db.warehouses && db.warehouses.length > 0) ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }];
+            updateDB({ ...db, warehouses: [...existingWarehouses, newWh] });
+            setNotification({ type: 'success', message: `${name} deposu eklendi.` });
             setNewWarehouseName('');
             setIsAddingWarehouse(false);
         }
@@ -1453,20 +1456,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                 <div className="text-[10px] font-bold text-gray-600 uppercase">Stok ve Fiyat Yönetimi</div>
                                                 <div className="flex gap-2 items-center">
                                                     <button
-                                                        onClick={() => {
-                                                            const name = window.prompt("Yeni depo adı giriniz:");
-                                                            if (name && name.trim()) {
-                                                                const newWh = { id: uuid(), name: name.trim() };
-                                                                updateDB(prev => {
-                                                                    let existingWarehouses = prev.warehouses || [];
-                                                                    if (existingWarehouses.length === 0) {
-                                                                        existingWarehouses = [{ id: 'wh1', name: 'Merkez Depo' }];
-                                                                    }
-                                                                    return { ...prev, warehouses: [...existingWarehouses, newWh] };
-                                                                });
-                                                                setNotification({ type: 'success', message: `${name} deposu eklendi.` });
-                                                            }
-                                                        }}
+                                                        onClick={() => setIsAddingWarehouse(true)}
                                                         className="desktop-btn bg-purple-100 text-purple-700 border-purple-300 flex items-center"
                                                     ><Plus size={14} className="mr-1" />Depo Ekle</button>
                                                     <input
@@ -1905,6 +1895,39 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                 <img src={img.url} className="w-full h-full object-cover" />
                             </button>
                         ))}
+                    </div>
+                </div>
+            )}
+            {isAddingWarehouse && (
+                <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
+                    <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm">
+                        <h3 className="text-lg font-bold text-gray-800 mb-4">Yeni Depo Ekle</h3>
+                        <input
+                            autoFocus
+                            type="text"
+                            placeholder="Örn: Merkez Depo, Mağaza 1"
+                            className="w-full border border-gray-300 rounded-lg p-3 outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200 transition-all mb-4"
+                            value={newWarehouseName}
+                            onChange={(e) => setNewWarehouseName(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && saveNewWarehouse()}
+                        />
+                        <div className="flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => { setIsAddingWarehouse(false); setNewWarehouseName(''); }}
+                                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+                            >
+                                İptal
+                            </button>
+                            <button
+                                type="button"
+                                onClick={saveNewWarehouse}
+                                disabled={!newWarehouseName.trim()}
+                                className="px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium transition-colors disabled:opacity-50"
+                            >
+                                Ekle
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
