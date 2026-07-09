@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { isInternationalOrder, getEffectiveOrderCountryCode, resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi, orderImportDismissKey } from '../utils/orderUtils';
 import { Database, Order, OrderStatus, OrderItem, ReturnRecord, Product, UserRole, Variant } from '../types';
-import { RefreshCcw, Printer, Play, Filter, PauseCircle, AlertTriangle, Loader2, RotateCcw, ChevronDown, CheckSquare, Square, FileSpreadsheet, LayoutTemplate, Save, Eye, ArrowLeftRight, Bell, FileText, SearchCheck, HardDrive, ArrowUp, ArrowDown, Trash, Trash2, ZoomIn, ZoomOut, Plus, Globe } from 'lucide-react';
+import { RefreshCcw, Printer, Play, Filter, PauseCircle, AlertTriangle, Loader2, RotateCcw, ChevronDown, CheckSquare, Square, FileSpreadsheet, LayoutTemplate, Save, Eye, ArrowLeftRight, Bell, FileText, SearchCheck, HardDrive, ArrowUp, ArrowDown, Trash, Trash2, ZoomIn, ZoomOut, Plus, Globe, X } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from 'xlsx';
 import { syncBarcodeStock, updateLocalStockWithConsistency, syncOrderStatusToMarketplaces, fetchOrdersFromTrendyol, syncMarketplaceOrders, syncBarcodeStockBatchMultiple } from '../services/integration';
@@ -39,6 +39,7 @@ interface PrintElement {
     forceUppercase?: boolean;
     tableColumns?: { key: string; label: string; visible: boolean }[]; // For items table customization
     isImage?: boolean; // For image elements
+    rotation?: number;
 }
 
 interface PrintConfig {
@@ -47,7 +48,6 @@ interface PrintConfig {
     customHeight?: number;
     elements: PrintElement[];
     selectedPrinter?: string;
-    rotation?: number;
 }
 
 export interface SavedPrintTemplate {
@@ -268,6 +268,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     // Print Designer State
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+    const [isLeftSidebarOpen, setIsLeftSidebarOpen] = useState(true);
+    const [isRightSidebarOpen, setIsRightSidebarOpen] = useState(true);
+    const [newTemplateName, setNewTemplateName] = useState('');
     const [printConfig, setPrintConfig] = useState<PrintConfig>(DEFAULT_PRINT_CONFIG);
     const [savedTemplates, setSavedTemplates] = useState<SavedPrintTemplate[]>([]);
     const [previewOrders, setPreviewOrders] = useState<Order[]>([]); // Preview için Trendyol'dan çekilen siparişler
@@ -2232,7 +2235,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         fontWeight: 'bold',
                         color: 'black',
                         whiteSpace: 'pre-wrap',
-                        textTransform: el.forceUppercase ? 'uppercase' : 'none'
+                        textTransform: el.forceUppercase ? 'uppercase' : 'none',
+                        transform: `rotate(${el.rotation || 0}deg)`,
+                        transformOrigin: 'top left'
                     };
 
                     let content: React.ReactNode = '';
@@ -2340,21 +2345,21 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     };
 
     const handleSavePrintTemplate = () => {
-        const templateName = window.prompt("Lütfen şablon için bir ad girin (Örn: A5 Trendyol):");
-        if (!templateName || templateName.trim() === '') {
-             setNotification({ type: 'error', message: 'Şablon adı boş bırakılamaz.' });
+        if (!newTemplateName || newTemplateName.trim() === '') {
+             setNotification({ type: 'error', message: 'Lütfen sağ alttaki kutuya bir şablon adı girin.' });
              return;
         }
         
         const newTemplate: SavedPrintTemplate = {
             id: uuidv4(),
-            name: templateName.trim(),
+            name: newTemplateName.trim(),
             config: printConfig
         };
         
         const updatedTemplates = [...savedTemplates, newTemplate];
         setSavedTemplates(updatedTemplates);
         localStorage.setItem('printTemplates', JSON.stringify(updatedTemplates));
+        setNewTemplateName('');
         
         setNotification({
             type: 'success',
@@ -2393,7 +2398,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         let elementsHTML = '';
 
         printConfig.elements.filter(e => e.visible).forEach(el => {
-            const elStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; width: ${el.width ? el.width + 'mm' : 'auto'}; height: ${el.height ? el.height + 'mm' : 'auto'}; font-weight: bold; color: black; white-space: pre-wrap; text-transform: ${el.forceUppercase ? 'uppercase' : 'none'};`;
+            const elRotation = el.rotation || 0;
+            const transformOrigin = 'top left'; // Elements position origin is top left
+            const elStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; width: ${el.width ? el.width + 'mm' : 'auto'}; height: ${el.height ? el.height + 'mm' : 'auto'}; font-weight: bold; color: black; white-space: pre-wrap; text-transform: ${el.forceUppercase ? 'uppercase' : 'none'}; transform: rotate(${elRotation}deg); transform-origin: ${transformOrigin};`;
 
             let content = '';
 
@@ -2435,15 +2442,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             </tfoot>
                 ` : '';
 
-                content = `
-          <table style="width: 100%; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; border-collapse: collapse; border: 1px solid black;">
-            ${tableHeader}
-            <tbody>
-              ${tableRows}
-            </tbody>
-            ${tfootHTML}
-          </table>
-        `;
+                content = `<table style="width: 100%; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; border-collapse: collapse; border: 1px solid black;">${tableHeader}<tbody>${tableRows}</tbody>${tfootHTML}</table>`;
             }
             else if (el.key === 'orderDate') {
                 content = new Date(orderToPrint.orderDate).toLocaleDateString('tr-TR');
@@ -2473,17 +2472,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             if (el.isBarcode && content) {
                 const barcodeId = `bc-${orderToPrint.id}-${el.id}`;
-                elementsHTML += `
-          <div style="${elStyleStr}" id="${barcodeId}">
-            <svg class="barcode-render" 
-                data-value="${String(content)}" 
-                data-format="CODE128" 
-                data-height="${el.barcodeHeight || Math.max(20, el.fontSize * 2.5)}" 
-                data-width="${Math.max(1, el.fontSize / 8)}" 
-                data-displayvalue="true"
-                data-fontoptions="bold"></svg>
-          </div>
-        `;
+                elementsHTML += `<div style="${elStyleStr}" id="${barcodeId}"><svg class="barcode-render" data-value="${String(content)}" data-format="CODE128" data-height="${el.barcodeHeight || Math.max(20, el.fontSize * 2.5)}" data-width="${Math.max(1, el.fontSize / 8)}" data-displayvalue="true" data-fontoptions="bold"></svg></div>`;
             } else {
                 elementsHTML += `<div style="${elStyleStr}">${content}</div>`;
             }
@@ -3940,7 +3929,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             {
                 isPrintModalOpen && (
                     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[150] backdrop-blur-sm no-print">
-                        <div className="bg-[#f0f0f0] border border-gray-500 shadow-2xl w-[1080px] h-[840px] flex flex-col font-sans">
+                        <div className="bg-[#f0f0f0] border border-gray-500 shadow-2xl w-[95vw] h-[95vh] flex flex-col font-sans">
                             <div className="h-8 bg-white border-b border-gray-300 flex justify-between items-center px-3 select-none">
                                 <span className="font-semibold text-gray-800 flex items-center gap-2"><LayoutTemplate size={16} /> Yazdırma Şablonu Tasarımcısı</span>
                                 <button onClick={() => setIsPrintModalOpen(false)} className="hover:bg-red-500 hover:text-white px-2"><div className="text-lg leading-none">×</div></button>
@@ -3948,21 +3937,11 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
                             <div className="flex-1 flex overflow-hidden">
                                 {/* Sidebar Controls */}
-                                <div className="w-80 bg-gray-100 border-r border-gray-300 flex flex-col overflow-y-auto">
+                                {isLeftSidebarOpen ? (
+                                <div className="w-80 bg-gray-100 border-r border-gray-300 flex flex-col overflow-y-auto shrink-0 relative">
+                                    <button onClick={() => setIsLeftSidebarOpen(false)} className="absolute top-2 right-2 p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-500 z-10" title="Paneli Gizle"><X size={16} /></button>
                                     <div className="p-3 border-b border-gray-300 bg-white">
-                                        <div className="mt-3">
-                                            <label className="block text-xs font-bold text-gray-700 mb-1 uppercase">Şablon Yönü (Döndür)</label>
-                                            <select 
-                                                className="border w-full p-1 text-xs bg-white"
-                                                value={printConfig.rotation || 0}
-                                                onChange={(e) => setPrintConfig({...printConfig, rotation: Number(e.target.value)})}
-                                            >
-                                                <option value={0}>Düz (0°)</option>
-                                                <option value={90}>Sağa Yatık (90°)</option>
-                                                <option value={180}>Ters Çevir (180°)</option>
-                                                <option value={270}>Sola Yatık (270°)</option>
-                                            </select>
-                                        </div>
+                                        
                                         
                                         <label className="block text-xs font-bold text-gray-700 mb-1 mt-3 uppercase">Kağıt Boyutu</label>
                                         <div className="flex flex-wrap gap-1 mb-2">
@@ -4223,7 +4202,13 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                         ))}
                                     </div>
                                 </div>
-
+                                ) : (
+                                    <div className="w-8 bg-gray-100 border-r border-gray-300 flex flex-col items-center py-2 shrink-0">
+                                        <button onClick={() => setIsLeftSidebarOpen(true)} className="p-1 hover:bg-gray-200 rounded" title="Ayarları Aç">
+                                            <div style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }} className="text-[10px] font-bold text-gray-600 mt-4 tracking-widest whitespace-nowrap">AYARLARI AÇ »</div>
+                                        </button>
+                                    </div>
+                                )}
                                 {/* Preview Area */}
                                 <div className="flex-1 bg-gray-500 overflow-hidden flex flex-col relative">
                                     <div className="absolute top-4 right-4 z-10 bg-black/50 backdrop-blur-md p-2 rounded-lg border border-white/20 shadow-xl flex items-center gap-3 no-print">
@@ -4275,7 +4260,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                 </div>
 
 {/* Right Sidebar Templates */}
-                                <div className="w-64 bg-gray-100 border-l border-gray-300 flex flex-col overflow-y-auto z-10 shadow-[-5px_0_15px_-5px_rgba(0,0,0,0.1)]">
+                                {isRightSidebarOpen ? (
+                                <div className="w-72 bg-gray-100 border-l border-gray-300 flex flex-col overflow-y-auto z-10 shadow-[-5px_0_15px_-5px_rgba(0,0,0,0.1)] shrink-0 relative">
+                                    <button onClick={() => setIsRightSidebarOpen(false)} className="absolute top-2 right-2 p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-500 z-10" title="Paneli Gizle"><X size={16} /></button>
                                     <div className="p-3 border-b border-gray-300 bg-white sticky top-0 font-bold text-gray-700 flex items-center gap-2 uppercase text-sm">
                                         <Save size={16} /> Kayıtlı Şablonlar
                                     </div>
@@ -4293,7 +4280,19 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                             ))
                                         )}
                                     </div>
+                                    <div className="p-3 border-t border-gray-300 bg-gray-50 flex flex-col gap-2 shrink-0">
+                                        <label className="text-xs font-bold text-gray-700">Yeni Şablon Kaydet</label>
+                                        <input type="text" className="border p-2 text-xs rounded" placeholder="Şablon Adı (Örn: A5)" value={newTemplateName} onChange={(e) => setNewTemplateName(e.target.value)} />
+                                        <button onClick={handleSavePrintTemplate} className="desktop-btn desktop-btn-primary w-full py-2 text-xs flex justify-center items-center gap-1"><Save size={14}/> Kaydet</button>
+                                    </div>
                                 </div>
+                                ) : (
+                                    <div className="w-8 bg-gray-100 border-l border-gray-300 flex flex-col items-center py-2 shrink-0">
+                                        <button onClick={() => setIsRightSidebarOpen(true)} className="p-1 hover:bg-gray-200 rounded" title="Şablonları Aç">
+                                            <div style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }} className="text-[10px] font-bold text-gray-600 mt-4 tracking-widest whitespace-nowrap">« ŞABLONLAR</div>
+                                        </button>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="h-12 bg-white border-t border-gray-300 flex justify-end items-center px-4 gap-2">
@@ -4303,7 +4302,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                 </div>
                                 <button onClick={handleResetPrintTemplate} className="desktop-btn w-24">Varsayılan</button>
                                 
-                                <button onClick={handleSavePrintTemplate} className="desktop-btn w-24">Kaydet</button>
+                                
                                 <button onClick={() => setIsPrintModalOpen(false)} className="desktop-btn w-24">İptal</button>
                                 <button onClick={() => triggerPrint('print')} disabled={isGeneratingPDF} className="desktop-btn desktop-btn-primary w-32">
                                     <Printer className="w-4 h-4 mr-2" /> {isGeneratingPDF ? 'Bekleyin...' : 'Yazdır'}

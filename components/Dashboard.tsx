@@ -943,6 +943,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
           <div className="flex-1"></div>
 
+          {/* Gizlilik Modu Toggle */}
+          <button
+            onClick={() => setIsPrivacyMode(!isPrivacyMode)}
+            className={`flex items-center gap-2 px-4 py-2 border rounded font-medium transition-all ${isPrivacyMode ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+            title="Gizlilik Modu (Hassas Verileri Gizle)"
+          >
+            {isPrivacyMode ? <EyeOff size={18} className="text-indigo-500" /> : <Eye size={18} className="text-gray-400" />}
+            <span className="hidden sm:inline">{isPrivacyMode ? 'Gizlilik Açık' : 'Gizlilik Kapalı'}</span>
+          </button>
+
           {/* Ülkeler Çoklu Seçim Dropdown */}
           <div className="relative">
             <button
