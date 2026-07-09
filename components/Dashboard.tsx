@@ -1074,7 +1074,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
           <div className="mt-2 space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-gray-500 text-sm">Bekleyen Sipariş</span>
-              <span className="font-bold text-orange-600 text-lg">{pendingOrders}</span>
+              <span className="font-bold text-orange-600 text-lg">{isPrivacyMode ? '***' : pendingOrders}</span>
             </div>
             <div className="flex justify-between items-center border-t pt-1">
               <span className="text-gray-500 text-xs">Taşıma Durumunda</span>
@@ -1097,7 +1097,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
           <div className="mt-2 space-y-2">
             <div className="flex justify-between items-center">
               <span className="text-gray-500 text-sm">Toplam Sipariş Adeti</span>
-              <span className="font-bold text-blue-600 text-base">{totalOrders} Sipariş / {totalItemsQty} Adet</span>
+              <span className="font-bold text-blue-600 text-base">{isPrivacyMode ? '***' : totalOrders} Sipariş / {isPrivacyMode ? '***' : totalItemsQty} Adet</span>
             </div>
             <div className="flex justify-between items-center border-t pt-1">
               <span className="text-gray-500 text-xs">Net Sipariş Adeti</span>
@@ -1116,25 +1116,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
           <div className="mt-2 space-y-1">
             <div className="flex justify-between items-center">
               <span className="text-gray-500 text-xs">Brüt Ciro:</span>
-              <span className="font-semibold text-gray-700 text-sm">{grossRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+              <span className="font-semibold text-gray-700 text-sm">{isPrivacyMode ? '***' : grossRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-gray-500 text-xs text-red-500">İade Ciro:</span>
-              <span className="font-semibold text-red-600 text-sm">{totalReturnsValue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+              <span className="font-semibold text-red-600 text-sm">{isPrivacyMode ? '***' : totalReturnsValue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
             </div>
             <div className="flex justify-between items-center border-t pt-1">
               <span className="text-gray-700 font-semibold text-xs">Net Ciro:</span>
-              <span className="font-bold text-green-600 text-sm">{totalRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+              <span className="font-bold text-green-600 text-sm">{isPrivacyMode ? '***' : totalRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
             </div>
           </div>
           <div className="mt-2 flex flex-col gap-1 text-[11px] border-t pt-2">
             <div className="flex justify-between">
               <span className="text-gray-500">Bugün Net:</span>
-              <span className="font-semibold text-green-600">{todayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+              <span className="font-semibold text-green-600">{isPrivacyMode ? '***' : todayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">Dün Net:</span>
-              <span className="font-semibold text-green-600">{yesterdayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+              <span className="font-semibold text-green-600">{isPrivacyMode ? '***' : yesterdayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
             </div>
           </div>
         </div>
@@ -1150,7 +1150,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
             <div className="grid grid-cols-2 gap-2 text-xs border-b pb-3 mb-3">
               <div>
                 <span className="text-gray-500 block font-medium">Toplam Sipariş / Ürün</span>
-                <span className="font-bold text-blue-600 text-sm">{(store as any).ordersCount} Sip. / {store.totalOrders} Ürün</span>
+                <span className="font-bold text-blue-600 text-sm">{isPrivacyMode ? '***' : (store as any).ordersCount} Sip. / {isPrivacyMode ? '***' : store.totalOrders} Ürün</span>
               </div>
               <div>
                 <span className="text-gray-500 block font-medium">Net Sipariş / Ürün</span>
@@ -1170,15 +1170,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
             <div className="grid grid-cols-3 gap-1 text-[11px] border-b pb-3 mb-3">
               <div>
                 <span className="text-gray-500 block">Brüt Ciro</span>
-                <span className="font-bold text-gray-700">{store.grossRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺</span>
+                <span className="font-bold text-gray-700">{isPrivacyMode ? '***' : store.grossRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
               </div>
               <div>
                 <span className="text-gray-500 block text-red-500">İade Ciro</span>
-                <span className="font-bold text-red-600">{store.returnsValue.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺</span>
+                <span className="font-bold text-red-600">{isPrivacyMode ? '***' : store.returnsValue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
               </div>
               <div>
                 <span className="text-gray-500 block text-green-600 font-semibold">Net Ciro</span>
-                <span className="font-bold text-green-600">{store.revenue.toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺</span>
+                <span className="font-bold text-green-600">{isPrivacyMode ? '***' : store.revenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
               </div>
             </div>
 
@@ -1186,7 +1186,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
             <div className="space-y-1.5 text-xs mb-3 border-b pb-3">
               <div className="flex justify-between items-center">
                 <span className="text-gray-600 font-medium">Bekleyen Sipariş</span>
-                <span className="font-semibold text-orange-500">{(store as any).pendingOrders} Adet / {(store as any).pendingOrdersCount} Sipariş</span>
+                <span className="font-semibold text-orange-500">{isPrivacyMode ? '***' : (store as any).pendingOrders} Adet / {isPrivacyMode ? '***' : (store as any).pendingOrdersCount} Sipariş</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-600 font-medium">Taşıma Durumunda</span>
@@ -1206,7 +1206,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-600">Bugünkü Net Ciro</span>
-                <span className="font-semibold text-green-600">{store.todayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+                <span className="font-semibold text-green-600">{isPrivacyMode ? '***' : store.todayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
               </div>
               <div className="h-px bg-gray-100 my-1"></div>
               <div className="flex justify-between items-center opacity-85">
@@ -1215,7 +1215,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-600">Dünkü Net Ciro</span>
-                <span className="font-semibold text-green-600">{store.yesterdayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+                <span className="font-semibold text-green-600">{isPrivacyMode ? '***' : store.yesterdayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
               </div>
             </div>
           </div>
@@ -1234,7 +1234,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
               <Tooltip
                 formatter={(value, name, props) => {
                   const netOrders = props.payload[`${name}_netOrders`] || 0;
-                  return [`${Number(value).toLocaleString('tr-TR')} ₺ (${netOrders} Net Sipariş)`, name];
+                  return [`${isPrivacyMode ? '***' : Number(value).toLocaleString('tr-TR')} ₺ (${netOrders} Net Sipariş)`, name];
                 }}
               />
               <Legend />
@@ -1278,7 +1278,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" />
               <YAxis />
-              <Tooltip formatter={(value) => `${Number(value).toLocaleString('tr-TR')} ₺`} />
+              <Tooltip formatter={(value) => `${isPrivacyMode ? '***' : Number(value).toLocaleString('tr-TR')} ₺`} />
               <Legend />
               {db.apiConfigs.map((config, index) => {
                 const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
@@ -1327,7 +1327,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
                     </td>
                     <td className="py-3 text-gray-600">{country.count} Sipariş</td>
                     <td className="py-3 text-gray-600">{country.quantity} Adet</td>
-                    <td className="py-3 font-semibold text-green-600">{country.revenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                    <td className="py-3 font-semibold text-green-600">{isPrivacyMode ? '***' : country.revenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
                     <td className="py-3 text-right">
                       <div className="flex flex-col items-end gap-1">
                         <span className="text-xs font-bold text-gray-400">

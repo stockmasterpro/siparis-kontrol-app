@@ -4014,12 +4014,21 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                             <div key={el.id} className={`bg-white border rounded text-xs shadow-sm transition-all ${el.visible ? 'border-blue-300' : 'border-gray-200'}`}>
                                                 <div className={`flex items-center justify-between p-2 rounded-t ${el.visible ? 'bg-blue-50' : 'bg-gray-50'}`}>
                                                     <span className={`font-bold ${el.visible ? 'text-blue-800' : 'text-gray-500'}`}>{el.label}</span>
-                                                    <input
-                                                        type="checkbox"
-                                                        className="w-4 h-4 cursor-pointer"
-                                                        checked={el.visible}
-                                                        onChange={(e) => handleElementChange(el.id, 'visible', e.target.checked)}
-                                                    />
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleElementChange(el.id, 'rotation', ((el.rotation || 0) + 90) % 360); }}
+                                                            className="p-1 hover:bg-blue-100 text-blue-600 rounded"
+                                                            title="Sağa Döndür (90°)"
+                                                        >
+                                                            <RotateCcw size={14} style={{ transform: 'scaleX(-1)' }} />
+                                                        </button>
+                                                        <input
+                                                            type="checkbox"
+                                                            className="w-4 h-4 cursor-pointer"
+                                                            checked={el.visible}
+                                                            onChange={(e) => handleElementChange(el.id, 'visible', e.target.checked)}
+                                                        />
+                                                    </div>
                                                 </div>
                                                 {el.visible && (
                                                     <div className="p-2 space-y-2 border-t border-gray-100">
