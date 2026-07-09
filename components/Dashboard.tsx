@@ -32,6 +32,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   const [showAllPriority, setShowAllPriority] = useState(false);
   const [trendMonthCount, setTrendMonthCount] = useState(6);
   const [isPrivacyMode, setIsPrivacyMode] = useState(true);
+  const [expandedStores, setExpandedStores] = useState<Record<string, boolean>>({});
+
+  const toggleStore = (storeName: string) => {
+    setExpandedStores(prev => ({
+      ...prev,
+      [storeName]: !prev[storeName]
+    }));
+  };
 
   useEffect(() => {
     let timer;
@@ -1144,9 +1152,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {storeAnalytics.map((store, index) => (
           <div key={store.storeName} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">{store.storeName}</h3>
+            <div 
+              className="flex justify-between items-center cursor-pointer select-none" 
+              onClick={() => toggleStore(store.storeName)}
+            >
+              <h3 className="text-lg font-bold text-gray-800">{store.storeName}</h3>
+              <ChevronDown className={`transform transition-transform ${expandedStores[store.storeName] ? 'rotate-180' : ''} text-gray-400`} size={20} />
+            </div>
             
-            {/* Sipariş Kırılımı */}
+            {!expandedStores[store.storeName] && (
+              <div className="flex justify-between items-center mt-4 pt-3 border-t text-sm">
+                <span className="text-gray-500 font-medium">Net Ciro / Bekleyen</span>
+                <span className="font-bold text-green-600">
+                  {isPrivacyMode ? '***' : store.revenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺ <span className="text-gray-300 mx-1">|</span> <span className="text-orange-500">{isPrivacyMode ? '***' : (store as any).pendingOrders} Adet</span>
+                </span>
+              </div>
+            )}
+
+            {expandedStores[store.storeName] && (
+              <div className="mt-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Sipariş Kırılımı */}
             <div className="grid grid-cols-2 gap-2 text-xs border-b pb-3 mb-3">
               <div>
                 <span className="text-gray-500 block font-medium">Toplam Sipariş / Ürün</span>
