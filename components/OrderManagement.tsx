@@ -2237,7 +2237,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         color: 'black',
                         whiteSpace: 'pre-wrap',
                         textTransform: el.forceUppercase ? 'uppercase' : 'none',
-                        transform: `rotate(${el.rotation || 0}deg)`,
+                        transform: `translateX(${el.textAlign === 'center' ? '-50%' : el.textAlign === 'right' ? '-100%' : '0'}) rotate(${el.rotation || 0}deg)`,
                         textAlign: el.textAlign || 'left',
                         transformOrigin: 'top left'
                     };
@@ -2402,7 +2402,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         printConfig.elements.filter(e => e.visible).forEach(el => {
             const elRotation = el.rotation || 0;
             const transformOrigin = 'top left'; // Elements position origin is top left
-            const elStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; width: ${el.width ? el.width + 'mm' : 'auto'}; height: ${el.height ? el.height + 'mm' : 'auto'}; font-weight: bold; color: black; white-space: pre-wrap; text-transform: ${el.forceUppercase ? 'uppercase' : 'none'}; transform: rotate(${elRotation}deg); transform-origin: ${transformOrigin}; text-align: ${el.textAlign || 'left'};`;
+            const elStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; width: ${el.width ? el.width + 'mm' : 'auto'}; height: ${el.height ? el.height + 'mm' : 'auto'}; font-weight: bold; color: black; white-space: pre-wrap; text-transform: ${el.forceUppercase ? 'uppercase' : 'none'}; transform: translateX(${el.textAlign === 'center' ? '-50%' : el.textAlign === 'right' ? '-100%' : '0'}) rotate(${elRotation}deg); transform-origin: ${transformOrigin}; text-align: ${el.textAlign || 'left'};`;
 
             let content = '';
 
