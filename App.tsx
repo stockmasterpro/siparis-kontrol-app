@@ -49,7 +49,7 @@ const App: React.FC = () => {
     dbRef.current = db;
   }, [db]);
 
-  const invokeShowNotification = (options: { title?: string; body?: string; playSound?: boolean; customSoundPath?: string; type?: string }) => {
+  const invokeShowNotification = (options: { title?: string; body?: string; playSound?: boolean; customSoundPath?: string; type?: string; iconBase64?: string }) => {
     try {
       // Prefer ipcRenderer (works even if preload bridge isn't available)
       if (window.require) {
@@ -508,16 +508,23 @@ const App: React.FC = () => {
         const shouldToast = notifSettings.windowsEnabled !== false;
         const shouldSound = notifSettings.soundEnabled !== false;
 
+        let iconBase64 = undefined;
+        if (newClaimsInWaitingState.length === 1) {
+            const storeConfig = currentDb.apiConfigs.find(c => c.storeName === newClaimsInWaitingState[0].storeName);
+            if (storeConfig?.storeLogo) iconBase64 = storeConfig.storeLogo;
+        }
+
         if (shouldToast) {
           invokeShowNotification({
             title: 'Yeni İade Talebi',
             body: `${newClaimsInWaitingState.length} adet YENİ iade talebi var.`,
             playSound: shouldSound,
             customSoundPath: notifSettings.returnSoundPath,
-            type: 'return'
+            type: 'return',
+            iconBase64
           });
         } else if (shouldSound) {
-          invokeShowNotification({ title: '', body: '', playSound: true, customSoundPath: notifSettings.returnSoundPath, type: 'return' });
+          invokeShowNotification({ title: '', body: '', playSound: true, customSoundPath: notifSettings.returnSoundPath, type: 'return', iconBase64 });
         }
       }
       setNotification({ type: 'success', message: `${newClaimsInWaitingState.length} yeni iade talebi sisteme düştü.` });
@@ -574,16 +581,23 @@ const App: React.FC = () => {
         const shouldToast = notifSettings.windowsEnabled !== false;
         const shouldSound = notifSettings.soundEnabled !== false;
 
+        let iconBase64 = undefined;
+        if (trulyNewQuestions.length === 1) {
+            const storeConfig = currentDb.apiConfigs.find(c => c.storeName === trulyNewQuestions[0].storeName);
+            if (storeConfig?.storeLogo) iconBase64 = storeConfig.storeLogo;
+        }
+
         if (shouldToast) {
           invokeShowNotification({
             title: 'Yeni Müşteri Sorusu',
             body: `${trulyNewQuestions.length} adet yeni müşteri sorusu var. (Toplam ${allLatestQuestions.length} bekleyen)`,
             playSound: shouldSound,
             customSoundPath: notifSettings.questionSoundPath,
-            type: 'question'
+            type: 'question',
+            iconBase64
           });
         } else if (shouldSound) {
-          invokeShowNotification({ title: '', body: '', playSound: true, customSoundPath: notifSettings.questionSoundPath, type: 'question' });
+          invokeShowNotification({ title: '', body: '', playSound: true, customSoundPath: notifSettings.questionSoundPath, type: 'question', iconBase64 });
         }
       }
       setNotification({ type: 'success', message: `${trulyNewQuestions.length} yeni soru sisteme düştü.` });
@@ -640,6 +654,12 @@ const App: React.FC = () => {
             const shouldSound = notifications.soundEnabled !== false;
 
             // Windows toast + optional sound
+            let iconBase64 = undefined;
+            if (actualNewOrders.length === 1) {
+                const storeConfig = currentDb.apiConfigs.find(c => c.storeName === actualNewOrders[0].storeName);
+                if (storeConfig?.storeLogo) iconBase64 = storeConfig.storeLogo;
+            }
+
             if (shouldToast) {
               const storeGroups = actualNewOrders.reduce((acc, order) => {
                 const name = order.storeName || 'Bilinmeyen Mağaza';
@@ -660,11 +680,12 @@ const App: React.FC = () => {
                 body: body,
                 playSound: shouldSound,
                 customSoundPath: notifications?.orderSoundPath,
-                type: 'order'
+                type: 'order',
+                iconBase64
               });
             } else if (shouldSound) {
               // Sound only
-              invokeShowNotification({ title: '', body: '', playSound: true, customSoundPath: notifications?.orderSoundPath, type: 'order' });
+              invokeShowNotification({ title: '', body: '', playSound: true, customSoundPath: notifications?.orderSoundPath, type: 'order', iconBase64 });
             }
 
             setNotification({ type: 'success', message: `${actualNewOrders.length} yeni sipariş sisteme düştü.` });

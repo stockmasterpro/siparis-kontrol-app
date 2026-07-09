@@ -183,6 +183,7 @@ export interface ApiConfig {
   isReturnSyncEnabled?: boolean; // İade çekme açık/kapalı
   color?: string; // Dashboard için renk
   refreshToken?: string; // Amazon SP-API için gereklidir
+  storeLogo?: string; // Mağaza profil fotoğrafı (Base64)
 }
 
 export interface AppSettings {

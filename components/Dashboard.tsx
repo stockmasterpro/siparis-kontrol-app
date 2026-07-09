@@ -701,6 +701,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     return criticalItems.sort((a, b) => a.daysOfStock - b.daysOfStock).slice(0, 15);
   }, [db.orders, db.products, validBarcodesSet, db.settings.stockAlertLookbackDays, db.settings.stockAlertProjectionDays]);
 
+  // --- Depo Stok Analizi ---
+  const warehouseStats = useMemo(() => {
+    const stats: Record<string, { id: string, name: string, quantity: number, costValue: number, saleValue: number }> = {};
+    
+    // Initialize stats
+    db.warehouses.forEach(wh => {
+      stats[wh.id] = { id: wh.id, name: wh.name, quantity: 0, costValue: 0, saleValue: 0 };
+    });
+
+    db.products.forEach(p => {
+      p.variants.forEach(v => {
+        if (v.stocks) {
+          Object.entries(v.stocks).forEach(([whId, qty]) => {
+            const quantity = Number(qty) || 0;
+            if (quantity > 0 && stats[whId]) {
+              stats[whId].quantity += quantity;
+              stats[whId].costValue += quantity * (v.costPrice || p.costPrice || 0);
+              stats[whId].saleValue += quantity * (v.salePrice || p.salePrice || 0);
+            }
+          });
+        }
+      });
+    });
+
+    const total = { id: 'total', name: 'Genel Toplam', quantity: 0, costValue: 0, saleValue: 0 };
+    Object.values(stats).forEach(s => {
+      total.quantity += s.quantity;
+      total.costValue += s.costValue;
+      total.saleValue += s.saleValue;
+    });
+
+    return { stats: Object.values(stats), total };
+  }, [db.products, db.warehouses]);
+
   // --- Rapor Oluşturma ---
   const generateExcelReport = () => {
     if (!reportStartDate || !reportEndDate) {
@@ -1143,6 +1177,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
             <div className="flex justify-between">
               <span className="text-gray-500">Dün Net:</span>
               <span className="font-semibold text-green-600">{isPrivacyMode ? '***' : yesterdayRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Depo Stok Özeti */}
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6 mt-6">
+        <h3 className="text-gray-700 font-bold mb-4">Depo Stok Özetleri</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {warehouseStats.stats.map(stat => (
+            <div key={stat.id} className="p-4 rounded-lg bg-gray-50 border flex flex-col justify-between">
+              <div className="font-semibold text-gray-800 text-sm mb-2">{stat.name}</div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-gray-500">Stok:</span>
+                <span className="font-bold text-blue-600">{stat.quantity.toLocaleString('tr-TR')} Adet</span>
+              </div>
+              <div className="flex justify-between items-center text-xs border-t mt-1 pt-1">
+                <span className="text-gray-500">Maliyet:</span>
+                <span className="font-bold text-gray-700">{isPrivacyMode ? '***' : stat.costValue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+              </div>
+              <div className="flex justify-between items-center text-xs border-t mt-1 pt-1">
+                <span className="text-gray-500">Satış (PSF):</span>
+                <span className="font-bold text-green-600">{isPrivacyMode ? '***' : stat.saleValue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+              </div>
+            </div>
+          ))}
+          <div className="p-4 rounded-lg bg-indigo-50 border border-indigo-100 flex flex-col justify-between">
+            <div className="font-bold text-indigo-800 text-sm mb-2">{warehouseStats.total.name}</div>
+            <div className="flex justify-between items-center text-xs">
+              <span className="text-indigo-600">Toplam Stok:</span>
+              <span className="font-bold text-indigo-700">{warehouseStats.total.quantity.toLocaleString('tr-TR')} Adet</span>
+            </div>
+            <div className="flex justify-between items-center text-xs border-t border-indigo-200 mt-1 pt-1">
+              <span className="text-indigo-600">Toplam Maliyet:</span>
+              <span className="font-bold text-indigo-700">{isPrivacyMode ? '***' : warehouseStats.total.costValue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+            </div>
+            <div className="flex justify-between items-center text-xs border-t border-indigo-200 mt-1 pt-1">
+              <span className="text-indigo-600">Toplam Satış:</span>
+              <span className="font-bold text-green-700">{isPrivacyMode ? '***' : warehouseStats.total.saleValue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
             </div>
           </div>
         </div>

@@ -441,6 +441,34 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         onChange={e => setNewApi({ ...newApi, color: e.target.value })}
                                     />
                                 </div>
+                                <div className="col-span-1">
+                                    <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Mağaza Logosu (Opsiyonel)</label>
+                                    <div className="flex items-center gap-2 h-10 border p-1 rounded bg-white">
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            className="w-full text-xs"
+                                            onChange={(e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) {
+                                                    const reader = new FileReader();
+                                                    reader.onloadend = () => {
+                                                        setNewApi({ ...newApi, storeLogo: reader.result as string });
+                                                    };
+                                                    reader.readAsDataURL(file);
+                                                }
+                                            }}
+                                        />
+                                        {newApi.storeLogo && (
+                                            <div className="relative w-8 h-8 flex-shrink-0 bg-gray-100 rounded">
+                                                <img src={newApi.storeLogo} alt="Logo" className="w-full h-full object-cover rounded" />
+                                                <button onClick={() => setNewApi({ ...newApi, storeLogo: undefined })} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-0.5 hover:bg-red-600" title="Kaldır">
+                                                    <X size={10} />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
 
                                 {(newApi.type === 'TRENDYOL' || newApi.type === 'HEPSIBURADA') && (
                                     <div className="col-span-2">
@@ -502,10 +530,16 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                             {db.apiConfigs.map(api => (
                                 <div key={api.id} className="flex justify-between items-center p-4 border rounded bg-white">
                                     <div className="flex items-center gap-4">
-                                        <div
-                                            className="w-4 h-4 rounded-full shadow-sm"
-                                            style={{ backgroundColor: api.color || '#3b82f6' }}
-                                        />
+                                        {api.storeLogo ? (
+                                            <img src={api.storeLogo} alt={api.storeName} className="w-10 h-10 rounded-full shadow-sm object-cover border" />
+                                        ) : (
+                                            <div
+                                                className="w-10 h-10 rounded-full shadow-sm flex items-center justify-center text-white font-bold text-lg"
+                                                style={{ backgroundColor: api.color || '#3b82f6' }}
+                                            >
+                                                {api.storeName.charAt(0).toUpperCase()}
+                                            </div>
+                                        )}
                                         <div>
                                             <div className="font-bold flex items-center gap-2">
                                                 {api.storeName}

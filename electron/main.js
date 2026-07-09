@@ -336,10 +336,18 @@ let tray = null;
 const activeNotifications = new Set();
 
 // Helper to show native notifications safely preventing garbage collection
-function showSystemNotification(title, body, onClick = null) {
+function showSystemNotification(title, body, onClick = null, iconBase64 = null) {
   if (!Notification.isSupported()) return null;
 
-  const iconPath = getIconPath();
+  let iconPath = getIconPath();
+  if (iconBase64 && iconBase64.startsWith('data:image')) {
+    try {
+      iconPath = nativeImage.createFromDataURL(iconBase64);
+    } catch (e) {
+      console.error('[NATIVE-IMAGE-ERROR]', e);
+    }
+  }
+
   const notification = new Notification({
     title: title || 'StockMaster Pro',
     body: body || '',
@@ -822,7 +830,7 @@ ipcMain.handle('show-notification', async (event, options) => {
 
   if (options.playSound) safePlaySound();
 
-  const notification = showSystemNotification(options.title, options.body);
+  const notification = showSystemNotification(options.title, options.body, null, options.iconBase64);
   return !!notification;
 });
 

@@ -36,7 +36,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
             for (const v of p.variants) {
                 if (v.barcode === searchTerm) {
                     const totalVariantStock = Object.values(v.stocks).reduce((a: number, b: number) => a + b, 0);
-                    return { barcode: v.barcode, stock: totalVariantStock, color: v.color, size: v.size };
+                    return { product: p, variant: v, totalStock: totalVariantStock };
                 }
             }
         }
@@ -984,7 +984,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                         </div>
                     </div>
                 )}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 relative">
                     <span className="text-xs text-gray-600">Ölçek:</span>
                     <button
                         onClick={() => setTableZoom(Math.max(0.5, tableZoom - 0.1))}
@@ -1017,8 +1017,27 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                     {exactBarcodeMatch && (
-                        <div className="ml-1 px-2 py-0.5 bg-green-100 border border-green-300 text-xs text-green-800 font-bold whitespace-nowrap">
-                            {exactBarcodeMatch.color} / {exactBarcodeMatch.size} {exactBarcodeMatch.stock}
+                        <div className="absolute top-12 left-0 z-50 bg-white border border-blue-300 shadow-xl rounded-lg p-4 w-80 text-sm">
+                            <div className="flex justify-between items-start mb-2 border-b pb-2">
+                                <div>
+                                    <h4 className="font-bold text-gray-800">{exactBarcodeMatch.product.name}</h4>
+                                    <div className="text-xs text-gray-500">{exactBarcodeMatch.variant.barcode} | {exactBarcodeMatch.variant.color} - {exactBarcodeMatch.variant.size}</div>
+                                </div>
+                                <div className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-bold text-xs border border-blue-200">
+                                    {exactBarcodeMatch.totalStock} Toplam
+                                </div>
+                            </div>
+                            <div className="space-y-1">
+                                {db.warehouses.map(wh => {
+                                    const qty = exactBarcodeMatch.variant.stocks[wh.id] || 0;
+                                    return (
+                                        <div key={wh.id} className="flex justify-between items-center bg-gray-50 p-1.5 rounded">
+                                            <span className="text-gray-700">{wh.name}</span>
+                                            <span className={`font-semibold ${qty > 0 ? 'text-green-600' : 'text-red-500'}`}>{qty} Adet</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
                         </div>
                     )}
                 </div>
