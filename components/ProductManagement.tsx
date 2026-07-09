@@ -1017,28 +1017,31 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                     {exactBarcodeMatch && (
-                        <div className="absolute top-12 left-0 z-50 bg-white border border-blue-300 shadow-xl rounded-lg p-4 w-80 text-sm">
-                            <div className="flex justify-between items-start mb-2 border-b pb-2">
-                                <div>
-                                    <h4 className="font-bold text-gray-800">{exactBarcodeMatch.product.name}</h4>
-                                    <div className="text-xs text-gray-500">{exactBarcodeMatch.variant.barcode} | {exactBarcodeMatch.variant.color} - {exactBarcodeMatch.variant.size}</div>
+                        <>
+                            <div className="fixed inset-0 z-40" onClick={() => setSearchTerm('')}></div>
+                            <div className="absolute top-12 left-0 z-50 bg-white border border-blue-300 shadow-xl rounded-lg p-4 w-80 text-sm">
+                                <div className="flex justify-between items-start mb-2 border-b pb-2">
+                                    <div>
+                                        <h4 className="font-bold text-gray-800">{exactBarcodeMatch.product.name}</h4>
+                                        <div className="text-xs text-gray-500">{exactBarcodeMatch.variant.barcode} | {exactBarcodeMatch.variant.color} - {exactBarcodeMatch.variant.size}</div>
+                                    </div>
+                                    <div className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-bold text-xs border border-blue-200">
+                                        {exactBarcodeMatch.totalStock} Toplam
+                                    </div>
                                 </div>
-                                <div className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-bold text-xs border border-blue-200">
-                                    {exactBarcodeMatch.totalStock} Toplam
+                                <div className="space-y-1">
+                                    {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }]).map(wh => {
+                                        const qty = exactBarcodeMatch.variant.stocks[wh.id] || 0;
+                                        return (
+                                            <div key={wh.id} className="flex justify-between items-center bg-gray-50 p-1.5 rounded">
+                                                <span className="text-gray-700">{wh.name}</span>
+                                                <span className={`font-semibold ${qty > 0 ? 'text-green-600' : 'text-red-500'}`}>{qty} Adet</span>
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             </div>
-                            <div className="space-y-1">
-                                {db.warehouses.map(wh => {
-                                    const qty = exactBarcodeMatch.variant.stocks[wh.id] || 0;
-                                    return (
-                                        <div key={wh.id} className="flex justify-between items-center bg-gray-50 p-1.5 rounded">
-                                            <span className="text-gray-700">{wh.name}</span>
-                                            <span className={`font-semibold ${qty > 0 ? 'text-green-600' : 'text-red-500'}`}>{qty} Adet</span>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
+                        </>
                     )}
                 </div>
             </div>
@@ -1541,15 +1544,11 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                             </th>
                                                             <th style={{ width: '80px', textAlign: 'right' }}>Maliyet</th>
                                                             <th style={{ width: '80px', textAlign: 'right' }}>PSF</th>
-                                                            {db.warehouses.length > 0 ? (
-                                                                db.warehouses.map(w => (
-                                                                    <th key={w.id} style={{ width: '130px', textAlign: 'center' }}>
-                                                                        <div className="truncate" title={w.name}>{db.warehouses.length > 1 ? `ENV. (${w.name})` : `ENV. (${w.name})`}</div>
-                                                                    </th>
-                                                                ))
-                                                            ) : (
-                                                                <th style={{ width: '130px', textAlign: 'center' }}>ENVANTER</th>
-                                                            )}
+                                                            {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }]).map(w => (
+                                                                <th key={w.id} style={{ width: '130px', textAlign: 'center' }}>
+                                                                    <div className="truncate" title={w.name}>{db.warehouses?.length > 1 ? `ENV. (${w.name})` : `ENV. (${w.name})`}</div>
+                                                                </th>
+                                                            ))}
                                                         </tr>
                                                     </thead>
                                                     <tbody>
@@ -1562,7 +1561,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
 
                                                             return (
                                                                 <>
-                                                                    {paddingTop > 0 && <tr style={{ height: paddingTop }}><td colSpan={Math.max(1, db.warehouses.length) + 4} style={{ padding: 0, border: 0 }}></td></tr>}
+                                                                    {paddingTop > 0 && <tr style={{ height: paddingTop }}><td colSpan={(db.warehouses && db.warehouses.length > 0 ? db.warehouses.length : 1) + 4} style={{ padding: 0, border: 0 }}></td></tr>}
                                                                     {modalStockList.slice(startIndex, endIndex).map(([key, v]) => {
                                                                         const rowTotal = Object.values(v.stocks).reduce((a: number, b: number) => a + b, 0);
                                                                         return (
@@ -1605,31 +1604,20 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                                                         }}
                                                                                     />
                                                                                 </td>
-                                                                                {db.warehouses.length > 0 ? (
-                                                                                    db.warehouses.map(w => (
-                                                                                        <td key={w.id} className="text-center p-0">
-                                                                                            <input
-                                                                                                type="number"
-                                                                                                className="w-full h-full border-0 text-center outline-none focus:bg-blue-50"
-                                                                                                value={v.stocks[w.id] || 0}
-                                                                                                onChange={(e) => updateStockForGroup(v.color, v.size, w.id, Number(e.target.value))}
-                                                                                            />
-                                                                                        </td>
-                                                                                    ))
-                                                                                ) : (
-                                                                                    <td className="text-center p-0">
+                                                                                {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }]).map(w => (
+                                                                                    <td key={w.id} className="text-center p-0">
                                                                                         <input
                                                                                             type="number"
                                                                                             className="w-full h-full border-0 text-center outline-none focus:bg-blue-50"
-                                                                                            value={v.stocks['wh1'] || 0}
-                                                                                            onChange={(e) => updateStockForGroup(v.color, v.size, 'wh1', Number(e.target.value))}
+                                                                                            value={v.stocks ? (v.stocks[w.id] || 0) : 0}
+                                                                                            onChange={(e) => updateStockForGroup(v.color, v.size, w.id, Number(e.target.value))}
                                                                                         />
                                                                                     </td>
-                                                                                )}
+                                                                                ))}
                                                                             </tr>
                                                                         );
                                                                     })}
-                                                                    {paddingBottom > 0 && <tr style={{ height: paddingBottom }}><td colSpan={Math.max(1, db.warehouses.length) + 4} style={{ padding: 0, border: 0 }}></td></tr>}
+                                                                    {paddingBottom > 0 && <tr style={{ height: paddingBottom }}><td colSpan={(db.warehouses && db.warehouses.length > 0 ? db.warehouses.length : 1) + 4} style={{ padding: 0, border: 0 }}></td></tr>}
                                                                 </>
                                                             );
                                                         })()}

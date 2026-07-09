@@ -704,9 +704,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   // --- Depo Stok Analizi ---
   const warehouseStats = useMemo(() => {
     const stats: Record<string, { id: string, name: string, quantity: number, costValue: number, saleValue: number }> = {};
+    const warehouses = (db.warehouses && db.warehouses.length > 0) ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }];
     
     // Initialize stats
-    db.warehouses.forEach(wh => {
+    warehouses.forEach(wh => {
       stats[wh.id] = { id: wh.id, name: wh.name, quantity: 0, costValue: 0, saleValue: 0 };
     });
 
@@ -715,10 +716,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         if (v.stocks) {
           Object.entries(v.stocks).forEach(([whId, qty]) => {
             const quantity = Number(qty) || 0;
-            if (quantity > 0 && stats[whId]) {
-              stats[whId].quantity += quantity;
-              stats[whId].costValue += quantity * (v.costPrice || p.costPrice || 0);
-              stats[whId].saleValue += quantity * (v.salePrice || p.salePrice || 0);
+            // If the warehouse doesn't exist in our map but has stock, let's create a generic entry or add it to the first warehouse
+            const targetWhId = stats[whId] ? whId : warehouses[0].id;
+            if (quantity > 0) {
+              stats[targetWhId].quantity += quantity;
+              stats[targetWhId].costValue += quantity * (v.costPrice || p.costPrice || 0);
+              stats[targetWhId].saleValue += quantity * (v.salePrice || p.salePrice || 0);
             }
           });
         }
