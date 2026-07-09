@@ -211,6 +211,10 @@ function getSoundPath(customPath, type) {
     // If it's a simple filename, check in assets
     const fileName = customPath.split(/[/\\]/).pop();
     const assetTryPaths = [];
+    
+    // Check userData/sounds first
+    assetTryPaths.push(join(getSoundsDirectory(), fileName));
+
     if (app.isPackaged) {
       assetTryPaths.push(join(process.resourcesPath, 'assets', fileName));
       assetTryPaths.push(join(process.resourcesPath, 'app.asar.unpacked', 'assets', fileName));
@@ -849,6 +853,53 @@ ipcMain.handle('select-notification-sound', async () => {
   return null;
 });
 
+// Get Available Sounds IPC
+ipcMain.handle('get-available-sounds', async () => {
+  const sounds = new Map();
+
+  // Helper to add files from a directory
+  const addSoundsFromDir = (dirPath) => {
+    try {
+      if (existsSync(dirPath)) {
+        const files = readdirSync(dirPath);
+        for (const file of files) {
+          if (file.toLowerCase().endsWith('.wav') || file.toLowerCase().endsWith('.mp3')) {
+            // Use filename without extension as name, format it nicely
+            const name = file.replace(/\.(wav|mp3)$/i, '').replace(/[-_]/g, ' ');
+            // Only add if not already present to avoid duplicates
+            if (!sounds.has(file)) {
+              sounds.set(file, { name: name.charAt(0).toUpperCase() + name.slice(1), file });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error reading sounds from dir:', dirPath, err);
+    }
+  };
+
+  // 1. Scan userData/sounds
+  addSoundsFromDir(getSoundsDirectory());
+
+  // 2. Scan app assets
+  if (app.isPackaged) {
+    addSoundsFromDir(join(process.resourcesPath, 'assets'));
+    addSoundsFromDir(join(process.resourcesPath, 'app.asar.unpacked', 'assets'));
+    addSoundsFromDir(join(dirname(app.getPath('exe')), 'resources', 'assets'));
+  } else {
+    addSoundsFromDir(join(__dirname, '..', 'assets'));
+    addSoundsFromDir(join(__dirname, 'assets'));
+  }
+
+  // Convert map to array and sort
+  const availableSounds = Array.from(sounds.values()).sort((a, b) => a.name.localeCompare(b.name));
+  
+  // Prepend default "none" option
+  availableSounds.unshift({ name: 'Yok (Sessiz)', file: 'none' });
+  
+  return availableSounds;
+});
+
 // Diagnostic handler to test notification and sound path
 ipcMain.handle('test-notification', async (event, customPath, type) => {
   const soundPath = getSoundPath(customPath, type);
@@ -1097,6 +1148,18 @@ async function initSQLite() {
         if (data.settings) {
           Object.entries(data.settings).forEach(([k, v]) => insertSettings.run(k, JSON.stringify(v)));
         }
+        if (data.dismissedOrderImportKeys) {
+          insertSettings.run('dismissedOrderImportKeys', JSON.stringify(data.dismissedOrderImportKeys));
+        }
+        if (data.trialStartDate !== undefined) {
+          insertSettings.run('trialStartDate', JSON.stringify(data.trialStartDate));
+        }
+        if (data.lastSeenDate !== undefined) {
+          insertSettings.run('lastSeenDate', JSON.stringify(data.lastSeenDate));
+        }
+        if (data.users !== undefined) {
+          insertSettings.run('users', JSON.stringify(data.users));
+        }
 
         // Warehouses
         if (data.warehouses) {
@@ -1234,6 +1297,14 @@ ipcMain.handle('db-get-all', async () => {
           dismissedOrderImportKeys = JSON.parse(row.value) || [];
         } catch {
           dismissedOrderImportKeys = [];
+        }
+        return;
+      }
+      if (['trialStartDate', 'lastSeenDate', 'users'].includes(row.key)) {
+        try {
+          db[row.key] = JSON.parse(row.value);
+        } catch {
+          db[row.key] = row.value;
         }
         return;
       }

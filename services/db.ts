@@ -389,6 +389,21 @@ export const saveDB = async (db: Database): Promise<void> => {
       params: ['dismissedOrderImportKeys', JSON.stringify(db.dismissedOrderImportKeys || [])]
     });
 
+    ops.push({
+      query: 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+      params: ['trialStartDate', JSON.stringify(db.trialStartDate || null)]
+    });
+
+    ops.push({
+      query: 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+      params: ['lastSeenDate', JSON.stringify(db.lastSeenDate || null)]
+    });
+
+    ops.push({
+      query: 'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+      params: ['users', JSON.stringify(db.users || [])]
+    });
+
     // API Configs
     ops.push({ query: 'DELETE FROM api_configs', params: [] });
     db.apiConfigs.forEach(c => {

@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Database, OrderStatus } from '../types';
 import { getEffectiveOrderCountryCode } from '../utils/orderUtils';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { Download, X, Check, Filter, ChevronDown } from 'lucide-react';
+import { Download, X, Check, Filter, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 
@@ -31,6 +31,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
   const [showAllPriority, setShowAllPriority] = useState(false);
   const [trendMonthCount, setTrendMonthCount] = useState(6);
+  const [isPrivacyMode, setIsPrivacyMode] = useState(true);
+
+  useEffect(() => {
+    let timer;
+    if (!isPrivacyMode) {
+      // 2 minutes = 120000 ms
+      timer = setTimeout(() => {
+        setIsPrivacyMode(true);
+      }, 120000);
+    }
+    return () => clearTimeout(timer);
+  }, [isPrivacyMode]);
 
   const PRIORITY_COUNTRIES = [
     { name: 'Türkiye', code: 'TR' },
@@ -623,12 +635,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
   // --- Stok Azalma Analizi ---
   const criticalStockProducts = useMemo(() => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const lookbackDays = db.settings.stockAlertLookbackDays ?? 7;
+    const projectionDays = db.settings.stockAlertProjectionDays ?? 21;
+    
+    const lookbackDate = new Date();
+    lookbackDate.setDate(lookbackDate.getDate() - lookbackDays);
 
     const recentOrders = db.orders.filter(o => {
       if (o.isSuspended || o.status === OrderStatus.CANCELLED || o.id.includes('_OLD_')) return false;
-      if (new Date(o.orderDate) < thirtyDaysAgo) return false;
+      if (new Date(o.orderDate) < lookbackDate) return false;
 
       // Barkodları tanımlı mı kontrolü
       return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
@@ -652,25 +667,31 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     db.products.forEach(product => {
       product.variants.forEach(variant => {
         const stock = getVariantStock(variant);
-        const sales = productSales[variant.barcode] || 0;
-        if (stock < sales && (stock > 0 || sales > 0)) {
+        const salesInLookback = productSales[variant.barcode] || 0;
+        
+        // Calculate daily rate
+        const dailyRate = salesInLookback / lookbackDays;
+        const projectedSales = dailyRate * projectionDays;
+        
+        if (stock < projectedSales && (stock > 0 || salesInLookback > 0)) {
           criticalItems.push({
             id: variant.id,
             productCode: product.productCode,
             name: product.name,
-            variantName: `${variant.color}/${variant.size}`,
+            variantName: `${product.name} - ${variant.size}`,
             barcode: variant.barcode,
             stock,
-            sales,
-            depletionRate: (sales / 30).toFixed(1),
-            daysOfStock: sales > 0 ? Math.floor(stock / (sales / 30)) : Infinity
+            sales: salesInLookback,
+            projected: Math.ceil(projectedSales),
+            depletionRate: dailyRate.toFixed(1),
+            daysOfStock: salesInLookback > 0 ? Math.floor(stock / dailyRate) : Infinity
           });
         }
       });
     });
 
     return criticalItems.sort((a, b) => a.daysOfStock - b.daysOfStock).slice(0, 15);
-  }, [db.orders, db.products, validBarcodesSet]);
+  }, [db.orders, db.products, validBarcodesSet, db.settings.stockAlertLookbackDays, db.settings.stockAlertProjectionDays]);
 
   // --- Rapor Oluşturma ---
   const generateExcelReport = () => {
@@ -1334,14 +1355,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         {criticalStockProducts.length > 0 ? (
           <>
             <p className="text-red-700 text-sm mb-4">
-              Aşağıdaki ürünlerin stokları son 30 gündeki satış hızına göre kritik seviyede. Stok takibi yapılmalıdır.
+              Aşağıdaki ürünlerin stokları son {db.settings.stockAlertLookbackDays ?? 7} gündeki satış hızına göre {db.settings.stockAlertProjectionDays ?? 21} günü çıkarmayacak (kritik) seviyededir.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {criticalStockProducts.map((p, idx) => (
                 <div key={idx} className="flex flex-col p-3 bg-white rounded-lg border border-red-100 shadow-sm">
                   <div className="flex justify-between items-start mb-1">
                     <div>
-                      <p className="font-bold text-gray-800 text-sm">{p.name}</p>
+                      <p className="font-bold text-gray-800 text-sm">{p.variantName}</p>
                       <p className="text-xs text-red-600 font-mono">{p.productCode}</p>
                       {db.settings.showLowStockDetails && (
                         <p className="text-xs font-bold text-blue-700 mt-1">
@@ -1362,7 +1383,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
                   </div>
                   <div className="flex justify-between mt-1 text-[10px] font-medium text-gray-500">
                     <span>Mevcut: {p.stock}</span>
-                    <span>30 Gün Satış: {p.sales}</span>
+                    <span>{db.settings.stockAlertLookbackDays ?? 7} Gün Satış: {p.sales} | Tahmini {db.settings.stockAlertProjectionDays ?? 21} Gün İhtiyaç: {p.projected}</span>
                   </div>
                 </div>
               ))}

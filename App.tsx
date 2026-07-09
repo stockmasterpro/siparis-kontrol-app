@@ -678,7 +678,7 @@ const App: React.FC = () => {
           orders: result.updatedOrders
         }));
 
-        if (currentDb.settings.enableAutoStockSync && Object.keys(result.barcodesToSync).length > 0) {
+        if (Object.keys(result.barcodesToSync).length > 0) {
           console.log(`[STOCK-SYNC] ${Object.keys(result.barcodesToSync).length} barkod için toplu stok senkronizasyonu başlatılıyor...`);
 
           const itemsToSync = Object.entries(result.barcodesToSync).map(([barcode, qty]) => ({

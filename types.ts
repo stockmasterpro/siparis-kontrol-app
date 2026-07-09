@@ -172,7 +172,7 @@ export interface QuickAnswer {
 export interface ApiConfig {
   id: string;
   storeName: string; // Acts as identifier
-  type: 'TRENDYOL' | 'MANUAL';
+  type: 'TRENDYOL' | 'HEPSIBURADA' | 'N11' | 'AMAZON' | 'PAZARAMA' | 'MANUAL';
   apiKey?: string;
   apiSecret?: string;
   supplierId?: string;
@@ -182,6 +182,7 @@ export interface ApiConfig {
   isQuestionSyncEnabled?: boolean; // Soru çekme açık/kapalı
   isReturnSyncEnabled?: boolean; // İade çekme açık/kapalı
   color?: string; // Dashboard için renk
+  refreshToken?: string; // Amazon SP-API için gereklidir
 }
 
 export interface AppSettings {
@@ -198,6 +199,8 @@ export interface AppSettings {
     minStockThreshold: number;
     maxStockToSend: number;
   };
+  stockAlertLookbackDays?: number;
+  stockAlertProjectionDays?: number;
   notifications?: {
     newOrderNotification: boolean;
     orderUpdateNotification: boolean;

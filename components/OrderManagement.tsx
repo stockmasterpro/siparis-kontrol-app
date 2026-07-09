@@ -47,6 +47,13 @@ interface PrintConfig {
     customHeight?: number;
     elements: PrintElement[];
     selectedPrinter?: string;
+    rotation?: number;
+}
+
+export interface SavedPrintTemplate {
+    id: string;
+    name: string;
+    config: PrintConfig;
 }
 
 const DEFAULT_PRINT_CONFIG: PrintConfig = {
@@ -262,6 +269,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     // Print Designer State
     const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
     const [printConfig, setPrintConfig] = useState<PrintConfig>(DEFAULT_PRINT_CONFIG);
+    const [savedTemplates, setSavedTemplates] = useState<SavedPrintTemplate[]>([]);
     const [previewOrders, setPreviewOrders] = useState<Order[]>([]); // Preview için Trendyol'dan çekilen siparişler
     const [previewZoom, setPreviewZoom] = useState(1); // Preview yakınlaştırma/uzaklaştırma
 
@@ -375,32 +383,50 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     useEffect(() => {
-        const saved = localStorage.getItem('printConfig');
-        if (saved) {
+        const savedTemplatesStr = localStorage.getItem('printTemplates');
+        if (savedTemplatesStr) {
             try {
-                const config = JSON.parse(saved);
-                const mergedElements = config.elements.map((el: any) => {
-                    const defEl = DEFAULT_PRINT_CONFIG.elements.find(e => e.id === el.id);
-                    if (defEl && defEl.tableColumns && el.tableColumns) {
-                        const mergedCols = [...el.tableColumns];
-                        defEl.tableColumns.forEach(defCol => {
-                            if (!mergedCols.find(c => c.key === defCol.key)) {
-                                mergedCols.push(defCol);
-                            }
-                        });
-                        return { ...el, tableColumns: mergedCols };
-                    }
-                    return el;
-                });
-                DEFAULT_PRINT_CONFIG.elements.forEach(defEl => {
-                    if (!mergedElements.find(e => e.id === defEl.id)) {
-                        mergedElements.push(defEl);
-                    }
-                });
-                config.elements = mergedElements;
-                setPrintConfig(config);
+                const templates = JSON.parse(savedTemplatesStr);
+                setSavedTemplates(templates);
+                if (templates.length > 0) {
+                    setPrintConfig(templates[0].config);
+                }
             } catch (error) {
-                console.error('Failed to load saved print config:', error);
+                console.error('Failed to load print templates:', error);
+            }
+        } else {
+            // Migration for old printConfig
+            const saved = localStorage.getItem('printConfig');
+            if (saved) {
+                try {
+                    const config = JSON.parse(saved);
+                    const mergedElements = config.elements.map((el: any) => {
+                        const defEl = DEFAULT_PRINT_CONFIG.elements.find(e => e.id === el.id);
+                        if (defEl && defEl.tableColumns && el.tableColumns) {
+                            const mergedCols = [...el.tableColumns];
+                            defEl.tableColumns.forEach(defCol => {
+                                if (!mergedCols.find(c => c.key === defCol.key)) {
+                                    mergedCols.push(defCol);
+                                }
+                            });
+                            return { ...el, tableColumns: mergedCols };
+                        }
+                        return el;
+                    });
+                    DEFAULT_PRINT_CONFIG.elements.forEach(defEl => {
+                        if (!mergedElements.find(e => e.id === defEl.id)) {
+                            mergedElements.push(defEl);
+                        }
+                    });
+                    config.elements = mergedElements;
+                    setPrintConfig(config);
+                    
+                    const migratedTemplate: SavedPrintTemplate = { id: uuid(), name: 'Eski Şablon', config };
+                    setSavedTemplates([migratedTemplate]);
+                    localStorage.setItem('printTemplates', JSON.stringify([migratedTemplate]));
+                } catch (error) {
+                    console.error('Failed to load saved print config:', error);
+                }
             }
         }
     }, []);
@@ -555,7 +581,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             products: updatedProducts
         }));
 
-        if (db.settings.enableAutoStockSync && Object.keys(barcodesToSync).length > 0) {
+        if (Object.keys(barcodesToSync).length > 0) {
             const itemsToSync = Object.entries(barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
             await syncBarcodeStockBatchMultiple(
                 db.apiConfigs,
@@ -597,7 +623,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }));
 
             // OTOMATİK STOK GÜNCELLEME (Tüm mağazalara)
-            if (db.settings.enableAutoStockSync && Object.keys(result.barcodesToSync).length > 0) {
+            if (Object.keys(result.barcodesToSync).length > 0) {
                 const itemsToSync = Object.entries(result.barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
                 await syncBarcodeStockBatchMultiple(
                     db.apiConfigs,
@@ -1521,7 +1547,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             });
 
             // 3. Stok Senkronizasyonunu Tetikle (TOPLAM STOKLAR)
-            if (db.settings.enableAutoStockSync && Object.keys(barcodesToSync).length > 0) {
+            if (Object.keys(barcodesToSync).length > 0) {
                 const itemsToSync = Object.entries(barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
                 await syncBarcodeStockBatchMultiple(
                     db.apiConfigs,
@@ -1643,7 +1669,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             });
 
             // Sync
-            if (db.settings.enableAutoStockSync && Object.keys(barcodesToSync).length > 0) {
+            if (Object.keys(barcodesToSync).length > 0) {
                 const itemsToSync = Object.entries(barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
                 await syncBarcodeStockBatchMultiple(db.apiConfigs, itemsToSync, db.settings);
             }
@@ -1846,7 +1872,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             updateDB({ ...db, products: currentProducts, orders: newOrders });
 
             // Sync if enabled - Barkod bazlı stok gönderimi
-            if (db.settings.enableAutoStockSync && Object.keys(barcodesToSync).length > 0) {
+            if (Object.keys(barcodesToSync).length > 0) {
                 const itemsToSync = Object.entries(barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
                 await syncBarcodeStockBatchMultiple(
                     db.apiConfigs,
@@ -1943,7 +1969,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             });
 
             // Sync if enabled - Barkod bazlı stok gönderimi
-            if (db.settings.enableAutoStockSync && Object.keys(barcodesToSync).length > 0) {
+            if (Object.keys(barcodesToSync).length > 0) {
                 const itemsToSync = Object.entries(barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
                 await syncBarcodeStockBatchMultiple(
                     db.apiConfigs,
@@ -2081,7 +2107,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             });
 
             // 3. Stok Senkronizasyonunu Tetikle
-            if (db.settings.enableAutoStockSync && Object.keys(barcodesToSync).length > 0) {
+            if (Object.keys(barcodesToSync).length > 0) {
                 const itemsToSync = Object.entries(barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
                 await syncBarcodeStockBatchMultiple(
                     db.apiConfigs,
@@ -2314,55 +2340,35 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     };
 
     const handleSavePrintTemplate = () => {
-        localStorage.setItem('printConfig', JSON.stringify(printConfig));
+        const templateName = window.prompt("Lütfen şablon için bir ad girin (Örn: A5 Trendyol):");
+        if (!templateName || templateName.trim() === '') {
+             setNotification({ type: 'error', message: 'Şablon adı boş bırakılamaz.' });
+             return;
+        }
+        
+        const newTemplate: SavedPrintTemplate = {
+            id: uuidv4(),
+            name: templateName.trim(),
+            config: printConfig
+        };
+        
+        const updatedTemplates = [...savedTemplates, newTemplate];
+        setSavedTemplates(updatedTemplates);
+        localStorage.setItem('printTemplates', JSON.stringify(updatedTemplates));
+        
         setNotification({
             type: 'success',
             message: 'Yazdırma şablonu kaydedildi.'
         });
     };
-
-    const handleLoadPrintTemplate = () => {
-        const saved = localStorage.getItem('printConfig');
-        if (saved) {
-            try {
-                const config = JSON.parse(saved);
-                const mergedElements = config.elements.map((el: any) => {
-                    const defEl = DEFAULT_PRINT_CONFIG.elements.find(e => e.id === el.id);
-                    if (defEl && defEl.tableColumns && el.tableColumns) {
-                        const mergedCols = [...el.tableColumns];
-                        defEl.tableColumns.forEach(defCol => {
-                            if (!mergedCols.find(c => c.key === defCol.key)) {
-                                mergedCols.push(defCol);
-                            }
-                        });
-                        return { ...el, tableColumns: mergedCols };
-                    }
-                    return el;
-                });
-                DEFAULT_PRINT_CONFIG.elements.forEach(defEl => {
-                    if (!mergedElements.find(e => e.id === defEl.id)) {
-                        mergedElements.push(defEl);
-                    }
-                });
-                config.elements = mergedElements;
-                setPrintConfig(config);
-                setNotification({
-                    type: 'success',
-                    message: 'Yazdırma şablonu yüklendi.'
-                });
-            } catch (error) {
-                console.error('Failed to load print config:', error);
-                setNotification({
-                    type: 'info',
-                    message: 'Yazdırma şablonu yüklenemedi.'
-                });
-            }
-        } else {
-            setNotification({
-                type: 'info',
-                message: 'Kayıtlı şablon bulunamadı.'
-            });
-        }
+    
+    const handleDeletePrintTemplate = (id: string) => {
+        requestConfirm('Bu şablonu silmek istediğinize emin misiniz?', () => {
+            const updated = savedTemplates.filter(t => t.id !== id);
+            setSavedTemplates(updated);
+            localStorage.setItem('printTemplates', JSON.stringify(updated));
+            setNotification({ type: 'success', message: 'Şablon silindi.' });
+        });
     };
 
     const handleResetPrintTemplate = () => {
@@ -2483,7 +2489,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }
         });
 
-        return `<div style="${styleStr}" class="print-page">${elementsHTML}</div>`;
+        const rotation = printConfig.rotation || 0;
+        const innerStyle = `position: absolute; inset: 0; transform: rotate(${rotation}deg); transform-origin: center center;`;
+        return `<div style="${styleStr}" class="print-page"><div style="${innerStyle}">${elementsHTML}</div></div>`;
     };
 
     const triggerPrint = async (mode: 'pdf' | 'print' = 'print') => {
@@ -3942,7 +3950,21 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                 {/* Sidebar Controls */}
                                 <div className="w-80 bg-gray-100 border-r border-gray-300 flex flex-col overflow-y-auto">
                                     <div className="p-3 border-b border-gray-300 bg-white">
-                                        <label className="block text-xs font-bold text-gray-700 mb-1 uppercase">Kağıt Boyutu</label>
+                                        <div className="mt-3">
+                                            <label className="block text-xs font-bold text-gray-700 mb-1 uppercase">Şablon Yönü (Döndür)</label>
+                                            <select 
+                                                className="border w-full p-1 text-xs bg-white"
+                                                value={printConfig.rotation || 0}
+                                                onChange={(e) => setPrintConfig({...printConfig, rotation: Number(e.target.value)})}
+                                            >
+                                                <option value={0}>Düz (0°)</option>
+                                                <option value={90}>Sağa Yatık (90°)</option>
+                                                <option value={180}>Ters Çevir (180°)</option>
+                                                <option value={270}>Sola Yatık (270°)</option>
+                                            </select>
+                                        </div>
+                                        
+                                        <label className="block text-xs font-bold text-gray-700 mb-1 mt-3 uppercase">Kağıt Boyutu</label>
                                         <div className="flex flex-wrap gap-1 mb-2">
                                             {(['A4', 'A5', 'Thermal', 'Custom'] as const).map(size => (
                                                 <button
@@ -4251,6 +4273,27 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                         )}
                                     </div>
                                 </div>
+
+{/* Right Sidebar Templates */}
+                                <div className="w-64 bg-gray-100 border-l border-gray-300 flex flex-col overflow-y-auto z-10 shadow-[-5px_0_15px_-5px_rgba(0,0,0,0.1)]">
+                                    <div className="p-3 border-b border-gray-300 bg-white sticky top-0 font-bold text-gray-700 flex items-center gap-2 uppercase text-sm">
+                                        <Save size={16} /> Kayıtlı Şablonlar
+                                    </div>
+                                    <div className="p-2 space-y-2 flex-1">
+                                        {savedTemplates.length === 0 ? (
+                                            <div className="text-xs text-gray-500 text-center italic mt-4">Henüz kaydedilmiş şablon yok.</div>
+                                        ) : (
+                                            savedTemplates.map(tpl => (
+                                                <div key={tpl.id} className="flex items-center justify-between bg-white border border-gray-300 rounded p-2 hover:border-blue-500 transition-colors group cursor-pointer" onClick={() => setPrintConfig(tpl.config)}>
+                                                    <span className="text-sm font-medium text-gray-700 truncate flex-1">{tpl.name}</span>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleDeletePrintTemplate(tpl.id); }} className="text-red-500 hover:text-white hover:bg-red-500 p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <Trash size={14} />
+                                                    </button>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
                             </div>
 
                             <div className="h-12 bg-white border-t border-gray-300 flex justify-end items-center px-4 gap-2">
@@ -4259,7 +4302,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                     {selectedOrders.length} adet sipariş seçili. Şablona göre hepsi yazdırılacak.
                                 </div>
                                 <button onClick={handleResetPrintTemplate} className="desktop-btn w-24">Varsayılan</button>
-                                <button onClick={handleLoadPrintTemplate} className="desktop-btn w-24">Yükle</button>
+                                
                                 <button onClick={handleSavePrintTemplate} className="desktop-btn w-24">Kaydet</button>
                                 <button onClick={() => setIsPrintModalOpen(false)} className="desktop-btn w-24">İptal</button>
                                 <button onClick={() => triggerPrint('print')} disabled={isGeneratingPDF} className="desktop-btn desktop-btn-primary w-32">

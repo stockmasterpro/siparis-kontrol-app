@@ -42,6 +42,24 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
     const [activeTab, setActiveTab] = useState<'api' | 'users' | 'system' | 'license'>('api');
     const [isSyncingStocks, setIsSyncingStocks] = useState(false);
     const [tempKey, setTempKey] = useState('');
+    const [availableSounds, setAvailableSounds] = useState<{name: string, file: string}[]>(AVAILABLE_SOUNDS);
+
+    React.useEffect(() => {
+        const fetchSounds = async () => {
+            if (window.require) {
+                try {
+                    const { ipcRenderer } = window.require('electron');
+                    const sounds = await ipcRenderer.invoke('get-available-sounds');
+                    if (sounds && sounds.length > 0) {
+                        setAvailableSounds(sounds);
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch available sounds:', error);
+                }
+            }
+        };
+        fetchSounds();
+    }, []);
 
     // API Form
     const [newApi, setNewApi] = useState<ApiConfig>({
@@ -362,6 +380,10 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         onChange={e => setNewApi({ ...newApi, type: e.target.value as 'TRENDYOL' | 'MANUAL' })}
                                     >
                                         <option value="TRENDYOL">Trendyol Pazaryeri (API)</option>
+                                        <option value="HEPSIBURADA">Hepsiburada Pazaryeri (API)</option>
+                                        <option value="N11">N11 Pazaryeri (API)</option>
+                                        <option value="AMAZON">Amazon (SP-API)</option>
+                                        <option value="PAZARAMA">Pazarama (API)</option>
                                         <option value="MANUAL">Perakende / Manuel Mağaza</option>
                                     </select>
                                 </div>
@@ -370,11 +392,13 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                     <input className="w-full border p-2 rounded" placeholder="Örn: Güngören Şubesi" value={newApi.storeName} onChange={e => setNewApi({ ...newApi, storeName: e.target.value })} />
                                 </div>
 
-                                {newApi.type === 'TRENDYOL' && (
+                                {(newApi.type === 'TRENDYOL' || newApi.type === 'HEPSIBURADA' || newApi.type === 'N11' || newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') && (
                                     <>
                                         <div className="col-span-1">
-                                            <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Satıcı ID (Supplier ID)</label>
-                                            <input className="w-full border p-2 rounded" placeholder="Supplier ID" value={newApi.supplierId} onChange={e => setNewApi({ ...newApi, supplierId: e.target.value })} />
+                                            <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">
+                                                {newApi.type === 'HEPSIBURADA' ? 'Merchant ID' : (newApi.type === 'N11' ? 'Mağaza ID (Opsiyonel)' : (newApi.type === 'AMAZON' ? 'Seller ID / Merchant Token' : (newApi.type === 'PAZARAMA' ? 'Satıcı ID (Pazarama İçin Opsiyonel)' : 'Satıcı ID (Supplier ID)')))}
+                                            </label>
+                                            <input className="w-full border p-2 rounded" placeholder={newApi.type === 'HEPSIBURADA' ? 'Merchant ID' : (newApi.type === 'AMAZON' ? 'Seller ID' : (newApi.type === 'PAZARAMA' ? 'Pazarama Satıcı ID (Gerekli Değil)' : 'Supplier ID'))} value={newApi.supplierId} onChange={e => setNewApi({ ...newApi, supplierId: e.target.value })} />
                                         </div>
                                         <div className="col-span-1">
                                             <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Çalışma Modu</label>
@@ -388,13 +412,23 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                             </select>
                                         </div>
                                         <div className="col-span-1">
-                                            <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">API Key</label>
-                                            <input className="w-full border p-2 rounded" placeholder="API Key" value={newApi.apiKey} onChange={e => setNewApi({ ...newApi, apiKey: e.target.value })} />
+                                            <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">
+                                                {newApi.type === 'HEPSIBURADA' ? 'Entegratör Adı (API Key)' : (newApi.type === 'N11' ? 'AppKey (API Anahtarı)' : ((newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') ? 'Client ID' : 'API Key'))}
+                                            </label>
+                                            <input className="w-full border p-2 rounded" placeholder={(newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') ? 'Client ID' : 'API Key'} value={newApi.apiKey} onChange={e => setNewApi({ ...newApi, apiKey: e.target.value })} />
                                         </div>
                                         <div className="col-span-1">
-                                            <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">API Secret</label>
-                                            <input className="w-full border p-2 rounded" placeholder="API Secret" value={newApi.apiSecret} onChange={e => setNewApi({ ...newApi, apiSecret: e.target.value })} />
+                                            <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">
+                                                {newApi.type === 'HEPSIBURADA' ? 'Servis Şifresi (API Secret)' : (newApi.type === 'N11' ? 'AppSecret (API Şifresi)' : ((newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') ? 'Client Secret' : 'API Secret'))}
+                                            </label>
+                                            <input className="w-full border p-2 rounded" placeholder={(newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') ? 'Client Secret' : 'API Secret'} value={newApi.apiSecret} onChange={e => setNewApi({ ...newApi, apiSecret: e.target.value })} />
                                         </div>
+                                        {newApi.type === "AMAZON" && (
+                                            <div className="col-span-1 md:col-span-2">
+                                                <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Refresh Token (LWA)</label>
+                                                <input className="w-full border p-2 rounded" placeholder="Atz1|..." value={newApi.refreshToken || ""} onChange={e => setNewApi({ ...newApi, refreshToken: e.target.value })} />
+                                            </div>
+                                        )}
                                     </>
                                 )}
 
@@ -408,7 +442,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                     />
                                 </div>
 
-                                {newApi.type === 'TRENDYOL' && (
+                                {(newApi.type === 'TRENDYOL' || newApi.type === 'HEPSIBURADA') && (
                                     <div className="col-span-2">
                                         <label className="block text-xs font-bold text-gray-500 mb-2 uppercase">Senkronizasyon Ayarları</label>
                                         <div className="grid grid-cols-4 gap-4 bg-white p-3 border rounded">
@@ -475,15 +509,15 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <div>
                                             <div className="font-bold flex items-center gap-2">
                                                 {api.storeName}
-                                                <span className={`text-[9px] px-2 py-0.5 rounded-full text-white font-black ${api.type === 'MANUAL' ? 'bg-purple-600' : 'bg-blue-600'}`}>
-                                                    {api.type === 'MANUAL' ? 'PERAKENDE' : 'PAZARYERİ'}
+                                                <span className={`text-[9px] px-2 py-0.5 rounded-full text-white font-black ${api.type === 'MANUAL' ? 'bg-purple-600' : (api.type === 'HEPSIBURADA' ? 'bg-orange-600' : (api.type === 'N11' ? 'bg-red-600' : (api.type === 'AMAZON' ? 'bg-yellow-600' : (api.type === 'PAZARAMA' ? 'bg-purple-600' : 'bg-blue-600'))))}`}>
+                                                    {api.type === 'MANUAL' ? 'PERAKENDE' : api.type === 'HEPSIBURADA' ? 'HEPSİBURADA' : (api.type === 'N11' ? 'N11' : (api.type === 'AMAZON' ? 'AMAZON' : (api.type === 'PAZARAMA' ? 'PAZARAMA' : 'TRENDYOL')))}
                                                 </span>
-                                                {api.type === 'TRENDYOL' && (
+                                                {(api.type === 'TRENDYOL' || api.type === 'HEPSIBURADA' || api.type === 'N11' || api.type === 'AMAZON' || api.type === 'PAZARAMA') && (
                                                     <span className={`text-[9px] px-2 py-0.5 rounded-full text-white font-black ${api.mode === 'LIVE' ? 'bg-green-600' : 'bg-orange-500'}`}>
                                                         {api.mode === 'LIVE' ? 'CANLI' : 'TEST'}
                                                     </span>
                                                 )}
-                                                {api.type === 'TRENDYOL' && (
+                                                {(api.type === 'TRENDYOL' || api.type === 'HEPSIBURADA' || api.type === 'N11' || api.type === 'AMAZON' || api.type === 'PAZARAMA') && (
                                                     <div className="flex gap-1">
                                                         <span className={`text-[9px] px-2 py-0.5 rounded-full text-white font-black ${api.enableStockSync !== false ? 'bg-blue-500' : 'bg-gray-400'}`}>
                                                             {api.enableStockSync !== false ? 'STOK AKTİF' : 'STOK KAPALI'}
@@ -501,7 +535,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                                 )}
                                             </div>
                                             <div className="text-xs text-gray-500">
-                                                {api.type === 'TRENDYOL' ? `API: ${api.apiKey?.substring(0, 8)}...` : 'Manuel Satış Mağazası'}
+                                                {api.type === 'TRENDYOL' || api.type === 'HEPSIBURADA' || api.type === 'N11' || api.type === 'AMAZON' || api.type === 'PAZARAMA' ? `API: ${api.apiKey?.substring(0, 8)}...` : 'Manuel Satış Mağazası'}
                                             </div>
                                         </div>
                                     </div>
@@ -853,6 +887,42 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
 
                                 <div className="flex items-center justify-between border p-3 rounded bg-gray-50">
                                     <div>
+                                        <h4 className="font-bold text-sm">Akıllı Stok Uyarı Ayarları</h4>
+                                        <p className="text-xs text-gray-500">Ana sayfadaki kritik stok hesaplamasının sürelerini belirler.</p>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                        <div className="flex flex-col items-center">
+                                            <label className="text-[10px] text-gray-500 mb-1">Geçmiş Analiz</label>
+                                            <div className="flex items-center gap-1">
+                                                <input
+                                                    type="number"
+                                                    className="border p-1 rounded w-16 text-center text-sm"
+                                                    value={db.settings.stockAlertLookbackDays ?? 7}
+                                                    onChange={(e) => updateDB(prev => ({ ...prev, settings: { ...prev.settings, stockAlertLookbackDays: Math.max(1, Number(e.target.value)) } }))}
+                                                    min="1"
+                                                />
+                                                <span className="text-xs text-gray-600">gün</span>
+                                            </div>
+                                        </div>
+                                        <span className="text-gray-300">/</span>
+                                        <div className="flex flex-col items-center">
+                                            <label className="text-[10px] text-gray-500 mb-1">Gelecek Tahmin</label>
+                                            <div className="flex items-center gap-1">
+                                                <input
+                                                    type="number"
+                                                    className="border p-1 rounded w-16 text-center text-sm"
+                                                    value={db.settings.stockAlertProjectionDays ?? 21}
+                                                    onChange={(e) => updateDB(prev => ({ ...prev, settings: { ...prev.settings, stockAlertProjectionDays: Math.max(1, Number(e.target.value)) } }))}
+                                                    min="1"
+                                                />
+                                                <span className="text-xs text-gray-600">gün</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-between border p-3 rounded bg-gray-50">
+                                    <div>
                                         <h4 className="font-bold text-sm">Stok Sıfırın Altına Düşebilsin</h4>
                                         <p className="text-xs text-gray-500">Manuel siparişlerde stok miktarının negatif (-1, -2 vb.) olmasına izin verir.</p>
                                     </div>
@@ -943,8 +1013,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                                         onChange={(e) => handleUpdateSound(item.key, e.target.value)}
                                                     >
                                                         <option value="">Varsayılan Ses</option>
-                                                        <option value="none">Sessiz (Ses Çalma)</option>
-                                                        {AVAILABLE_SOUNDS.filter(s => s.file !== 'none').map(sound => (
+                                                        {availableSounds.map(sound => (
                                                             <option key={sound.file} value={sound.file}>
                                                                 {sound.name}
                                                             </option>

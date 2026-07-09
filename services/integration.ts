@@ -886,7 +886,8 @@ export const syncMarketplaceOrders = async (
       }
     } else {
       try {
-        const fetchDays = db.settings.enableOrderVisibilityLimit 
+        if (config.type === 'TRENDYOL') {
+          const fetchDays = db.settings.enableOrderVisibilityLimit 
           ? (db.settings.orderFetchDays || 2) 
           : 30;
         const nowMs = Date.now();
@@ -1003,6 +1004,27 @@ export const syncMarketplaceOrders = async (
               console.error(`[ORDER-SYNC] Tekil sipariş detay hatası (${localOrder.marketplaceOrderId}):`, e);
             }
           }
+        }
+        } else if (config.type === 'HEPSIBURADA') {
+          let pageOrders = await fetchOrdersFromHepsiburada(config, { status: 'Unpacked', size: 250 });
+          pageOrders.forEach(o => content.push(o));
+          pageOrders = await fetchOrdersFromHepsiburada(config, { status: 'Packed', size: 250 });
+          pageOrders.forEach(o => content.push(o));
+        } else if (config.type === 'N11') {
+          let pageOrders = await fetchOrdersFromN11(config, { status: 'New', size: 250 });
+          pageOrders.forEach(o => content.push(o));
+          pageOrders = await fetchOrdersFromN11(config, { status: 'Approved', size: 250 });
+          pageOrders.forEach(o => content.push(o));
+        } else if (config.type === 'AMAZON') {
+          let pageOrders = await fetchOrdersFromAmazon(config, { status: 'Unshipped', size: 50 });
+          pageOrders.forEach(o => content.push(o));
+          pageOrders = await fetchOrdersFromAmazon(config, { status: 'PartiallyShipped', size: 50 });
+          pageOrders.forEach(o => content.push(o));
+        } else if (config.type === 'PAZARAMA') {
+          let pageOrders = await fetchOrdersFromPazarama(config, { status: 'New', size: 50 });
+          pageOrders.forEach(o => content.push(o));
+          pageOrders = await fetchOrdersFromPazarama(config, { status: 'WaitingForShipment', size: 50 });
+          pageOrders.forEach(o => content.push(o));
         }
       } catch (error) {
         console.error(`[SYNC-ERROR] ${config.storeName} |`, error);
@@ -1927,3 +1949,561 @@ export const approveMarketplaceClaim = async (config: ApiConfig, claimId: string
     throw error;
   }
 };
+// --- HEPSIBURADA INTEGRATION ---
+
+const getHepsiburadaHeaders = (config: ApiConfig) => {
+  const auth = btoa(`${config.apiKey}:${config.apiSecret}`);
+  return {
+    'Authorization': `Basic ${auth}`,
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'User-Agent': `${config.supplierId} - SelfIntegration`
+  };
+};
+
+const handleHepsiburadaError = async (response: Response): Promise<string> => {
+  let errorText = '';
+  try {
+    const errorData = await response.json();
+    errorText = JSON.stringify(errorData);
+  } catch {
+    try {
+      errorText = await response.text();
+    } catch {
+      errorText = 'Bilinmeyen hata';
+    }
+  }
+  return `Hata (${response.status}): ${errorText}`;
+};
+
+export const fetchOrdersFromHepsiburada = async (
+  config: ApiConfig,
+  filters: {
+    status?: string | string[];
+    startDate?: number;
+    endDate?: number;
+    page?: number;
+    size?: number;
+    orderNumber?: string;
+  }
+): Promise<any[]> => {
+  await rateLimitDelay();
+  const offset = (filters.page || 0); // HB usually uses page offset
+  const limit = filters.size || 50; // max limit
+  
+  let url = `https://oms-external.hepsiburada.com/packages/merchantid/${config.supplierId}?offset=${offset}&limit=${limit}`;
+  
+  if (filters.status) {
+      if (Array.isArray(filters.status)) {
+         url += `&status=${filters.status[0]}`; 
+      } else {
+         url += `&status=${filters.status}`;
+      }
+  }
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: getHepsiburadaHeaders(config)
+  });
+
+  if (response.ok) {
+    const data = await response.json();
+    return Array.isArray(data) ? data : (data?.data || []);
+  }
+  const errorMsg = await handleHepsiburadaError(response);
+  console.error(`[FETCH-ORDERS-HEPSIBURADA] ${config.storeName} | Hata: ${errorMsg}`);
+  return [];
+};
+
+export const syncBarcodeStockBatchHepsiburada = async (
+  config: ApiConfig,
+  items: { barcode: string, quantity: number }[],
+  settings?: any
+): Promise<boolean> => {
+   if (items.length === 0 || !config) return true;
+   if (config.enableStockSync === false) return true;
+
+   const chunkSize = 500;
+   for (let i = 0; i < items.length; i += chunkSize) {
+      const chunk = items.slice(i, i + chunkSize);
+      const payload = chunk.map(item => {
+         let finalQuantity = Math.max(0, Math.floor(item.quantity));
+         if (settings && settings.stockSyncSettings?.enabled) {
+            const threshold = settings.stockSyncSettings.minStockThreshold || 10;
+            const virtualQty = settings.stockSyncSettings.maxStockToSend || 10000;
+            if (finalQuantity >= threshold) finalQuantity = virtualQty;
+         }
+         return {
+            merchantSku: item.barcode, 
+            availableStock: finalQuantity,
+            merchantId: config.supplierId
+         };
+      });
+
+      try {
+         if (config.mode === 'TEST') {
+            console.log(`[TEST-HB-SYNC] ${payload.length} items`);
+            continue;
+         }
+         await rateLimitDelay();
+         const url = `https://inventory.hepsiburada.com/api/inventory/inventory-items/`;
+         const response = await fetch(url, {
+            method: 'POST',
+            headers: getHepsiburadaHeaders(config),
+            body: JSON.stringify(payload)
+         });
+         if (!response.ok) {
+            console.error(await handleHepsiburadaError(response));
+         }
+      } catch (err) {
+         console.error(err);
+      }
+   }
+   return true;
+};
+
+// --- N11 INTEGRATION ---
+
+const getN11Headers = (config: ApiConfig) => {
+  return {
+    'appkey': config.apiKey || '',
+    'appsecret': config.apiSecret || '',
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  };
+};
+
+const handleN11Error = async (response: Response): Promise<string> => {
+  let errorText = '';
+  try {
+    const errorData = await response.json();
+    errorText = JSON.stringify(errorData);
+  } catch {
+    try {
+      errorText = await response.text();
+    } catch {
+      errorText = 'Bilinmeyen hata';
+    }
+  }
+  return `Hata (${response.status}): ${errorText}`;
+};
+
+export const fetchOrdersFromN11 = async (
+  config: ApiConfig,
+  filters: {
+    status?: string | string[];
+    startDate?: number;
+    endDate?: number;
+    page?: number;
+    size?: number;
+    orderNumber?: string;
+  }
+): Promise<any[]> => {
+  await rateLimitDelay();
+  const page = (filters.page || 0);
+  const limit = filters.size || 50;
+  
+  let url = `https://api.n11.com/rest/delivery/v1/shipmentPackages?page=${page}&size=${limit}`;
+  
+  if (filters.status) {
+      if (Array.isArray(filters.status)) {
+         url += `&status=${filters.status[0]}`; 
+      } else {
+         url += `&status=${filters.status}`;
+      }
+  }
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: getN11Headers(config)
+  });
+
+  if (response.ok) {
+    const data = await response.json();
+    return Array.isArray(data) ? data : (data?.data || []);
+  }
+  const errorMsg = await handleN11Error(response);
+  console.error(`[FETCH-ORDERS-N11] ${config.storeName} | Hata: ${errorMsg}`);
+  return [];
+};
+
+export const syncBarcodeStockBatchN11 = async (
+  config: ApiConfig,
+  items: { barcode: string, quantity: number }[],
+  settings?: any
+): Promise<boolean> => {
+   if (items.length === 0 || !config) return true;
+   if (config.enableStockSync === false) return true;
+
+   const chunkSize = 1000;
+   for (let i = 0; i < items.length; i += chunkSize) {
+      const chunk = items.slice(i, i + chunkSize);
+      const payload = chunk.map(item => {
+         let finalQuantity = Math.max(0, Math.floor(item.quantity));
+         if (settings && settings.stockSyncSettings?.enabled) {
+            const threshold = settings.stockSyncSettings.minStockThreshold || 10;
+            const virtualQty = settings.stockSyncSettings.maxStockToSend || 10000;
+            if (finalQuantity >= threshold) finalQuantity = virtualQty;
+         }
+         return {
+            stockCode: item.barcode, 
+            quantity: finalQuantity
+         };
+      });
+
+      try {
+         if (config.mode === 'TEST') {
+            console.log(`[TEST-N11-SYNC] ${payload.length} items`);
+            continue;
+         }
+         await rateLimitDelay();
+         const url = `https://api.n11.com/ms/product/tasks/price-stock-update`;
+         const response = await fetch(url, {
+            method: 'POST',
+            headers: getN11Headers(config),
+            body: JSON.stringify({ items: payload })
+         });
+         if (!response.ok) {
+            console.error(await handleN11Error(response));
+         }
+      } catch (err) {
+         console.error(err);
+      }
+   }
+   return true;
+};
+
+// --- AMAZON SP-API INTEGRATION ---
+
+const getAmazonAccessToken = async (config: ApiConfig): Promise<string> => {
+  if (!config.apiKey || !config.apiSecret || !config.refreshToken) {
+    throw new Error('Amazon eksik yetkilendirme bilgileri (Client ID, Secret, Refresh Token).');
+  }
+  
+  const url = 'https://api.amazon.com/auth/o2/token';
+  const body = new URLSearchParams();
+  body.append('grant_type', 'refresh_token');
+  body.append('refresh_token', config.refreshToken);
+  body.append('client_id', config.apiKey);
+  body.append('client_secret', config.apiSecret);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: body.toString()
+  });
+
+  if (!response.ok) {
+    throw new Error('Amazon Access Token alınamadı.');
+  }
+
+  const data = await response.json();
+  return data.access_token;
+};
+
+const handleAmazonError = async (response: Response): Promise<string> => {
+  let errorText = '';
+  try {
+    const errorData = await response.json();
+    errorText = JSON.stringify(errorData);
+  } catch {
+    try {
+      errorText = await response.text();
+    } catch {
+      errorText = 'Bilinmeyen hata';
+    }
+  }
+  return `Hata (${response.status}): ${errorText}`;
+};
+
+export const fetchOrdersFromAmazon = async (
+  config: ApiConfig,
+  filters: {
+    status?: string | string[];
+    startDate?: number;
+    endDate?: number;
+    page?: number;
+    size?: number;
+    orderNumber?: string;
+  }
+): Promise<any[]> => {
+  await rateLimitDelay();
+  
+  try {
+    const accessToken = await getAmazonAccessToken(config);
+    let url = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders?MarketplaceIds=A33AVAJ2PDY3EV`; // Default to Turkey (A33AVAJ2PDY3EV)
+    
+    // Add default status filtering for Amazon Unshipped and PartiallyShipped
+    if (filters.status) {
+      if (Array.isArray(filters.status)) {
+        url += `&OrderStatuses=${filters.status.join(',')}`;
+      } else {
+        url += `&OrderStatuses=${filters.status}`;
+      }
+    } else {
+      url += `&OrderStatuses=Unshipped,PartiallyShipped`;
+    }
+    
+    // CreatedAfter is required by Amazon SP-API if NextToken is not present
+    const createdAfter = new Date(Date.now() - (30 * 24 * 60 * 60 * 1000)).toISOString();
+    url += `&CreatedAfter=${createdAfter}`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'x-amz-access-token': accessToken,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return data?.payload?.Orders || [];
+    }
+    
+    const errorMsg = await handleAmazonError(response);
+    console.error(`[FETCH-ORDERS-AMAZON] ${config.storeName} | Hata: ${errorMsg}`);
+  } catch (err) {
+    console.error(`[FETCH-ORDERS-AMAZON] ${config.storeName} | Bağlantı Hatası:`, err);
+  }
+  return [];
+};
+
+export const syncBarcodeStockBatchAmazon = async (
+  config: ApiConfig,
+  items: { barcode: string, quantity: number }[],
+  settings?: any
+): Promise<boolean> => {
+   if (items.length === 0 || !config) return true;
+   if (config.enableStockSync === false) return true;
+
+   try {
+     let accessToken = '';
+     if (config.mode !== 'TEST') {
+       accessToken = await getAmazonAccessToken(config);
+     }
+
+     for (const item of items) {
+        let finalQuantity = Math.max(0, Math.floor(item.quantity));
+        if (settings && settings.stockSyncSettings?.enabled) {
+          const threshold = settings.stockSyncSettings.minStockThreshold || 10;
+          const virtualQty = settings.stockSyncSettings.maxStockToSend || 10000;
+          if (finalQuantity >= threshold) finalQuantity = virtualQty;
+        }
+
+        if (config.mode === 'TEST') {
+          console.log(`[TEST-AMAZON-SYNC] SKU: ${item.barcode}, Qty: ${finalQuantity}`);
+          continue;
+        }
+        
+        await rateLimitDelay();
+        
+        // Amazon Listings Items API v2021-08-01
+        const sellerId = config.supplierId || 'DEFAULT_SELLER';
+        const sku = encodeURIComponent(item.barcode);
+        const url = `https://sellingpartnerapi-eu.amazon.com/listings/2021-08-01/items/${sellerId}/${sku}`;
+        
+        // SP-API JSON payload for patching quantity
+        const payload = {
+          productType: 'PRODUCT',
+          patches: [
+            {
+              op: 'replace',
+              path: '/attributes/fulfillment_availability',
+              value: [{
+                fulfillment_channel_code: 'DEFAULT',
+                quantity: finalQuantity
+              }]
+            }
+          ]
+        };
+
+        const response = await fetch(url, {
+          method: 'PATCH',
+          headers: {
+            'x-amz-access-token': accessToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          console.error(`[AMAZON-STOCK-SYNC] SKU ${item.barcode} hatası:`, await handleAmazonError(response));
+        }
+     }
+   } catch (err) {
+     console.error(`[AMAZON-STOCK-SYNC-ERROR]`, err);
+   }
+   return true;
+};
+
+// --- PAZARAMA API INTEGRATION ---
+
+const getPazaramaAccessToken = async (config: ApiConfig): Promise<string> => {
+  if (!config.apiKey || !config.apiSecret) {
+    throw new Error('Pazarama eksik yetkilendirme bilgileri (Client ID, Client Secret).');
+  }
+  
+  const url = 'https://isortagimgiris.pazarama.com/connect/token';
+  const body = new URLSearchParams();
+  body.append('grant_type', 'client_credentials');
+  
+  const auth = btoa(`${config.apiKey}:${config.apiSecret}`);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Authorization': `Basic ${auth}`
+    },
+    body: body.toString()
+  });
+
+  if (!response.ok) {
+    throw new Error('Pazarama Access Token alınamadı.');
+  }
+
+  const data = await response.json();
+  return data.access_token;
+};
+
+const handlePazaramaError = async (response: Response): Promise<string> => {
+  let errorText = '';
+  try {
+    const errorData = await response.json();
+    errorText = JSON.stringify(errorData);
+  } catch {
+    try {
+      errorText = await response.text();
+    } catch {
+      errorText = 'Bilinmeyen hata';
+    }
+  }
+  return `Hata (${response.status}): ${errorText}`;
+};
+
+export const fetchOrdersFromPazarama = async (
+  config: ApiConfig,
+  filters: {
+    status?: string | string[];
+    startDate?: number;
+    endDate?: number;
+    page?: number;
+    size?: number;
+    orderNumber?: string;
+  }
+): Promise<any[]> => {
+  await rateLimitDelay();
+  
+  try {
+    const accessToken = await getPazaramaAccessToken(config);
+    const url = `https://isortagimapi.pazarama.com/api/Order/GetOrders`;
+    
+    // Pazarama expects POST body for filtering
+    const payload: any = {
+      PageNumber: filters.page ? filters.page + 1 : 1, // 1-based index usually
+      PageSize: filters.size || 50
+    };
+
+    if (filters.status) {
+      if (Array.isArray(filters.status)) {
+        payload.OrderStatusList = filters.status;
+      } else {
+        payload.OrderStatusList = [filters.status];
+      }
+    } else {
+      payload.OrderStatusList = ['New', 'WaitingForShipment']; // Varsayılan durumlar
+    }
+
+    if (filters.startDate && filters.endDate) {
+      payload.StartDate = new Date(filters.startDate).toISOString();
+      payload.EndDate = new Date(filters.endDate).toISOString();
+    } else {
+      payload.StartDate = new Date(Date.now() - (30 * 24 * 60 * 60 * 1000)).toISOString();
+      payload.EndDate = new Date().toISOString();
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return data?.Data?.Orders || data?.Data || [];
+    }
+    
+    const errorMsg = await handlePazaramaError(response);
+    console.error(`[FETCH-ORDERS-PAZARAMA] ${config.storeName} | Hata: ${errorMsg}`);
+  } catch (err) {
+    console.error(`[FETCH-ORDERS-PAZARAMA] ${config.storeName} | Bağlantı Hatası:`, err);
+  }
+  return [];
+};
+
+export const syncBarcodeStockBatchPazarama = async (
+  config: ApiConfig,
+  items: { barcode: string, quantity: number }[],
+  settings?: any
+): Promise<boolean> => {
+   if (items.length === 0 || !config) return true;
+   if (config.enableStockSync === false) return true;
+
+   try {
+     let accessToken = '';
+     if (config.mode !== 'TEST') {
+       accessToken = await getPazaramaAccessToken(config);
+     }
+
+     const chunkSize = 1000;
+     for (let i = 0; i < items.length; i += chunkSize) {
+        const chunk = items.slice(i, i + chunkSize);
+        
+        const payload = chunk.map(item => {
+           let finalQuantity = Math.max(0, Math.floor(item.quantity));
+           if (settings && settings.stockSyncSettings?.enabled) {
+              const threshold = settings.stockSyncSettings.minStockThreshold || 10;
+              const virtualQty = settings.stockSyncSettings.maxStockToSend || 10000;
+              if (finalQuantity >= threshold) finalQuantity = virtualQty;
+           }
+           return {
+              StockCode: item.barcode, 
+              StockQuantity: finalQuantity
+           };
+        });
+
+        if (config.mode === 'TEST') {
+          console.log(`[TEST-PAZARAMA-SYNC] ${payload.length} items`);
+          continue;
+        }
+        
+        await rateLimitDelay();
+        
+        const url = `https://isortagimapi.pazarama.com/api/Product/UpdateStock`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          console.error(`[PAZARAMA-STOCK-SYNC] Hata:`, await handlePazaramaError(response));
+        }
+     }
+   } catch (err) {
+     console.error(`[PAZARAMA-STOCK-SYNC-ERROR]`, err);
+   }
+   return true;
+};
+
