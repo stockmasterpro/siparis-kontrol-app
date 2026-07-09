@@ -1210,7 +1210,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
             {/* Modal ... (Remaining Code Same) */}
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999] backdrop-blur-[1px]">
-                    <div className="bg-[#f0f0f0] border border-gray-500 shadow-2xl w-[900px] h-[650px] flex flex-col font-sans text-sm relative">
+                    <div className="bg-[#f0f0f0] border border-gray-500 shadow-2xl w-[1100px] h-[80vh] flex flex-col font-sans text-sm relative">
                         {/* Modal Title Bar */}
                         <div className="h-8 bg-white border-b border-gray-300 flex justify-between items-center px-3 select-none">
                             <span className="font-semibold text-gray-800">{editingProduct ? 'Ürün Kartı Düzenle' : 'Yeni Ürün Kartı'}</span>
@@ -1430,6 +1430,23 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                             <div className="mb-2 p-2 bg-gray-200 border border-gray-300 flex justify-between items-center h-10 gap-2">
                                                 <div className="text-[10px] font-bold text-gray-600 uppercase">Stok ve Fiyat Yönetimi</div>
                                                 <div className="flex gap-2 items-center">
+                                                    <button
+                                                        onClick={() => {
+                                                            const name = window.prompt("Yeni depo adı giriniz:");
+                                                            if (name && name.trim()) {
+                                                                const newWh = { id: uuid(), name: name.trim() };
+                                                                updateDB(prev => {
+                                                                    let existingWarehouses = prev.warehouses || [];
+                                                                    if (existingWarehouses.length === 0) {
+                                                                        existingWarehouses = [{ id: 'wh1', name: 'Merkez Depo' }];
+                                                                    }
+                                                                    return { ...prev, warehouses: [...existingWarehouses, newWh] };
+                                                                });
+                                                                setNotification({ type: 'success', message: `${name} deposu eklendi.` });
+                                                            }
+                                                        }}
+                                                        className="desktop-btn bg-purple-100 text-purple-700 border-purple-300 flex items-center"
+                                                    ><Plus size={14} className="mr-1" />Depo Ekle</button>
                                                     <input
                                                         type="number"
                                                         placeholder="Miktar/Fiyat..."
@@ -1508,7 +1525,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                             {db.warehouses.length > 0 ? (
                                                                 db.warehouses.map(w => (
                                                                     <th key={w.id} style={{ width: '130px', textAlign: 'center' }}>
-                                                                        <div className="truncate" title={w.name}>{db.warehouses.length > 1 ? `ENV. (${w.name})` : 'ENVANTER'}</div>
+                                                                        <div className="truncate" title={w.name}>{db.warehouses.length > 1 ? `ENV. (${w.name})` : `ENV. (${w.name})`}</div>
                                                                     </th>
                                                                 ))
                                                             ) : (

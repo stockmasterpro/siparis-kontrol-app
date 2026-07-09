@@ -1157,11 +1157,11 @@ export const syncMarketplaceOrders = async (
               if (product) {
                 const variant = product.variants.find(v => v.barcode === item.barcode);
                 if (variant) {
-                  const whId = Object.keys(variant.stocks)[0] || 'wh1';
-                  const currentStock = variant.stocks[whId] || 0;
+                  const mainWhId = db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1';
+                  const currentStock = variant.stocks[mainWhId] || 0;
                   const newStock = currentStock + item.quantity;
 
-                  const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, whId, newStock);
+                  const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, mainWhId, newStock);
                   currentDbProducts = result.updatedProducts;
 
                   // Stok senkronizasyon listesine ekle - TÜM BARKODLAR
@@ -1214,11 +1214,11 @@ export const syncMarketplaceOrders = async (
                 if (product) {
                   const variant = product.variants.find(v => v.barcode === item.barcode);
                   if (variant) {
-                    const whId = Object.keys(variant.stocks)[0] || 'wh1';
-                    const currentStock = variant.stocks[whId] || 0;
+                    const mainWhId = db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1';
+                    const currentStock = variant.stocks[mainWhId] || 0;
                     const newStock = currentStock + item.quantity;
 
-                    const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, whId, newStock);
+                    const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, mainWhId, newStock);
                     currentDbProducts = result.updatedProducts;
 
                     // Stok senkronizasyon listesine ekle - ÖNEMLİ: Tüm varyant barkodlarını ekle
@@ -1256,11 +1256,11 @@ export const syncMarketplaceOrders = async (
                 if (product) {
                   const variant = product.variants.find(v => v.barcode === item.barcode);
                   if (variant) {
-                    const whId = Object.keys(variant.stocks)[0] || 'wh1';
-                    const currentStock = variant.stocks[whId] || 0;
+                    const mainWhId = db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1';
+                    const currentStock = variant.stocks[mainWhId] || 0;
                     const newStock = currentStock + item.quantity;
 
-                    const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, whId, newStock);
+                    const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, mainWhId, newStock);
                     currentDbProducts = result.updatedProducts;
 
                     // Stok senkronizasyon listesine ekle - ÖNEMLİ: Tüm varyant barkodlarını ekle
@@ -1351,17 +1351,36 @@ export const syncMarketplaceOrders = async (
           currentDbProducts.forEach(product => {
             const variant = product.variants.find(v => v.barcode === item.barcode);
             if (variant) {
-              const targetWhId = 'wh1'; // Merkez Depo
-              const currentStock = variant.stocks[targetWhId] || 0;
+              let remainingQty = item.quantity;
+              const warehouses = db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }];
+              const mainWhId = warehouses[0].id;
 
-              // Respect allowNegativeStock setting
-              let newStock = currentStock - item.quantity;
-              if (db.settings.allowNegativeStock === false && newStock < 0) {
-                newStock = 0;
+              for (const wh of warehouses) {
+                if (remainingQty <= 0) break;
+                // En güncel varyantı bul (döngü içinde güncellenmiş olabilir)
+                const currentVariant = currentDbProducts.find(p => p.id === product.id)?.variants.find(v => v.barcode === item.barcode);
+                if (!currentVariant) continue;
+
+                const currentWhStock = currentVariant.stocks[wh.id] || 0;
+                if (currentWhStock > 0) {
+                  const deduct = Math.min(currentWhStock, remainingQty);
+                  const newStock = currentWhStock - deduct;
+                  remainingQty -= deduct;
+                  const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, wh.id, newStock);
+                  currentDbProducts = result.updatedProducts;
+                }
               }
 
-              const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, targetWhId, newStock);
-              currentDbProducts = result.updatedProducts;
+              // Eğer hala düşülecek miktar varsa ve eksi stoğa izin veriliyorsa ana depodan düş
+              if (remainingQty > 0 && db.settings.allowNegativeStock !== false) {
+                 const currentVariant = currentDbProducts.find(p => p.id === product.id)?.variants.find(v => v.barcode === item.barcode);
+                 if (currentVariant) {
+                   const currentMainStock = currentVariant.stocks[mainWhId] || 0;
+                   const newStock = currentMainStock - remainingQty;
+                   const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, mainWhId, newStock);
+                   currentDbProducts = result.updatedProducts;
+                 }
+              }
 
               // Sync listesine ekle - ÖNEMLİ: Sadece siparişteki barkod değil, 
               // o varyantla (Renk/Beden) eşleşen TÜM barkodları senkronizasyon listesine ekle.
