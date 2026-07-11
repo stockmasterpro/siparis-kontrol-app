@@ -29,6 +29,7 @@ export interface User {
 export interface Warehouse {
   id: string;
   name: string;
+  isCenter?: boolean;
 }
 
 export interface Variant {

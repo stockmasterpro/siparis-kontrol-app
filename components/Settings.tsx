@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { Database, UserRole, ApiConfig } from '../types';
 import { exportBackup, importBackup, resetToFactoryDefaults } from '../services/db';
 import { syncBarcodeStock } from '../services/integration';
+import { compressImage } from '../utils/imageUtils';
 import { Save, UserPlus, Trash, RotateCcw, UploadCloud, Loader2, Edit, X, ShoppingCart, Key, Check, MessageSquare, Plus, Clock, Infinity, Package, BarChart3, LayoutDashboard, Volume2, RefreshCw } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -448,14 +449,16 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                             type="file"
                                             accept="image/*"
                                             className="w-full text-xs"
-                                            onChange={(e) => {
+                                            onChange={async (e) => {
                                                 const file = e.target.files?.[0];
                                                 if (file) {
-                                                    const reader = new FileReader();
-                                                    reader.onloadend = () => {
-                                                        setNewApi({ ...newApi, storeLogo: reader.result as string });
-                                                    };
-                                                    reader.readAsDataURL(file);
+                                                    try {
+                                                        const compressedBase64 = await compressImage(file, 200, 0.7); // 200px max width for logo
+                                                        setNewApi({ ...newApi, storeLogo: compressedBase64 });
+                                                    } catch (err) {
+                                                        console.error("Görsel sıkıştırılamadı:", err);
+                                                        setNotification({ type: 'error', message: 'Görsel yüklenirken bir hata oluştu.' });
+                                                    }
                                                 }
                                             }}
                                         />

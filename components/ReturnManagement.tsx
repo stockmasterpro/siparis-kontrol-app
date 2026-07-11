@@ -74,10 +74,53 @@ export const ReturnManagement: React.FC<Props> = ({ db, updateDB, userRole, setN
                 const storeClaims = await syncMarketplaceClaims(config);
                 allClaims = [...allClaims, ...storeClaims];
             }
+            
+            const existingClaimKeys = new Set(claims.map(c => `${c.storeName}|${c.claimId}|${c.claimLineItemId}`));
+            const actualNewClaims = allClaims.filter(c => !existingClaimKeys.has(`${c.storeName}|${c.claimId}|${c.claimLineItemId}`));
+            const newClaimsInWaitingState = actualNewClaims.filter(c => {
+                const s = String(c.status).toUpperCase();
+                return s === 'WAITING_FOR_APPROVE' ||
+                    s === 'WAITINGFORAPPROVE' ||
+                    s === 'WAITING_FOR_RETURN_PACKAGE' ||
+                    s === 'WAITINGFORRETURNPACKAGE' ||
+                    s === 'CREATED';
+            });
+
             updateDB(prev => ({
                 ...prev,
                 returnClaims: allClaims
             }));
+            
+            if (newClaimsInWaitingState.length > 0) {
+                const notifSettings = db.settings.notifications;
+                if (notifSettings?.returnNotification) {
+                    const shouldToast = notifSettings.windowsEnabled !== false;
+                    const shouldSound = notifSettings.soundEnabled !== false;
+
+                    const options = {
+                        title: 'Yeni İade Talebi',
+                        body: `${newClaimsInWaitingState.length} adet YENİ iade talebi var.`,
+                        playSound: shouldSound,
+                        customSoundPath: notifSettings.returnSoundPath,
+                        type: 'return'
+                    };
+
+                    try {
+                        if (window.require) {
+                            const { ipcRenderer } = window.require('electron');
+                            ipcRenderer.invoke('show-notification', options);
+                        } else {
+                            const electron = (window as any).electron;
+                            if (electron?.showNotification) {
+                                electron.showNotification(options);
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Notification invoke failed:', e);
+                    }
+                }
+            }
+            
             setNotification({ type: 'success', message: `${allClaims.length} iade talebi güncellendi.` });
         } catch (error: any) {
             setNotification({ type: 'error', message: 'İadeler çekilirken hata oluştu.' });

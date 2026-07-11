@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { isInternationalOrder, getEffectiveOrderCountryCode, resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi, orderImportDismissKey } from '../utils/orderUtils';
 import { Database, Order, OrderStatus, OrderItem, ReturnRecord, Product, UserRole, Variant } from '../types';
-import {  RefreshCcw, Printer, Play, Filter, PauseCircle, AlertTriangle, Loader2, RotateCcw, ChevronDown, CheckSquare, Square, FileSpreadsheet, LayoutTemplate, Save, Eye, ArrowLeftRight, Bell, FileText, SearchCheck, HardDrive, ArrowUp, ArrowDown, Trash, Trash2, ZoomIn, ZoomOut, Plus, Globe, X , AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
+import {  RefreshCcw, Printer, Play, Filter, PauseCircle, AlertTriangle, Loader2, RotateCcw, ChevronDown, CheckSquare, Square, FileSpreadsheet, LayoutTemplate, Save, Eye, ArrowLeftRight, Bell, FileText, SearchCheck, HardDrive, ArrowUp, ArrowDown, Trash, Trash2, ZoomIn, ZoomOut, Plus, Globe, X , AlignLeft, AlignCenter, AlignRight, UploadCloud, DownloadCloud } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from 'xlsx';
 import { syncBarcodeStock, updateLocalStockWithConsistency, syncOrderStatusToMarketplaces, fetchOrdersFromTrendyol, syncMarketplaceOrders, syncBarcodeStockBatchMultiple } from '../services/integration';
 // @ts-ignore
 import JsBarcode from 'jsbarcode';
+import { compressImage } from '../utils/imageUtils';
 
 const uuid = () => Math.random().toString(36).substr(2, 9);
 
@@ -388,12 +389,14 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     }, []);
     useEffect(() => {
         const savedTemplatesStr = localStorage.getItem('printTemplates');
+        const lastUsedId = localStorage.getItem('lastUsedTemplateId');
         if (savedTemplatesStr) {
             try {
                 const templates = JSON.parse(savedTemplatesStr);
                 setSavedTemplates(templates);
                 if (templates.length > 0) {
-                    setPrintConfig(templates[0].config);
+                    const defaultTpl = templates.find((t: any) => t.id === lastUsedId) || templates[0];
+                    setPrintConfig(defaultTpl.config);
                 }
             } catch (error) {
                 console.error('Failed to load print templates:', error);
@@ -648,10 +651,12 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         invokeShowNotification({
                             title: 'Yeni Sipariş!',
                             body: `${result.newOrdersAddedCount} yeni sipariş sisteme düştü.`,
-                            playSound: shouldSound
+                            playSound: shouldSound,
+                            customSoundPath: notifSettings.orderSoundPath,
+                            type: 'order'
                         });
                     } else if (shouldSound) {
-                        invokeShowNotification({ title: '', body: '', playSound: true });
+                        invokeShowNotification({ title: '', body: '', playSound: true, customSoundPath: notifSettings.orderSoundPath, type: 'order' });
                     }
                 }
 
@@ -2376,6 +2381,45 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             localStorage.setItem('printTemplates', JSON.stringify(updated));
             setNotification({ type: 'success', message: 'Şablon silindi.' });
         });
+    };
+
+    const handleExportTemplates = () => {
+        if (savedTemplates.length === 0) {
+            setNotification({ type: 'error', message: 'Dışa aktarılacak şablon bulunamadı.' });
+            return;
+        }
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(savedTemplates));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "print_templates.json");
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+        setNotification({ type: 'success', message: 'Şablonlar dışa aktarıldı.' });
+    };
+
+    const handleImportTemplates = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            try {
+                const importedTemplates = JSON.parse(event.target?.result as string);
+                if (Array.isArray(importedTemplates)) {
+                    const mappedTemplates = importedTemplates.map(t => ({ ...t, id: uuidv4() }));
+                    const updatedTemplates = [...savedTemplates, ...mappedTemplates];
+                    setSavedTemplates(updatedTemplates);
+                    localStorage.setItem('printTemplates', JSON.stringify(updatedTemplates));
+                    setNotification({ type: 'success', message: 'Şablonlar başarıyla içe aktarıldı.' });
+                } else {
+                    throw new Error("Invalid format");
+                }
+            } catch (err) {
+                setNotification({ type: 'error', message: 'Geçersiz şablon dosyası!' });
+            }
+        };
+        reader.readAsText(file);
+        e.target.value = ''; // Reset input
     };
 
     const handleResetPrintTemplate = () => {
@@ -4207,14 +4251,16 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                     <input
                                                                         type="file"
                                                                         accept="image/*"
-                                                                        onChange={(e) => {
+                                                                        onChange={async (e) => {
                                                                             const file = e.target.files?.[0];
                                                                             if (file) {
-                                                                                const reader = new FileReader();
-                                                                                reader.onload = (event) => {
-                                                                                    handleElementChange(el.id, 'content', event.target?.result);
-                                                                                };
-                                                                                reader.readAsDataURL(file);
+                                                                                try {
+                                                                                    const compressedBase64 = await compressImage(file, 400, 0.7);
+                                                                                    handleElementChange(el.id, 'content', compressedBase64);
+                                                                                } catch (err) {
+                                                                                    console.error("Görsel sıkıştırılamadı:", err);
+                                                                                    alert("Görsel yüklenirken hata oluştu.");
+                                                                                }
                                                                             }
                                                                         }}
                                                                         className="text-[10px] w-full mt-0.5"
@@ -4308,7 +4354,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                             <div className="text-xs text-gray-500 text-center italic mt-4">Henüz kaydedilmiş şablon yok.</div>
                                         ) : (
                                             savedTemplates.map(tpl => (
-                                                <div key={tpl.id} className="flex items-center justify-between bg-white border border-gray-300 rounded p-2 hover:border-blue-500 transition-colors group cursor-pointer" onClick={() => setPrintConfig(tpl.config)}>
+                                                <div key={tpl.id} className="flex items-center justify-between bg-white border border-gray-300 rounded p-2 hover:border-blue-500 transition-colors group cursor-pointer" onClick={() => { setPrintConfig(tpl.config); localStorage.setItem('lastUsedTemplateId', tpl.id); }}>
                                                     <span className="text-sm font-medium text-gray-700 truncate flex-1">{tpl.name}</span>
                                                     <button onClick={(e) => { e.stopPropagation(); handleDeletePrintTemplate(tpl.id); }} className="text-red-500 hover:text-white hover:bg-red-500 p-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
                                                         <Trash size={14} />
@@ -4321,6 +4367,16 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                         <label className="text-xs font-bold text-gray-700">Yeni Şablon Kaydet</label>
                                         <input type="text" className="border p-2 text-xs rounded" placeholder="Şablon Adı (Örn: A5)" value={newTemplateName} onChange={(e) => setNewTemplateName(e.target.value)} />
                                         <button onClick={handleSavePrintTemplate} className="desktop-btn desktop-btn-primary w-full py-2 text-xs flex justify-center items-center gap-1"><Save size={14}/> Kaydet</button>
+                                        
+                                        <div className="flex gap-2 mt-2 pt-2 border-t border-gray-200">
+                                            <button onClick={handleExportTemplates} className="flex-1 py-1.5 text-[10px] font-bold text-gray-600 bg-white border border-gray-300 rounded hover:bg-gray-100 flex justify-center items-center gap-1 uppercase">
+                                                <UploadCloud size={12}/> Dışa Aktar
+                                            </button>
+                                            <label className="flex-1 py-1.5 text-[10px] font-bold text-blue-600 bg-white border border-blue-300 rounded hover:bg-blue-50 flex justify-center items-center gap-1 uppercase cursor-pointer">
+                                                <DownloadCloud size={12}/> İçe Aktar
+                                                <input type="file" accept=".json" className="hidden" onChange={handleImportTemplates} />
+                                            </label>
+                                        </div>
                                     </div>
                                 </div>
                                 ) : (
