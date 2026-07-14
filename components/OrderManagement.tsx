@@ -42,6 +42,7 @@ interface PrintElement {
     isImage?: boolean; // For image elements
     rotation?: number;
     textAlign?: 'left' | 'center' | 'right';
+    localizedNotes?: { id: string; countries: string[]; content: string }[];
 }
 
 interface PrintConfig {
@@ -225,7 +226,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     const [detailOrder, setDetailOrder] = useState<Order | null>(null);
 
     const [autoRefreshTrigger, setAutoRefreshTrigger] = useState(0);
-    const invokeShowNotification = (options: { title?: string; body?: string; playSound?: boolean }) => {
+    const invokeShowNotification = (options: { title?: string; body?: string; playSound?: boolean; customSoundPath?: string; type?: string }) => {
         try {
             if (window.require) {
                 const { ipcRenderer } = window.require('electron');
@@ -2317,7 +2318,10 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     } else if (el.key === 'sku') {
                         content = orderToPrint.items.map(i => i.sku).filter(Boolean).join(', ');
                     } else if (el.key.startsWith('customNote')) {
-                        content = el.content || '';
+                        const cCode = getEffectiveOrderCountryCode(orderToPrint as Order);
+                        const cCodeUpper = cCode.toUpperCase();
+                        const localized = el.localizedNotes?.find(n => n.countries.some(c => c.toUpperCase() === cCodeUpper));
+                        content = localized ? localized.content : (el.content || '');
                     } else if (el.key === 'totalPrice') {
                         const total = orderToPrint.items.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0);
                         content = `${total.toFixed(2)} ₺`;
@@ -2504,7 +2508,10 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             } else if (el.key === 'sku') {
                 content = orderToPrint.items.map(i => i.sku).filter(Boolean).join(', ');
             } else if (el.key.startsWith('customNote')) {
-                content = el.content || '';
+                const cCode = getEffectiveOrderCountryCode(orderToPrint as Order);
+                const cCodeUpper = cCode.toUpperCase();
+                const localized = el.localizedNotes?.find(n => n.countries.some(c => c.toUpperCase() === cCodeUpper));
+                content = localized ? localized.content : (el.content || '');
             } else if (el.key === 'totalPrice') {
                 const total = orderToPrint.items.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0);
                 content = `${total.toFixed(2)} ₺`;
@@ -2667,7 +2674,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             <style>
                 @page { margin: 0; size: ${pageWidth}mm ${pageHeight}mm; }
                 * { box-sizing: border-box; }
-                body { margin: 0; padding: 0; font-family: Arial, sans-serif; }
+                body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
                 .print-page { width: ${pageWidth}mm; height: ${pageHeight}mm; position: relative; page-break-after: always; overflow: hidden; }
                 .border { border: 1px solid black; }
                 .p-1 { padding: 4px; }
@@ -4190,13 +4197,79 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
                                                         {el.key.startsWith('customNote') && (
                                                             <div className="mt-1">
-                                                                <label className="text-[10px] text-gray-500 block font-bold mb-1 uppercase">Not Metni</label>
+                                                                <label className="text-[10px] text-gray-500 block font-bold mb-1 uppercase">Varsayılan Not Metni</label>
                                                                 <textarea
                                                                     className="border w-full p-1 text-[10px] h-12 resize-none"
-                                                                    placeholder="Not metnini giriniz..."
+                                                                    placeholder="Varsayılan metni giriniz..."
                                                                     value={el.content || ''}
                                                                     onChange={e => handleElementChange(el.id, 'content', e.target.value)}
                                                                 />
+
+                                                                <div className="mt-2 border-t pt-2 border-gray-200">
+                                                                    <label className="text-[10px] text-blue-700 font-bold mb-1 uppercase block flex justify-between items-center">
+                                                                        Ülkelere Özel Çeviriler
+                                                                        <button 
+                                                                            onClick={() => {
+                                                                                const newNotes = [...(el.localizedNotes || []), { id: uuid(), countries: [], content: '' }];
+                                                                                handleElementChange(el.id, 'localizedNotes', newNotes);
+                                                                            }}
+                                                                            className="text-blue-500 hover:text-blue-700 font-normal bg-transparent border-none p-0 flex items-center gap-1"
+                                                                        >
+                                                                            <Plus size={10} /> Ekle
+                                                                        </button>
+                                                                    </label>
+                                                                    
+                                                                    {el.localizedNotes?.map((locNote, index) => (
+                                                                        <div key={locNote.id} className="bg-gray-50 p-2 rounded border border-gray-200 mt-2">
+                                                                            <div className="flex justify-between items-start mb-1">
+                                                                                <div className="text-[9px] font-bold text-gray-600 uppercase">Çeviri {index + 1}</div>
+                                                                                <button 
+                                                                                    onClick={() => {
+                                                                                        const newNotes = el.localizedNotes?.filter(n => n.id !== locNote.id);
+                                                                                        handleElementChange(el.id, 'localizedNotes', newNotes);
+                                                                                    }}
+                                                                                    className="text-red-500 hover:text-red-700"
+                                                                                >
+                                                                                    <Trash2 size={10} />
+                                                                                </button>
+                                                                            </div>
+                                                                            
+                                                                            <textarea
+                                                                                className="border w-full p-1 text-[10px] h-12 resize-none mb-1 font-sans"
+                                                                                placeholder="Çeviri metnini giriniz..."
+                                                                                value={locNote.content}
+                                                                                onChange={e => {
+                                                                                    const newNotes = [...(el.localizedNotes || [])];
+                                                                                    newNotes[index].content = e.target.value;
+                                                                                    handleElementChange(el.id, 'localizedNotes', newNotes);
+                                                                                }}
+                                                                            />
+                                                                            
+                                                                            <div className="text-[9px] text-gray-500 mb-1">Geçerli Olacağı Ülkeler:</div>
+                                                                            <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1 bg-white border border-gray-200 rounded">
+                                                                                {PRIORITY_COUNTRIES.map(country => (
+                                                                                    <label key={country.code} className="flex items-center gap-1 bg-gray-100 px-1 py-0.5 rounded cursor-pointer hover:bg-gray-200 text-[9px] whitespace-nowrap">
+                                                                                        <input
+                                                                                            type="checkbox"
+                                                                                            className="w-2.5 h-2.5 cursor-pointer"
+                                                                                            checked={locNote.countries.includes(country.code)}
+                                                                                            onChange={e => {
+                                                                                                const newNotes = [...(el.localizedNotes || [])];
+                                                                                                if (e.target.checked) {
+                                                                                                    newNotes[index].countries.push(country.code);
+                                                                                                } else {
+                                                                                                    newNotes[index].countries = newNotes[index].countries.filter(c => c !== country.code);
+                                                                                                }
+                                                                                                handleElementChange(el.id, 'localizedNotes', newNotes);
+                                                                                            }}
+                                                                                        />
+                                                                                        {country.name}
+                                                                                    </label>
+                                                                                ))}
+                                                                            </div>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
                                                             </div>
                                                         )}
 
