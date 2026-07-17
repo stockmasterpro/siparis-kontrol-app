@@ -738,6 +738,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     return { stats: Object.values(stats), total };
   }, [db.products, db.warehouses]);
 
+  // --- Satılan Ürünlerin Maliyeti (Filtreli) ---
+  const { grossSoldCost, returnedSoldCost, netSoldCost } = useMemo(() => {
+    let gross = 0;
+    let returned = 0;
+
+    const costMap = new Map<string, number>();
+    db.products.forEach(p => {
+      p.variants.forEach(v => {
+        if (v.barcode) {
+          costMap.set(v.barcode, v.costPrice || p.costPrice || 0);
+        }
+      });
+    });
+
+    filteredOrders.forEach(order => {
+      order.items.forEach(item => {
+        const costPrice = item.costPrice !== undefined ? item.costPrice : (costMap.get(item.barcode) || 0);
+        gross += costPrice * item.quantity;
+      });
+
+      const linkedReturns = db.returns.filter(r => r.orderId === order.id);
+      linkedReturns.forEach(r => {
+        const costPrice = r.item.costPrice !== undefined ? r.item.costPrice : (costMap.get(r.item.barcode) || 0);
+        returned += costPrice * r.returnQuantity;
+      });
+    });
+
+    return {
+      grossSoldCost: gross,
+      returnedSoldCost: returned,
+      netSoldCost: gross - returned
+    };
+  }, [filteredOrders, db.returns, db.products]);
+
   // --- Rapor Oluşturma ---
   const generateExcelReport = () => {
     if (!reportStartDate || !reportEndDate) {
@@ -818,23 +852,45 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
             'Beden': item.size || '-',
             'Toplam Sipariş Adet': 0,
             'Toplam Sipariş Ciro': 0,
+            'Toplam Sipariş Maliyeti': 0,
             'Toplam İade Adet': 0,
             'Toplam İade Ciro': 0,
+            'Toplam İade Maliyeti': 0,
             'Net Sipariş Adet': 0,
-            'Net Sipariş Ciro': 0
+            'Net Sipariş Ciro': 0,
+            'Net Sipariş Maliyeti': 0
           };
         }
+
+        // Calculate cost price for the item
+        let costPrice = item.costPrice;
+        if (costPrice === undefined) {
+          for (const product of db.products) {
+            const variant = product.variants.find(v => v.barcode === item.barcode);
+            if (variant) {
+              costPrice = variant.costPrice || product.costPrice || 0;
+              break;
+            }
+          }
+        }
+        const unitCost = costPrice || 0;
 
         const itemReturns = db.returns.filter(r => r.orderId === order.id && r.item.barcode === item.barcode);
         const itemReturnedQty = itemReturns.reduce((sum, r) => sum + r.returnQuantity, 0);
         const itemReturnedCiro = itemReturns.reduce((sum, r) => sum + (r.item.unitPrice * r.returnQuantity), 0);
+        const itemReturnedCost = itemReturnedQty * unitCost;
 
         groupedData[key]['Toplam Sipariş Adet'] += item.quantity;
         groupedData[key]['Toplam Sipariş Ciro'] += item.totalPrice;
+        groupedData[key]['Toplam Sipariş Maliyeti'] += item.quantity * unitCost;
+        
         groupedData[key]['Toplam İade Adet'] += itemReturnedQty;
         groupedData[key]['Toplam İade Ciro'] += itemReturnedCiro;
+        groupedData[key]['Toplam İade Maliyeti'] += itemReturnedCost;
+        
         groupedData[key]['Net Sipariş Adet'] = groupedData[key]['Toplam Sipariş Adet'] - groupedData[key]['Toplam İade Adet'];
         groupedData[key]['Net Sipariş Ciro'] = groupedData[key]['Toplam Sipariş Ciro'] - groupedData[key]['Toplam İade Ciro'];
+        groupedData[key]['Net Sipariş Maliyeti'] = groupedData[key]['Toplam Sipariş Maliyeti'] - groupedData[key]['Toplam İade Maliyeti'];
       });
     });
 
@@ -1187,7 +1243,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       {/* Depo Stok Özeti */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6 mt-6">
-        <h3 className="text-gray-700 font-bold mb-4">Depo Stok Özetleri</h3>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+          <h3 className="text-gray-700 font-bold">Depo Stok Özetleri</h3>
+          <div className="flex flex-wrap gap-4">
+            <div className="text-sm font-semibold text-blue-800 bg-blue-50 px-4 py-2 rounded-lg border border-blue-100 shadow-sm flex flex-col">
+              <span className="text-xs text-blue-600 mb-1">Seçili Tarihteki Satış Maliyeti (Brüt)</span>
+              <span className="text-gray-900 text-base">{isPrivacyMode ? '***' : grossSoldCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+            </div>
+            <div className="text-sm font-semibold text-green-800 bg-green-50 px-4 py-2 rounded-lg border border-green-100 shadow-sm flex flex-col">
+              <span className="text-xs text-green-600 mb-1">Seçili Tarihteki Satış Maliyeti (Net)</span>
+              <span className="text-gray-900 text-base">{isPrivacyMode ? '***' : netSoldCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+            </div>
+          </div>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {warehouseStats.stats.map(stat => (
             <div key={stat.id} className="p-4 rounded-lg bg-gray-50 border flex flex-col justify-between">
