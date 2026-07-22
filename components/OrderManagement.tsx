@@ -4,7 +4,8 @@ import { Database, Order, OrderStatus, OrderItem, ReturnRecord, Product, UserRol
 import {  RefreshCcw, Printer, Play, Filter, PauseCircle, AlertTriangle, Loader2, RotateCcw, ChevronDown, CheckSquare, Square, FileSpreadsheet, LayoutTemplate, Save, Eye, ArrowLeftRight, Bell, FileText, SearchCheck, HardDrive, ArrowUp, ArrowDown, Trash, Trash2, ZoomIn, ZoomOut, Plus, Globe, X , AlignLeft, AlignCenter, AlignRight, UploadCloud, DownloadCloud } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from 'xlsx';
-import { syncBarcodeStock, updateLocalStockWithConsistency, syncOrderStatusToMarketplaces, fetchOrdersFromTrendyol, syncMarketplaceOrders, syncBarcodeStockBatchMultiple } from '../services/integration';
+import { syncBarcodeStock, syncBarcodeStockBatch, updateLocalStockWithConsistency, syncOrderStatusToMarketplaces, fetchOrdersFromTrendyol, syncMarketplaceOrders, syncBarcodeStockBatchMultiple } from '../services/integration';
+import { getSyncableStock, getTotalStock, getSyncableStockForApi } from '../utils/stockUtils';
 // @ts-ignore
 import JsBarcode from 'jsbarcode';
 import { compressImage } from '../utils/imageUtils';
@@ -574,8 +575,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     if (up) {
                         up.variants.forEach(pv => {
                             if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                                const total = Object.values(pv.stocks).reduce<number>((a, b) => a + (Number(b) || 0), 0);
-                                barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : total;
+                                barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                             }
                         });
                     }
@@ -589,15 +589,37 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             products: updatedProducts
         }));
 
-        if (Object.keys(barcodesToSync).length > 0) {
-            const itemsToSync = Object.entries(barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
-            await syncBarcodeStockBatchMultiple(
-                db.apiConfigs,
-                itemsToSync,
-                db.settings,
-                (count) => setNotification({ type: 'success', message: `${count} barkod için sipariş stok güncellemesi başladı...` }),
-                () => setNotification({ type: 'success', message: 'Sipariş stok güncellemesi bitti.' })
-            );
+        const barcodesToUpdate = Object.keys(barcodesToSync);
+        if (barcodesToUpdate.length > 0) {
+            setNotification({ type: 'success', message: `Sipariş stok güncellemesi başladı...` });
+            let totalSynced = 0;
+            for (const config of db.apiConfigs) {
+                if (!config.enableStockSync) continue;
+                
+                const itemsToSync: { barcode: string, quantity: number }[] = [];
+                for (const barcode of barcodesToUpdate) {
+                    const product = updatedProducts.find(p => p.variants.some(v => v.barcode === barcode));
+                    const variant = product?.variants.find(v => v.barcode === barcode);
+                    if (variant) {
+                        itemsToSync.push({ 
+                            barcode, 
+                            quantity: getSyncableStockForApi(variant, config, db.warehouses || []) 
+                        });
+                    }
+                }
+                
+                if (itemsToSync.length > 0) {
+                    try {
+                        await syncBarcodeStockBatch(config, itemsToSync, db.settings);
+                        totalSynced += itemsToSync.length;
+                    } catch (e) {
+                        console.error(`[OrderManagement] ${config.storeName} stok senkronize edilemedi:`, e);
+                    }
+                }
+            }
+            if (totalSynced > 0) {
+                setNotification({ type: 'success', message: 'Sipariş stok güncellemesi bitti.' });
+            }
         }
 
         setIsManualOrderModalOpen(false);
@@ -1233,12 +1255,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const variant = product.variants.find(v => v.barcode === barcode);
         if (!variant || !variant.stocks) return 0;
 
-        let total = 0;
-        const stockValues = Object.values(variant.stocks);
-        for (const qty of stockValues) {
-            total += Number(qty) || 0;
-        }
-        return total;
+        return getTotalStock(variant);
     };
 
     const isOrderOutOfStock = (order: Order): boolean => {
@@ -1525,7 +1542,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                             if (up) {
                                 up.variants.forEach(pv => {
                                     if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                                        barcodesToSync[pv.barcode] = Object.values(pv.stocks).reduce<number>((a, b) => a + (Number(b) || 0), 0);
+                                        barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                                     }
                                 });
                             }
@@ -1649,7 +1666,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                     if (up) {
                                         up.variants.forEach(pv => {
                                             if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                                                barcodesToSync[pv.barcode] = Object.values(pv.stocks).reduce<number>((a, b) => a + (Number(b) || 0), 0);
+                                                barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                                             }
                                         });
                                     }
@@ -1844,8 +1861,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     // ÖNEMLİ: Ürün kartındaki TÜM barkodları senkronizasyon listesine ekle
                     product.variants.forEach(pv => {
                         if (pv.barcode) {
-                            const total = Object.values(pv.stocks).reduce<number>((a, b) => a + (Number(b) || 0), 0);
-                            barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                            barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                         }
                     });
 
@@ -1960,8 +1976,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         if (up) {
                             up.variants.forEach(pv => {
                                 if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                                    const total = Object.values(pv.stocks).reduce<number>((a, b) => a + (Number(b) || 0), 0);
-                                    barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                                    barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                                 }
                             });
                         }
@@ -2089,8 +2104,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         if (updatedProduct) {
                             updatedProduct.variants.forEach(pv => {
                                 if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                                    const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + Number(b), 0);
-                                    barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                                    barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                                 }
                             });
                         }

@@ -5,6 +5,7 @@ import { Plus, Trash2, Edit, Save, Copy, Download, Upload, Search, Archive, File
 import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from 'xlsx';
 import { syncBarcodeStock } from '../services/integration';
+import { getSyncableStock, getTotalStock, getSyncableStockForApi } from '../utils/stockUtils';
 
 const uuid = () => Math.random().toString(36).substr(2, 9);
 
@@ -35,7 +36,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         for (const p of db.products) {
             for (const v of p.variants) {
                 if (v.barcode === searchTerm) {
-                    const totalVariantStock = Object.values(v.stocks).reduce((a: number, b: number) => a + b, 0);
+                    const totalVariantStock = getTotalStock(v);
                     return { product: p, variant: v, totalStock: totalVariantStock };
                 }
             }
@@ -141,7 +142,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
             const key = `${v.color}-${v.size}`;
             if (!uniqueVariants.has(key)) {
                 uniqueVariants.add(key);
-                total += Object.values(v.stocks).reduce((a: number, b: number) => a + b, 0);
+                total += getTotalStock(v);
             }
         });
         return total;
@@ -306,33 +307,41 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
 
         // Sync Check: Arka planda barkod bazlı toplu stok gönderimi
         if (db.settings.enableAutoStockSync) {
-            // SADECE stoğu değişen varyantları belirle (Selective Sync)
-            const itemsToSync = formData.variants
-                .filter(v => v.barcode)
-                .filter(v => {
-                    if (!editingProduct) return true; // Yeni ürünse hepsini gönder
-                    const oldVariant = editingProduct.variants.find(ov => ov.barcode === v.barcode);
-                    if (!oldVariant) return true; // Yeni varyant
-                    const oldStock = Object.values(oldVariant.stocks).reduce((a: number, b: number) => a + b, 0);
-                    const newStock = Object.values(v.stocks).reduce((a: number, b: number) => a + b, 0);
-                    return oldStock !== newStock; // Sadece stok değiştiyse
-                })
-                .map(v => ({
-                    barcode: v.barcode,
-                    quantity: Object.values(v.stocks).reduce((a: number, b: number) => a + b, 0)
-                }));
+            import('../services/integration').then(async m => {
+                let totalSynced = 0;
+                for (const config of db.apiConfigs) {
+                    if (!config.enableStockSync) continue;
 
-            if (itemsToSync.length > 0) {
-                import('../services/integration').then(m => {
-                    m.syncBarcodeStockBatchMultiple(
-                        db.apiConfigs,
-                        itemsToSync,
-                        db.settings,
-                        (count) => setNotification({ type: 'success', message: `${count} barkod için stok güncelleme başladı...` }),
-                        () => setNotification({ type: 'success', message: 'Stok güncelleme bitti.' })
-                    );
-                });
-            }
+                    // SADECE stoğu değişen varyantları belirle (Selective Sync)
+                    const itemsToSync = formData.variants
+                        .filter(v => v.barcode)
+                        .filter(v => {
+                            if (!editingProduct) return true; // Yeni ürünse hepsini gönder
+                            const oldVariant = editingProduct.variants.find(ov => ov.barcode === v.barcode);
+                            if (!oldVariant) return true; // Yeni varyant
+                            const oldStock = getSyncableStockForApi(oldVariant, config, db.warehouses || []);
+                            const newStock = getSyncableStockForApi(v, config, db.warehouses || []);
+                            return oldStock !== newStock; // Sadece stok değiştiyse
+                        })
+                        .map(v => ({
+                            barcode: v.barcode,
+                            quantity: getSyncableStockForApi(v, config, db.warehouses || [])
+                        }));
+
+                    if (itemsToSync.length > 0) {
+                        try {
+                            await m.syncBarcodeStockBatch(config, itemsToSync, db.settings);
+                            totalSynced += itemsToSync.length;
+                        } catch (err) {
+                            console.error(`[ProductManagement] ${config.storeName} stok gönderim hatası:`, err);
+                        }
+                    }
+                }
+                
+                if (totalSynced > 0) {
+                    setNotification({ type: 'success', message: 'Stok güncelleme bitti.' });
+                }
+            });
         }
 
         // Kaydedilen barkodları kontrol et ve askıdaki siparişleri otomatik kontrol et (Functional Update sonrası)
@@ -361,7 +370,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
             productsToProcess.forEach(product => {
                 product.variants.forEach(v => {
                     if (v.barcode) {
-                        const totalStock = Object.values(v.stocks).reduce((a: number, b: number) => a + b, 0);
+                        const totalStock = getSyncableStock(v, db.warehouses || []);
                         barcodesToSync.push({ barcode: v.barcode, quantity: totalStock as number });
                     }
                 });
@@ -417,7 +426,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         const data: any[] = [];
         db.products.forEach(p => {
             p.variants.forEach(v => {
-                const totalStock = Object.values(v.stocks).reduce((a: number, b: number) => a + b, 0);
+                const totalStock = getTotalStock(v);
                 data.push({
                     'Ürün Kodu': p.productCode,
                     'Ürün adı': p.name,
@@ -782,6 +791,23 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         updateDB({ ...db, warehouses: updatedWarehouses });
     };
 
+    const toggleWarehouseSync = (id: string) => {
+        const existingWarehouses = db.warehouses || [];
+        const targetWh = existingWarehouses.find(w => w.id === id);
+        if (!targetWh) return;
+        
+        const isNowDisabled = !targetWh.syncDisabled;
+        const updatedWarehouses = existingWarehouses.map(w => 
+            w.id === id ? { ...w, syncDisabled: isNowDisabled } : w
+        );
+        updateDB({ ...db, warehouses: updatedWarehouses });
+        
+        setNotification({ 
+            type: 'success', 
+            message: `"${targetWh.name}" deponun internet satışı ${isNowDisabled ? 'kapatıldı' : 'açıldı'}.` 
+        });
+    };
+
     const updateStockForGroup = (color: string, size: string, warehouseId: string, qty: number) => {
         // Stok değerini eksiye düşme kontrolü - Ayarlara göre esneklik sağla
         const validQty = db.settings.allowNegativeStock ? qty : Math.max(0, qty);
@@ -811,8 +837,8 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         for (const variant of variantsToSync) {
             if (!variant.barcode) continue;
 
-            const totalStock = Object.values(variant.stocks).reduce((a: number, b: number) => a + b, 0);
-            // Bloklandıysa 0 gönder, değilse gerçek stoğu gönder
+            const totalStock = getSyncableStock(variant, db.warehouses || []);
+            // Bloklandıysa 0 gönder, değilse senkronize edilebilir stoğu gönder
             const qtyToSend = isBlocked ? 0 : Number(totalStock);
             const settingsToSend = isBlocked ? undefined : db.settings;
 
@@ -1612,6 +1638,13 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                                                 {w.name}
                                                                             </span>
                                                                         )}
+                                                                        <button 
+                                                                            title={w.syncDisabled ? "İnternete Kapalı (Açmak için tıkla)" : "İnternete Açık (Kapatmak için tıkla)"} 
+                                                                            onClick={() => toggleWarehouseSync(w.id)} 
+                                                                            className={`text-sm outline-none ml-1 ${w.syncDisabled ? 'text-red-500 line-through' : 'text-green-500 hover:text-green-600'}`}
+                                                                        >
+                                                                            <Globe size={14} className="inline" />
+                                                                        </button>
                                                                         {!w.isCenter && (
                                                                             <button 
                                                                                 onClick={() => deleteWarehouse(w.id)} 
@@ -1690,7 +1723,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                                                     </td>
                                                                                 ))}
                                                                                 <td className="text-center font-bold text-blue-900 bg-blue-50/50 p-0 select-none">
-                                                                                    {Object.values(v.stocks || {}).reduce((a: number, b: any) => a + Number(b), 0)}
+                                                                                    {getTotalStock(v)}
                                                                                 </td>
                                                                             </tr>
                                                                         );

@@ -5,6 +5,7 @@ import { getEffectiveOrderCountryCode } from '../utils/orderUtils';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { Download, X, Check, Filter, ChevronDown, Eye, EyeOff } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { getTotalStock } from '../utils/stockUtils';
 
 
 
@@ -668,7 +669,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
     const getVariantStock = (v: any): number => {
       if (!v.stocks) return 0;
-      return Object.values(v.stocks).reduce<number>((a, b) => a + (Number(b) || 0), 0);
+      return getTotalStock(v);
     };
 
     const criticalItems: any[] = [];

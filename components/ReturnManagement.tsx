@@ -258,7 +258,8 @@ Mağaza: ${claim.storeName}
             return { success: true, stockUpdated: false, reason: 'Barkod ürün kartında bulunamadı' };
         }
 
-        const whId = 'wh1';
+        const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
+        const whId = apiConfig?.linkedWarehouseId || (db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1');
         const currentStock = variant.stocks[whId] || 0;
         const newStock = currentStock + returnQty;
 
@@ -276,8 +277,7 @@ Mağaza: ${claim.storeName}
         if (up) {
             up.variants.forEach(pv => {
                 if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                    const total = Object.values(pv.stocks).reduce<number>((a, b) => a + (Number(b) || 0), 0);
-                    barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                    barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                 }
             });
         }
@@ -411,7 +411,8 @@ Mağaza: ${claim.storeName}
                         }
 
                         // Update stocks
-                        const whId = 'wh1';
+                        const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
+                        const whId = apiConfig?.linkedWarehouseId || (db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1');
                         const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
                         const currentStock = variant.stocks[whId] || 0;
                         const newStock = currentStock + returnQty;
@@ -431,8 +432,7 @@ Mağaza: ${claim.storeName}
                         if (up) {
                             up.variants.forEach(pv => {
                                 if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                                    const total = Object.values(pv.stocks).reduce<number>((a, b) => a + (Number(b) || 0), 0);
-                                    barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                                    barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                                 }
                             });
                         }

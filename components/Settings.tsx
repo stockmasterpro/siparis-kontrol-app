@@ -2,7 +2,8 @@
 import React, { useState } from 'react';
 import { Database, UserRole, ApiConfig } from '../types';
 import { exportBackup, importBackup, resetToFactoryDefaults } from '../services/db';
-import { syncBarcodeStock } from '../services/integration';
+import { syncBarcodeStockBatch } from '../services/integration';
+import { getSyncableStockForApi } from '../utils/stockUtils';
 import { compressImage } from '../utils/imageUtils';
 import { Save, UserPlus, Trash, RotateCcw, UploadCloud, Loader2, Edit, X, ShoppingCart, Key, Check, MessageSquare, Plus, Clock, Infinity, Package, BarChart3, LayoutDashboard, Volume2, RefreshCw } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
@@ -253,36 +254,34 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
         requestConfirm("DİKKAT: Veritabanındaki TÜM ürün stokları (barkod bazlı), tanımlı TÜM pazaryerlerine gönderilecek. Bu işlem zaman alabilir.\n\nOnaylıyor musunuz?", async () => {
             setIsSyncingStocks(true);
 
-            // Tüm barkodları ve stoklarını topla (barkod bazlı)
-            const barcodesToSync: { [barcode: string]: number } = {};
-            let totalBarcodes = 0;
-
-            db.products.forEach(p => {
-                p.variants.forEach(v => {
-                    if (v.barcode) {
-                        // Her barkod için kendi stok değerini hesapla
-                        const totalStock = Object.values(v.stocks).reduce((a: number, b: number) => a + b, 0);
-                        barcodesToSync[v.barcode] = totalStock as number;
-                        totalBarcodes++;
-                    }
-                });
-            });
-
+            // Her API için ayrı stok hesapla ve toplu gönder
             let successCount = 0;
             let errorCount = 0;
+            let totalBarcodes = 0;
 
-            // Her barkod için ayrı ayrı stok gönder
-            for (const [barcode, qty] of Object.entries(barcodesToSync)) {
-                try {
-                    await syncBarcodeStock(db.apiConfigs, barcode, qty, db.settings);
-                    successCount++;
-                } catch (error) {
-                    console.error(`Barkod ${barcode} stok gönderim hatası:`, error);
-                    errorCount++;
-                }
-                // Progress göster (her 10 barkodda bir)
-                if ((successCount + errorCount) % 10 === 0) {
-                    console.log(`İlerleme: ${successCount + errorCount}/${totalBarcodes} barkod işlendi...`);
+            for (const config of db.apiConfigs) {
+                if (!config.enableStockSync) continue;
+
+                const itemsToSync: { barcode: string, quantity: number }[] = [];
+
+                db.products.forEach(p => {
+                    p.variants.forEach(v => {
+                        if (v.barcode) {
+                            const stock = getSyncableStockForApi(v, config, db.warehouses || []);
+                            itemsToSync.push({ barcode: v.barcode, quantity: stock });
+                            totalBarcodes++;
+                        }
+                    });
+                });
+
+                if (itemsToSync.length > 0) {
+                    try {
+                        await syncBarcodeStockBatch(config, itemsToSync, db.settings);
+                        successCount += itemsToSync.length;
+                    } catch (error) {
+                        console.error(`[Settings] ${config.storeName} stok gönderim hatası:`, error);
+                        errorCount += itemsToSync.length;
+                    }
                 }
             }
 
@@ -471,6 +470,25 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                             </div>
                                         )}
                                     </div>
+                                </div>
+
+                                <div className="col-span-2 sm:col-span-1">
+                                    <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Bağlı Depo (Opsiyonel)</label>
+                                    <select
+                                        className="w-full border p-2 rounded"
+                                        value={newApi.linkedWarehouseId || ''}
+                                        onChange={e => setNewApi({ ...newApi, linkedWarehouseId: e.target.value || undefined })}
+                                    >
+                                        <option value="">Tüm Depolar (Varsayılan)</option>
+                                        {db.warehouses?.map(wh => (
+                                            <option key={wh.id} value={wh.id}>
+                                                {wh.name} {wh.isCenter ? '(Merkez)' : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-[10px] text-gray-400 mt-1">
+                                        Bu API üzerinden gelen siparişler sadece seçili depodan düşülür.
+                                    </p>
                                 </div>
 
                                 {(newApi.type === 'TRENDYOL' || newApi.type === 'HEPSIBURADA') && (

@@ -1,5 +1,6 @@
 import { Database, ApiConfig, Product, Variant, Order, OrderStatus, Question, QuestionStatus, ReturnClaim } from '../types';
 import { resolveCountryCodeFromTrendyolApi, resolveCargoCompanyFromTrendyolApi, orderImportDismissKey } from '../utils/orderUtils';
+import { getSyncableStock, getTotalStock } from '../utils/stockUtils';
 
 let globalSyncLock = false;
 
@@ -20,7 +21,7 @@ export const syncProductsToTrendyol = async (config: ApiConfig, products: Produc
         productMainId: product.productCode,
         brandId: 0, // Kullanıcı tarafından seçilmeli
         categoryId: 0, // Kullanıcı tarafından seçilmeli
-        quantity: Object.values(variant.stocks).reduce((a, b) => a + b, 0),
+        quantity: getTotalStock(variant),
         stockCode: variant.barcode,
         dimensionalWeight: 1,
         description: product.name,
@@ -1157,7 +1158,7 @@ export const syncMarketplaceOrders = async (
               if (product) {
                 const variant = product.variants.find(v => v.barcode === item.barcode);
                 if (variant) {
-                  const mainWhId = db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1';
+                  const mainWhId = config.linkedWarehouseId || (db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1');
                   const currentStock = variant.stocks[mainWhId] || 0;
                   const newStock = currentStock + item.quantity;
 
@@ -1169,8 +1170,7 @@ export const syncMarketplaceOrders = async (
                   if (updatedProduct) {
                     updatedProduct.variants.forEach(pv => {
                       if (pv.barcode) {
-                        const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + b, 0);
-                        barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                        barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                       }
                     });
                   }
@@ -1214,7 +1214,7 @@ export const syncMarketplaceOrders = async (
                 if (product) {
                   const variant = product.variants.find(v => v.barcode === item.barcode);
                   if (variant) {
-                    const mainWhId = db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1';
+                    const mainWhId = config.linkedWarehouseId || (db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1');
                     const currentStock = variant.stocks[mainWhId] || 0;
                     const newStock = currentStock + item.quantity;
 
@@ -1226,8 +1226,7 @@ export const syncMarketplaceOrders = async (
                     if (updatedProduct) {
                       updatedProduct.variants.forEach(pv => {
                         if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                          const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + b, 0);
-                          barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                          barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                         }
                       });
                     }
@@ -1256,7 +1255,7 @@ export const syncMarketplaceOrders = async (
                 if (product) {
                   const variant = product.variants.find(v => v.barcode === item.barcode);
                   if (variant) {
-                    const mainWhId = db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1';
+                    const mainWhId = config.linkedWarehouseId || (db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1');
                     const currentStock = variant.stocks[mainWhId] || 0;
                     const newStock = currentStock + item.quantity;
 
@@ -1268,8 +1267,7 @@ export const syncMarketplaceOrders = async (
                     if (updatedProduct) {
                       updatedProduct.variants.forEach(pv => {
                         if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                          const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + b, 0);
-                          barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                          barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                         }
                       });
                     }
@@ -1352,7 +1350,11 @@ export const syncMarketplaceOrders = async (
             const variant = product.variants.find(v => v.barcode === item.barcode);
             if (variant) {
               let remainingQty = item.quantity;
-              const warehouses = db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }];
+              let warehouses = db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' } as any];
+              if (config.linkedWarehouseId) {
+                  warehouses = warehouses.filter(w => w.id === config.linkedWarehouseId);
+                  if (warehouses.length === 0) warehouses = [{ id: 'wh1', name: 'Merkez Depo' } as any]; // Fallback
+              }
               const mainWhId = warehouses[0].id;
 
               for (const wh of warehouses) {
@@ -1388,8 +1390,7 @@ export const syncMarketplaceOrders = async (
               if (updatedProduct) {
                 updatedProduct.variants.forEach(pv => {
                   if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                    const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + b, 0);
-                    barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                    barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                   }
                 });
               }
@@ -1515,8 +1516,7 @@ export const syncMarketplaceOrders = async (
               if (updatedProduct) {
                 updatedProduct.variants.forEach(pv => {
                   if (pv.barcode) {
-                    const total = Object.values(pv.stocks).reduce((a: number, b: number) => a + b, 0);
-                    barcodesToSync[pv.barcode] = pv.isMarketplaceDisabled ? 0 : Number(total);
+                    barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
                   }
                 });
               }

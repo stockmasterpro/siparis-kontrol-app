@@ -30,6 +30,7 @@ export interface Warehouse {
   id: string;
   name: string;
   isCenter?: boolean;
+  syncDisabled?: boolean; // İnternet satışına kapalı mı?
 }
 
 export interface Variant {
@@ -185,6 +186,7 @@ export interface ApiConfig {
   color?: string; // Dashboard için renk
   refreshToken?: string; // Amazon SP-API için gereklidir
   storeLogo?: string; // Mağaza profil fotoğrafı (Base64)
+  linkedWarehouseId?: string; // Depo bağlama (Sipariş/stok izole etmek için)
 }
 
 export interface AppSettings {
