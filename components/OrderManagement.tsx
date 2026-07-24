@@ -318,13 +318,13 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 // Save to DB on finish
                 const { key } = resizingRef.current;
                 setColumnWidths(current => {
-                    updateDB({
-                        ...db,
+                    updateDB(prev => ({
+                        ...prev,
                         settings: {
-                            ...db.settings,
+                            ...prev.settings,
                             columnWidths: current
                         }
-                    });
+                    }));
                     return current;
                 });
 
@@ -646,11 +646,36 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         try {
             const result = await syncMarketplaceOrders(db, true);
 
-            await updateDB(prev => ({
-                ...prev,
-                products: result.updatedProducts,
-                orders: result.updatedOrders
-            }));
+            await updateDB(prev => {
+                const prevOrderIds = new Set(prev.orders.map(o => o.id));
+                const deletedOrderIds = new Set(db.orders.filter(o => !prevOrderIds.has(o.id)).map(o => o.id));
+                const manualOrdersAddedDuringSync = prev.orders.filter(o => !db.orders.some(co => co.id === o.id));
+
+                const finalOrders = result.updatedOrders
+                    .filter(o => !deletedOrderIds.has(o.id))
+                    .map(o => {
+                        const userVersion = prev.orders.find(po => po.id === o.id);
+                        if (userVersion) {
+                            return { ...o, isPrinted: userVersion.isPrinted, isDeleted: userVersion.isDeleted };
+                        }
+                        return o;
+                    })
+                    .concat(manualOrdersAddedDuringSync);
+
+                const prevProductIds = new Set(prev.products.map(p => p.id));
+                const deletedProductIds = new Set(db.products.filter(p => !prevProductIds.has(p.id)).map(p => p.id));
+                const manualProductsAddedDuringSync = prev.products.filter(p => !db.products.some(cp => cp.id === p.id));
+
+                const finalProducts = result.updatedProducts
+                    .filter(p => !deletedProductIds.has(p.id))
+                    .concat(manualProductsAddedDuringSync);
+
+                return {
+                    ...prev,
+                    products: finalProducts,
+                    orders: finalOrders
+                };
+            });
 
             // OTOMATİK STOK GÜNCELLEME (Tüm mağazalara)
             if (Object.keys(result.barcodesToSync).length > 0) {
@@ -1421,8 +1446,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
         if (updatedOrder) {
             // Update in database
-            const updatedOrders = db.orders.map(o => o.id === order.id ? updatedOrder : o);
-            updateDB({ ...db, orders: updatedOrders });
+            updateDB(prev => ({ ...prev, orders: prev.orders.map(o => o.id === order.id ? updatedOrder : o) }));
             setDetailOrder(updatedOrder);
             setNotification({ type: 'success', message: 'Sipariş detayları pazaryerinden güncellendi.' });
         } else {
@@ -1466,15 +1490,16 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             await syncOrderStatusToMarketplaces(db.apiConfigs, updatedOrdersToProcess, OrderStatus.PROCESSING);
 
             // Başarılı olursa yerel DB'yi güncelle
-            const newOrders = db.orders.map(o => {
-                const processed = updatedOrdersToProcess.find(p => p.id === o.id);
-                if (processed) {
-                    return { ...processed, status: OrderStatus.PROCESSING, isSuspended: o.isSuspended };
-                }
-                return o;
-            });
-
-            updateDB({ ...db, orders: newOrders });
+            updateDB(prev => ({ 
+                ...prev, 
+                orders: prev.orders.map(o => {
+                    const processed = updatedOrdersToProcess.find(p => p.id === o.id);
+                    if (processed) {
+                        return { ...processed, status: OrderStatus.PROCESSING, isSuspended: o.isSuspended };
+                    }
+                    return o;
+                }) 
+            }));
 
             setNotification({
                 type: 'success',
@@ -1553,25 +1578,22 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             // 2. DB'yi Güncelle (Senkronizasyondan ÖNCE yap ki sync güncel veriyi okusun)
 
-            const newOrders = db.orders.map(o => {
-                if (o.id === orderId && o.status === OrderStatus.CANCELLED) {
-                    return { ...o, isDeleted: true };
-                }
-                return o;
-            }).filter(o => {
-                if (o.id === orderId) {
-                    return o.status === OrderStatus.CANCELLED;
-                }
-                return true;
-            });
-            const newReturns = db.returns.filter(r => r.orderId !== orderId);
-
-            updateDB({
-                ...db,
-                orders: newOrders,
-                returns: newReturns,
+            updateDB(prev => ({
+                ...prev,
+                orders: prev.orders.map(o => {
+                    if (o.id === orderId && o.status === OrderStatus.CANCELLED) {
+                        return { ...o, isDeleted: true };
+                    }
+                    return o;
+                }).filter(o => {
+                    if (o.id === orderId) {
+                        return o.status === OrderStatus.CANCELLED;
+                    }
+                    return true;
+                }),
+                returns: prev.returns.filter(r => r.orderId !== orderId),
                 products: currentProducts
-            });
+            }));
 
             // 3. Stok Senkronizasyonunu Tetikle (TOPLAM STOKLAR)
             if (Object.keys(barcodesToSync).length > 0) {
@@ -1679,9 +1701,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             // 2. DB'yi Güncelle
 
-            updateDB({
-                ...db,
-                orders: db.orders.map(o => {
+            updateDB(prev => ({
+                ...prev,
+                orders: prev.orders.map(o => {
                     if (selectedOrders.includes(o.id) && o.status === OrderStatus.CANCELLED) {
                         return { ...o, isDeleted: true };
                     }
@@ -1693,7 +1715,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     return true;
                 }),
                 products: currentProducts
-            });
+            }));
 
             // Sync
             if (Object.keys(barcodesToSync).length > 0) {
@@ -1882,20 +1904,21 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (allItemsFound) {
             // Update Order Status - Askıdan çıkar ve tekrar askıya gitmesini engelle
             const updatedOrderData = trendyolOrder || order;
-            const newOrders = db.orders.map(o => {
-                if (o.id === order.id) {
-                    return {
-                        ...updatedOrderData,
-                        items: newItems,
-                        isSuspended: false,
-                        // ÖNEMLİ: Askıdan çıktığını işaretle, tekrar askıya gitmesin
-                        wasSuspended: true
-                    };
-                }
-                return o;
-            });
-
-            updateDB({ ...db, products: currentProducts, orders: newOrders });
+            updateDB(prev => ({ 
+                ...prev, 
+                products: currentProducts, 
+                orders: prev.orders.map(o => {
+                    if (o.id === order.id) {
+                        return {
+                            ...updatedOrderData,
+                            items: newItems,
+                            isSuspended: false,
+                            wasSuspended: true
+                        };
+                    }
+                    return o;
+                }) 
+            }));
 
             // Sync if enabled - Barkod bazlı stok gönderimi
             if (Object.keys(barcodesToSync).length > 0) {
@@ -1984,14 +2007,11 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 }
             });
 
-            const allReturns = [...db.returns, ...newReturnRecords];
-
-            updateDB({
-                ...db,
+            updateDB(prev => ({
+                ...prev,
                 products: currentProducts,
-                returns: allReturns,
-                orders: db.orders
-            });
+                returns: [...prev.returns, ...newReturnRecords]
+            }));
 
             // Sync if enabled - Barkod bazlı stok gönderimi
             if (Object.keys(barcodesToSync).length > 0) {
@@ -2112,23 +2132,17 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 }
             });
 
-            // 2. İade kaydını sil
-            const newReturns = db.returns.filter(r => !recordIds.has(r.id));
-
-            // 3. Sipariş durumunu geri al (Eğer İptal Edildi ise Teslim Edildi'ye çek)
-            const updatedOrders = db.orders.map(o => {
-                if (orderIds.has(o.id) && o.status === OrderStatus.CANCELLED) {
-                    return { ...o, status: OrderStatus.DELIVERED };
-                }
-                return o;
-            });
-
-            updateDB({
-                ...db,
+            updateDB(prev => ({
+                ...prev,
                 products: currentProducts,
-                returns: newReturns,
-                orders: updatedOrders
-            });
+                returns: prev.returns.filter(r => !recordIds.has(r.id)),
+                orders: prev.orders.map(o => {
+                    if (orderIds.has(o.id) && o.status === OrderStatus.CANCELLED) {
+                        return { ...o, status: OrderStatus.DELIVERED };
+                    }
+                    return o;
+                })
+            }));
 
             // 3. Stok Senkronizasyonunu Tetikle
             if (Object.keys(barcodesToSync).length > 0) {
@@ -2644,14 +2658,13 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             // Mark orders as printed
             console.log(`[PRINT-DEBUG] Yazdırılacak siparişler:`, selectedOrders);
-            const updatedOrders = db.orders.map(o => {
-                const shouldMark = selectedOrders.includes(o.id);
-                if (shouldMark) {
-                    console.log(`[PRINT-DEBUG] Sipariş ${o.marketplaceOrderId} yazdırıldı olarak işaretleniyor`);
-                }
-                return shouldMark ? { ...o, isPrinted: true } : o;
-            });
-            updateDB({ ...db, orders: updatedOrders });
+            updateDB(prev => ({ 
+                ...prev, 
+                orders: prev.orders.map(o => {
+                    const shouldMark = selectedOrders.includes(o.id);
+                    return shouldMark ? { ...o, isPrinted: true } : o;
+                }) 
+            }));
             console.log(`[PRINT-DEBUG] Toplam ${updatedOrders.filter(o => o.isPrinted).length} yazdırılmış sipariş var`);
         } catch (error) {
             console.error('Print/PDF generation error:', error);

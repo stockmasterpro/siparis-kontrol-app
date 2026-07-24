@@ -463,14 +463,13 @@ Mağaza: ${claim.storeName}
                 }
             }
 
-            // Single atomic DB update
-            updateDB({
-                ...db,
+            updateDB(prev => ({
+                ...prev,
                 products: currentProducts,
-                orders: db.orders,
+                orders: prev.orders,
                 returns: currentReturns,
                 returnClaims: currentReturnClaims
-            });
+            }));
 
             // Batch sync stocks
             if (db.settings.enableAutoStockSync && Object.keys(barcodesToSync).length > 0) {

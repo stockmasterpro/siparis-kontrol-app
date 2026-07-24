@@ -693,11 +693,36 @@ const App: React.FC = () => {
         }
 
         // Sadece ürünleri ve siparişleri güncelle, ayarları ve kullanıcıları koru
-        handleUpdateDB(prev => ({
-          ...prev,
-          products: result.updatedProducts,
-          orders: result.updatedOrders
-        }));
+        handleUpdateDB(prev => {
+          const prevOrderIds = new Set(prev.orders.map(o => o.id));
+          const deletedOrderIds = new Set(currentDb.orders.filter(o => !prevOrderIds.has(o.id)).map(o => o.id));
+          const manualOrdersAddedDuringSync = prev.orders.filter(o => !currentDb.orders.some(co => co.id === o.id));
+
+          const finalOrders = result.updatedOrders
+            .filter(o => !deletedOrderIds.has(o.id))
+            .map(o => {
+                const userVersion = prev.orders.find(po => po.id === o.id);
+                if (userVersion) {
+                    return { ...o, isPrinted: userVersion.isPrinted, isDeleted: userVersion.isDeleted };
+                }
+                return o;
+            })
+            .concat(manualOrdersAddedDuringSync);
+
+          const prevProductIds = new Set(prev.products.map(p => p.id));
+          const deletedProductIds = new Set(currentDb.products.filter(p => !prevProductIds.has(p.id)).map(p => p.id));
+          const manualProductsAddedDuringSync = prev.products.filter(p => !currentDb.products.some(cp => cp.id === p.id));
+
+          const finalProducts = result.updatedProducts
+            .filter(p => !deletedProductIds.has(p.id))
+            .concat(manualProductsAddedDuringSync);
+
+          return {
+            ...prev,
+            products: finalProducts,
+            orders: finalOrders
+          };
+        });
 
         if (Object.keys(result.barcodesToSync).length > 0) {
           console.log(`[STOCK-SYNC] ${Object.keys(result.barcodesToSync).length} barkod için toplu stok senkronizasyonu başlatılıyor...`);

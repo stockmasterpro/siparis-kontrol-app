@@ -250,8 +250,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         }
 
         requestConfirm('Bu ürünü silmek istediğinize emin misiniz? BU İŞLEM GERİ ALINAMAZ!', () => {
-            const newProducts = db.products.filter(p => p.id !== id);
-            updateDB({ ...db, products: newProducts });
+            updateDB(prev => ({ ...prev, products: prev.products.filter(p => p.id !== id) }));
             setSelectedProductIds(selectedProductIds.filter(pid => pid !== id));
             setNotification({ type: 'success', message: 'Ürün başarıyla silindi.' });
         });
@@ -566,7 +565,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
             addedBarcodeCount++;
         }
 
-        updateDB({ ...db, products: currentProducts });
+        updateDB(prev => ({ ...prev, products: currentProducts }));
         setIsUploading(false);
 
         // Yeni ürün sayısını hesapla (currentProducts içindeki IDs'leri db.products içindekilerle karşılaştır)
@@ -632,7 +631,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
             return true; // Ürün kalsın
         });
 
-        updateDB({ ...db, products: currentProducts });
+        updateDB(prev => ({ ...prev, products: currentProducts }));
         setNotification({ type: 'success', message: `İşlem Tamamlandı:\n${deletedVariantCount} adet varyant (barkod) silindi.\n${deletedProductCount} adet ürün tamamen silindi (hiç varyantı kalmadığı için).` });
     };
 
@@ -740,7 +739,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         }
         
         const newWh: Warehouse = { id: uuid(), name: newName };
-        updateDB({ ...db, warehouses: [...existingWarehouses, newWh] });
+        updateDB(prev => ({ ...prev, warehouses: [...existingWarehouses, newWh] }));
     };
 
     const deleteWarehouse = (id: string) => {
@@ -774,7 +773,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
             })
         }));
 
-        updateDB({ ...db, warehouses: updatedWarehouses, products: updatedProducts });
+        updateDB(prev => ({ ...prev, warehouses: updatedWarehouses, products: updatedProducts }));
         setNotification({ type: 'success', message: 'Depo silindi.' });
     };
 
@@ -782,13 +781,13 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         if (!newName.trim()) return;
         const existingWarehouses = db.warehouses || [];
         const updatedWarehouses = existingWarehouses.map(w => w.id === id ? { ...w, name: newName.trim() } : w);
-        updateDB({ ...db, warehouses: updatedWarehouses });
+        updateDB(prev => ({ ...prev, warehouses: updatedWarehouses }));
     };
     
     const setCenterWarehouse = (id: string) => {
         const existingWarehouses = db.warehouses || [];
         const updatedWarehouses = existingWarehouses.map(w => ({ ...w, isCenter: w.id === id }));
-        updateDB({ ...db, warehouses: updatedWarehouses });
+        updateDB(prev => ({ ...prev, warehouses: updatedWarehouses }));
     };
 
     const toggleWarehouseSync = (id: string) => {
@@ -800,7 +799,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         const updatedWarehouses = existingWarehouses.map(w => 
             w.id === id ? { ...w, syncDisabled: isNowDisabled } : w
         );
-        updateDB({ ...db, warehouses: updatedWarehouses });
+        updateDB(prev => ({ ...prev, warehouses: updatedWarehouses }));
         
         setNotification({ 
             type: 'success', 
@@ -1151,10 +1150,10 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                             <ImageIcon size={14} />
                                             Görseller
                                             <button
-                                                onClick={() => updateDB({
-                                                    ...db,
-                                                    settings: { ...db.settings, showProductImages: false }
-                                                })}
+                                                onClick={() => updateDB(prev => ({
+                                                    ...prev,
+                                                    settings: { ...prev.settings, showProductImages: false }
+                                                }))}
                                                 className="ml-1 text-gray-400 hover:text-red-500"
                                                 title="Sütunu Gizle"
                                             >

@@ -1027,7 +1027,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <p className="text-xs text-gray-500">Windows sistem bildirimlerini aç/kapat.</p>
                                     </div>
                                     <button
-                                        onClick={() => updateDB({ ...db, settings: { ...db.settings, notifications: { ...db.settings.notifications, windowsEnabled: !db.settings.notifications?.windowsEnabled } } })}
+                                        onClick={() => updateDB(prev => ({ ...prev, settings: { ...prev.settings, notifications: { ...prev.settings.notifications, windowsEnabled: !prev.settings.notifications?.windowsEnabled } } }))}
                                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${db.settings.notifications?.windowsEnabled ? 'bg-blue-600' : 'bg-gray-200'}`}
                                     >
                                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${db.settings.notifications?.windowsEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -1040,7 +1040,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <p className="text-xs text-gray-500">Yeni sipariş geldiğinde bildirim sesi çalar.</p>
                                     </div>
                                     <button
-                                        onClick={() => updateDB({ ...db, settings: { ...db.settings, notifications: { ...db.settings.notifications, soundEnabled: !db.settings.notifications?.soundEnabled } } })}
+                                        onClick={() => updateDB(prev => ({ ...prev, settings: { ...prev.settings, notifications: { ...prev.settings.notifications, soundEnabled: !prev.settings.notifications?.soundEnabled } } }))}
                                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${db.settings.notifications?.soundEnabled ? 'bg-indigo-600' : 'bg-gray-200'}`}
                                     >
                                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${db.settings.notifications?.soundEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -1102,7 +1102,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <p className="text-xs text-gray-500">Sadece yeni sipariş geldiğinde bildirim göster.</p>
                                     </div>
                                     <button
-                                        onClick={() => updateDB({ ...db, settings: { ...db.settings, notifications: { ...db.settings.notifications, newOrderNotification: !db.settings.notifications?.newOrderNotification } } })}
+                                        onClick={() => updateDB(prev => ({ ...prev, settings: { ...prev.settings, notifications: { ...prev.settings.notifications, newOrderNotification: !prev.settings.notifications?.newOrderNotification } } }))}
                                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${db.settings.notifications?.newOrderNotification ? 'bg-green-600' : 'bg-gray-200'}`}
                                     >
                                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${db.settings.notifications?.newOrderNotification ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -1115,7 +1115,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <p className="text-xs text-gray-500">Sipariş durumu değiştiğinde bildirim göster.</p>
                                     </div>
                                     <button
-                                        onClick={() => updateDB({ ...db, settings: { ...db.settings, notifications: { ...db.settings.notifications, orderUpdateNotification: !db.settings.notifications?.orderUpdateNotification } } })}
+                                        onClick={() => updateDB(prev => ({ ...prev, settings: { ...prev.settings, notifications: { ...prev.settings.notifications, orderUpdateNotification: !prev.settings.notifications?.orderUpdateNotification } } }))}
                                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${db.settings.notifications?.orderUpdateNotification ? 'bg-blue-600' : 'bg-gray-200'}`}
                                     >
                                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${db.settings.notifications?.orderUpdateNotification ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -1128,7 +1128,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <p className="text-xs text-gray-500">Yeni iade talebi geldiğinde bildirim göster.</p>
                                     </div>
                                     <button
-                                        onClick={() => updateDB({ ...db, settings: { ...db.settings, notifications: { ...db.settings.notifications, returnNotification: !db.settings.notifications?.returnNotification } } })}
+                                        onClick={() => updateDB(prev => ({ ...prev, settings: { ...prev.settings, notifications: { ...prev.settings.notifications, returnNotification: !prev.settings.notifications?.returnNotification } } }))}
                                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${db.settings.notifications?.returnNotification ? 'bg-orange-600' : 'bg-gray-200'}`}
                                     >
                                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${db.settings.notifications?.returnNotification ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -1141,7 +1141,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <p className="text-xs text-gray-500">Müşteriden yeni soru geldiğinde bildirim göster.</p>
                                     </div>
                                     <button
-                                        onClick={() => updateDB({ ...db, settings: { ...db.settings, notifications: { ...db.settings.notifications, questionNotification: !db.settings.notifications?.questionNotification } } })}
+                                        onClick={() => updateDB(prev => ({ ...prev, settings: { ...prev.settings, notifications: { ...prev.settings.notifications, questionNotification: !prev.settings.notifications?.questionNotification } } }))}
                                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${db.settings.notifications?.questionNotification ? 'bg-yellow-600' : 'bg-gray-200'}`}
                                     >
                                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${db.settings.notifications?.questionNotification ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -1154,7 +1154,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <p className="text-xs text-gray-500">Oturum zaman aşımı, hata gibi sistem olaylarında bildirim göster.</p>
                                     </div>
                                     <button
-                                        onClick={() => updateDB({ ...db, settings: { ...db.settings, notifications: { ...db.settings.notifications, systemNotification: !db.settings.notifications?.systemNotification } } })}
+                                        onClick={() => updateDB(prev => ({ ...prev, settings: { ...prev.settings, notifications: { ...prev.settings.notifications, systemNotification: !prev.settings.notifications?.systemNotification } } }))}
                                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${db.settings.notifications?.systemNotification ? 'bg-purple-600' : 'bg-gray-200'}`}
                                     >
                                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${db.settings.notifications?.systemNotification ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -1318,7 +1318,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
 
                                                     const result = await isVal(tempKey);
                                                     if (result) {
-                                                        updateDB({ ...db, settings: { ...db.settings, licenseKey: tempKey.trim() } });
+                                                        updateDB(prev => ({ ...prev, settings: { ...prev.settings, licenseKey: tempKey.trim() } }));
                                                         setNotification({ type: 'success', message: "Tebrikler! Programınız başarıyla lisanslandı." });
                                                         setTempKey('');
                                                     } else {
