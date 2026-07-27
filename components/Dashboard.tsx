@@ -1297,9 +1297,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
             </div>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="flex flex-wrap gap-4">
           {warehouseStats.stats.map(stat => (
-            <div key={stat.id} className="p-4 rounded-lg bg-gray-50 border flex flex-col justify-between">
+            <div key={stat.id} className="p-4 rounded-lg bg-white border border-gray-800 w-full md:w-[320px] flex flex-col justify-between shadow-sm">
               <div className="font-semibold text-gray-800 text-sm mb-2">{stat.name}</div>
               <div className="flex justify-between items-center text-xs">
                 <span className="text-gray-500">Stok:</span>
@@ -1315,7 +1315,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
               </div>
             </div>
           ))}
-          <div className="p-4 rounded-lg bg-indigo-50 border border-indigo-100 flex flex-col justify-between">
+          <div className="p-4 rounded-lg bg-indigo-50 border border-indigo-100 w-full md:w-[320px] flex flex-col justify-between">
             <div className="font-bold text-indigo-800 text-sm mb-2">{warehouseStats.total.name}</div>
             <div className="flex justify-between items-center text-xs">
               <span className="text-indigo-600">Toplam Stok:</span>
