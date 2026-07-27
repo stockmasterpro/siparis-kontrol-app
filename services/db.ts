@@ -448,7 +448,11 @@ export const saveDB = async (db: Database): Promise<void> => {
 
     await ipcRenderer.invoke('sqlite-transaction', ops);
   } catch (err) {
-    console.error('[DB-SAVE] SQLite error:', err);
+    console.error('============================');
+    console.error('[DB-SAVE] SQLITE KAYIT HATASI!');
+    console.error('SQLite transaction failed. The changes were NOT saved to disk.');
+    console.error(err);
+    console.error('============================');
   }
 };
 

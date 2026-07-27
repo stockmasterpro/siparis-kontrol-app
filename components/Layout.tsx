@@ -2,6 +2,7 @@ import React from 'react';
 import { User, UserRole } from '../types';
 import { LayoutDashboard, Package, ShoppingCart, Settings, LogOut, Minus, MessageSquare, Monitor, RotateCw, Maximize, Minimize } from 'lucide-react';
 import { GlobalNotification } from './GlobalNotification';
+import packageJson from '../package.json';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -101,7 +102,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, curren
       <div className="h-8 bg-[#3c3c3c] flex items-center justify-between select-none text-white pl-3 pr-0 z-50">
         <div className="flex items-center gap-2">
           <Monitor size={14} className="text-blue-400" />
-          <span className="text-xs font-normal tracking-wide">E- Ticaret ve Perakende Yönetim</span>
+          <span className="text-xs font-normal tracking-wide">E- Ticaret ve Perakende Yönetim v{packageJson.version}</span>
         </div>
         <div className="flex items-center">
           <button

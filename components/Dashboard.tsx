@@ -34,6 +34,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   const [trendMonthCount, setTrendMonthCount] = useState(6);
   const [isPrivacyMode, setIsPrivacyMode] = useState(true);
   const [expandedStores, setExpandedStores] = useState<Record<string, boolean>>({});
+  const [stockTab, setStockTab] = useState<'critical' | 'unsold'>('critical');
+  const [unsoldStartDate, setUnsoldStartDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [unsoldEndDate, setUnsoldEndDate] = useState<string>(new Date().toISOString().split('T')[0]);
 
   const toggleStore = (storeName: string) => {
     setExpandedStores(prev => ({
@@ -642,7 +649,40 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     return years;
   };
 
-  // --- Stok Azalma Analizi ---
+  // --- Stok Analizleri ---
+  const unsoldProducts = useMemo(() => {
+    if (stockTab !== 'unsold') return [];
+    const start = new Date(unsoldStartDate).getTime();
+    const end = new Date(unsoldEndDate).getTime() + 86399999;
+    const soldBarcodes = new Set<string>();
+    db.orders.forEach(o => {
+        if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_')) return;
+        const oDate = new Date(o.orderDate).getTime();
+        if (oDate >= start && oDate <= end && o.items) {
+            o.items.forEach(item => { if (item.barcode) soldBarcodes.add(item.barcode); });
+        }
+    });
+    const unsoldList: { productId: string; productName: string; barcode: string; stock: number; }[] = [];
+    db.products.forEach(p => {
+        if (p.variants) {
+            p.variants.forEach(v => {
+                if (v.barcode && !soldBarcodes.has(v.barcode)) {
+                    const stock = getTotalStock(v.stocks);
+                    if (stock > 0) {
+                        unsoldList.push({
+                            productId: p.id,
+                            productName: p.name + (v.color ? ` - ${v.color}` : '') + (v.size ? ` - ${v.size}` : ''),
+                            barcode: v.barcode,
+                            stock: stock
+                        });
+                    }
+                }
+            });
+        }
+    });
+    return unsoldList.sort((a, b) => b.stock - a.stock);
+  }, [db.products, db.orders, unsoldStartDate, unsoldEndDate, stockTab]);
+
   const criticalStockProducts = useMemo(() => {
     const lookbackDays = db.settings.stockAlertLookbackDays ?? 7;
     const projectionDays = db.settings.stockAlertProjectionDays ?? 21;
@@ -1525,60 +1565,123 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         )}
       </div>
 
-      {/* Stok Azalma Uyarısı */}
-      <div className={`rounded-xl p-6 ${criticalStockProducts.length > 0 ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'}`}>
-        <div className="flex items-center gap-2 mb-4">
-          <div className={`w-3 h-3 rounded-full ${criticalStockProducts.length > 0 ? 'bg-red-500 animate-pulse' : 'bg-green-500'}`}></div>
-          <h3 className={`text-lg font-bold ${criticalStockProducts.length > 0 ? 'text-red-800' : 'text-green-800'}`}>
-            {criticalStockProducts.length > 0 ? '⚠️ Stok Azalma Uyarısı' : '✅ Stok Durumu İyi'}
-          </h3>
+      {/* Stok Bölümü */}
+      <div className={`rounded-xl p-6 ${stockTab === 'critical' && criticalStockProducts.length > 0 ? 'bg-red-50 border border-red-200' : 'bg-white border border-gray-200 shadow-sm'}`}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex gap-6 border-b border-gray-200 w-full pb-1">
+            <button 
+                onClick={() => setStockTab('critical')}
+                className={`flex items-center gap-2 text-lg font-bold pb-2 -mb-[5px] border-b-2 transition-colors ${stockTab === 'critical' ? 'text-red-800 border-red-800' : 'text-gray-500 border-transparent hover:text-gray-700'}`}
+            >
+              <div className={`w-3 h-3 rounded-full ${criticalStockProducts.length > 0 ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`}></div>
+              Kritik Stoklar {criticalStockProducts.length > 0 ? `(${criticalStockProducts.length})` : ''}
+            </button>
+            <button 
+                onClick={() => setStockTab('unsold')}
+                className={`text-lg font-bold pb-2 -mb-[5px] border-b-2 transition-colors ${stockTab === 'unsold' ? 'text-blue-800 border-blue-800' : 'text-gray-500 border-transparent hover:text-gray-700'}`}
+            >
+              Satılmayan Ürünler
+            </button>
+          </div>
         </div>
 
-        {criticalStockProducts.length > 0 ? (
-          <>
-            <p className="text-red-700 text-sm mb-4">
-              Aşağıdaki ürünlerin stokları son {db.settings.stockAlertLookbackDays ?? 7} gündeki satış hızına göre {db.settings.stockAlertProjectionDays ?? 21} günü çıkarmayacak (kritik) seviyededir.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {criticalStockProducts.map((p, idx) => (
-                <div key={idx} className="flex flex-col p-3 bg-white rounded-lg border border-red-100 shadow-sm">
-                  <div className="flex justify-between items-start mb-1">
-                    <div>
-                      <p className="font-bold text-gray-800 text-sm">{p.variantName}</p>
-                      <p className="text-xs text-red-600 font-mono">{p.productCode}</p>
-                      {db.settings.showLowStockDetails && (
-                        <p className="text-xs font-bold text-blue-700 mt-1">
-                          Varyant: <span className="underline">{p.variantName}</span> ({p.barcode})
-                        </p>
-                      )}
+        {stockTab === 'critical' ? (
+            criticalStockProducts.length > 0 ? (
+            <>
+                <p className="text-red-700 text-sm mb-4">
+                Aşağıdaki ürünlerin stokları son {db.settings.stockAlertLookbackDays ?? 7} gündeki satış hızına göre {db.settings.stockAlertProjectionDays ?? 21} günü çıkarmayacak (kritik) seviyededir.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                {criticalStockProducts.map((p, idx) => (
+                    <div key={idx} className="flex flex-col p-3 bg-white rounded-lg border border-red-100 shadow-sm">
+                    <div className="flex justify-between items-start mb-1">
+                        <div>
+                        <p className="font-bold text-gray-800 text-sm">{p.variantName}</p>
+                        <p className="text-xs text-red-600 font-mono">{p.productCode}</p>
+                        {db.settings.showLowStockDetails && (
+                            <p className="text-xs font-bold text-blue-700 mt-1">
+                            Varyant: <span className="underline">{p.variantName}</span> ({p.barcode})
+                            </p>
+                        )}
+                        </div>
+                        <div className="text-right">
+                        <p className="text-xs font-bold text-red-700">{p.daysOfStock} Günlük Stok</p>
+                        <p className="text-[10px] text-gray-500">Ort. {p.depletionRate} Satış/Gün</p>
+                        </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-xs font-bold text-red-700">{p.daysOfStock} Günlük Stok</p>
-                      <p className="text-[10px] text-gray-500">Ort. {p.depletionRate} Satış/Gün</p>
+                    <div className="mt-2 w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                        <div
+                        className="bg-red-500 h-full rounded-full transition-all duration-500"
+                        style={{ width: `${Math.min(100, (p.stock / p.sales) * 100)}%` }}
+                        />
                     </div>
-                  </div>
-                  <div className="mt-2 w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className="bg-red-500 h-full rounded-full transition-all duration-500"
-                      style={{ width: `${Math.min(100, (p.stock / p.sales) * 100)}%` }}
-                    />
-                  </div>
-                  <div className="flex justify-between mt-1 text-[10px] font-medium text-gray-500">
-                    <span>Mevcut: {p.stock}</span>
-                    <span>{db.settings.stockAlertLookbackDays ?? 7} Gün Satış: {p.sales} | Tahmini {db.settings.stockAlertProjectionDays ?? 21} Gün İhtiyaç: {p.projected}</span>
-                  </div>
+                    <div className="flex justify-between mt-1 text-[10px] font-medium text-gray-500">
+                        <span>Mevcut: {p.stock}</span>
+                        <span>{db.settings.stockAlertLookbackDays ?? 7} Gün Satış: {p.sales} | Tahmini {db.settings.stockAlertProjectionDays ?? 21} Gün İhtiyaç: {p.projected}</span>
+                    </div>
+                    </div>
+                ))}
                 </div>
-              ))}
+            </>
+            ) : (
+            <div className="h-[200px] flex flex-col items-center justify-center text-gray-400 p-8 space-y-2">
+                <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center text-green-600">
+                <Check size={24} />
+                </div>
+                <p className="text-sm font-medium">Stok Durumu İyi</p>
+                <p className="text-xs text-center">Kritik düzeyde azalan ürün bulunmuyor.</p>
             </div>
-          </>
+            )
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-gray-400 p-8 space-y-2">
-            <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center text-green-600">
-              <Check size={24} />
+            <div className="flex flex-col h-[400px]">
+                <div className="flex gap-4 items-center mb-4 bg-gray-50 p-3 rounded-lg border border-gray-200">
+                    <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Başlangıç</label>
+                        <input 
+                            type="date" 
+                            value={unsoldStartDate} 
+                            onChange={e => setUnsoldStartDate(e.target.value)} 
+                            className="border rounded px-2 py-1 text-sm text-gray-700 bg-white" 
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-500 mb-1">Bitiş</label>
+                        <input 
+                            type="date" 
+                            value={unsoldEndDate} 
+                            onChange={e => setUnsoldEndDate(e.target.value)} 
+                            className="border rounded px-2 py-1 text-sm text-gray-700 bg-white" 
+                        />
+                    </div>
+                    <div className="ml-auto flex items-center">
+                        <div className="bg-blue-100 text-blue-800 px-3 py-1.5 rounded-lg text-sm font-bold border border-blue-200">
+                            {unsoldProducts.length} Ürün Bulundu
+                        </div>
+                    </div>
+                </div>
+                {unsoldProducts.length > 0 ? (
+                    <div className="space-y-2 overflow-y-auto pr-2 custom-scrollbar flex-1">
+                        {unsoldProducts.map((p, idx) => (
+                            <div key={idx} className="bg-white p-3 rounded-lg border border-gray-200 shadow-sm flex justify-between items-center hover:border-blue-300 transition-colors">
+                                <div>
+                                    <p className="font-semibold text-gray-800">{p.productName}</p>
+                                    <p className="text-xs text-gray-500 mt-1 font-mono">Barkod: {p.barcode}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-sm font-bold text-gray-700">{p.stock} Adet Stok</p>
+                                    <p className="text-[10px] text-gray-400 mt-1">Bu dönemde satılmadı</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
+                        <Check size={48} className="text-green-500 mb-3 opacity-50" />
+                        <p className="text-lg font-medium text-gray-600">Harika!</p>
+                        <p className="text-sm mt-1">Seçilen tarihler arasında tüm stoklu ürünlerinizden en az 1 adet satılmış.</p>
+                    </div>
+                )}
             </div>
-            <p className="text-sm font-medium">Stok Durumu İyi</p>
-            <p className="text-xs text-center">Kritik düzeyde azalan ürün bulunmuyor.</p>
-          </div>
         )}
       </div>
 

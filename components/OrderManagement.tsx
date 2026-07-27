@@ -3601,13 +3601,20 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                 <td className="text-center">
                                     <div className="flex gap-1 justify-center">
                                         {activeTab === 'active' && (order.status === OrderStatus.SHIPPING || order.status === OrderStatus.DELIVERED) && (
-                                            <button
-                                                onClick={() => handleOpenReturnModal(order)}
-                                                className="text-purple-600 hover:bg-purple-100 p-1 rounded border border-transparent hover:border-purple-200"
-                                                title="İade Al"
-                                            >
-                                                <RotateCcw size={14} />
-                                            </button>
+                                            (() => {
+                                                const totalOrderQty = order.items.reduce((sum, item) => sum + (item.quantity || 1), 0);
+                                                const totalReturnedQty = db.returns.filter(r => r.orderId === order.id).reduce((sum, r) => sum + (r.returnQuantity || 0), 0);
+                                                if (totalReturnedQty >= totalOrderQty && totalOrderQty > 0) return null;
+                                                return (
+                                                    <button
+                                                        onClick={() => handleOpenReturnModal(order)}
+                                                        className="text-purple-600 hover:bg-purple-100 p-1 rounded border border-transparent hover:border-purple-200"
+                                                        title="İade Al"
+                                                    >
+                                                        <RotateCcw size={14} />
+                                                    </button>
+                                                );
+                                            })()
                                         )}
                                         {/* Kontrol Et butonu kullanıcı isteğiyle kaldırıldı */}
                                         {userRole === UserRole.ADMIN && (

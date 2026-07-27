@@ -807,13 +807,13 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         });
     };
 
-    const updateStockForGroup = (color: string, size: string, warehouseId: string, qty: number) => {
+    const updateStockForGroup = (color: string, size: string, warehouseId: string, qty: number | string) => {
         // Stok değerini eksiye düşme kontrolü - Ayarlara göre esneklik sağla
-        const validQty = db.settings.allowNegativeStock ? qty : Math.max(0, qty);
+        const validQty = qty === '' ? undefined : (db.settings.allowNegativeStock ? Number(qty) : Math.max(0, Number(qty)));
 
         const updatedVariants = formData.variants.map(v => {
             if (v.color === color && v.size === size) {
-                return { ...v, stocks: { ...v.stocks, [warehouseId]: validQty } };
+                return { ...v, stocks: { ...v.stocks, [warehouseId]: validQty as any } };
             }
             return v;
         });
@@ -1310,7 +1310,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
             {/* Modal ... (Remaining Code Same) */}
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[9999] backdrop-blur-[1px]">
-                    <div className="bg-[#f0f0f0] border border-gray-500 shadow-2xl w-[1100px] h-[80vh] flex flex-col font-sans text-sm relative">
+                    <div className="bg-[#f0f0f0] border border-gray-500 shadow-2xl w-[1250px] max-w-[95vw] h-[80vh] flex flex-col font-sans text-sm relative">
                         {/* Modal Title Bar */}
                         <div className="h-8 bg-white border-b border-gray-300 flex justify-between items-center px-3 select-none">
                             <span className="font-semibold text-gray-800">{editingProduct ? 'Ürün Kartı Düzenle' : 'Yeni Ürün Kartı'}</span>
@@ -1319,36 +1319,38 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
 
                         <div className="flex-1 overflow-auto p-2 flex gap-2">
                             {/* Left Pane */}
-                            <div className="w-1/3 flex flex-col gap-2 border-r border-gray-300 pr-2 bg-white p-2 border">
-                                <div className="bg-gray-100 p-1 font-bold border-b border-gray-300 text-gray-700">Genel Bilgiler</div>
-                                <div className="grid grid-cols-1 gap-2">
-                                    <div>
-                                        <label className="block text-xs text-gray-500">Ürün Kodu</label>
-                                        <input className="desktop-input w-full" value={formData.productCode} onChange={e => setFormData({ ...formData, productCode: e.target.value })} autoFocus={false} />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs text-gray-500">Ürün Adı</label>
-                                        <input className="desktop-input w-full" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <div className="flex-1">
-                                            <label className="block text-xs text-gray-500">Marka</label>
-                                            <input className="desktop-input w-full" value={formData.brand} onChange={e => setFormData({ ...formData, brand: e.target.value })} />
+                            {activeSubPanel === 'barcode' && (
+                                <div className="w-1/3 flex flex-col gap-2 border-r border-gray-300 pr-2 bg-white p-2 border">
+                                    <div className="bg-gray-100 p-1 font-bold border-b border-gray-300 text-gray-700">Genel Bilgiler</div>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        <div>
+                                            <label className="block text-xs text-gray-500">Ürün Kodu</label>
+                                            <input className="desktop-input w-full" value={formData.productCode} onChange={e => setFormData({ ...formData, productCode: e.target.value })} autoFocus={false} />
                                         </div>
-                                        <div className="flex-1">
-                                            <label className="block text-xs text-gray-500">Grup</label>
-                                            <input className="desktop-input w-full" value={formData.group} onChange={e => setFormData({ ...formData, group: e.target.value })} />
+                                        <div>
+                                            <label className="block text-xs text-gray-500">Ürün Adı</label>
+                                            <input className="desktop-input w-full" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
                                         </div>
-                                    </div>
-                                    <div></div>                                    <div>
-                                        <label className="block text-xs text-gray-500">Kayıt Tarihi</label>
-                                        <input className="desktop-input w-full disabled:bg-gray-100 disabled:text-gray-500" type="date" value={formData.date} disabled={true} />
+                                        <div className="flex gap-2">
+                                            <div className="flex-1">
+                                                <label className="block text-xs text-gray-500">Marka</label>
+                                                <input className="desktop-input w-full" value={formData.brand} onChange={e => setFormData({ ...formData, brand: e.target.value })} />
+                                            </div>
+                                            <div className="flex-1">
+                                                <label className="block text-xs text-gray-500">Grup</label>
+                                                <input className="desktop-input w-full" value={formData.group} onChange={e => setFormData({ ...formData, group: e.target.value })} />
+                                            </div>
+                                        </div>
+                                        <div></div>                                    <div>
+                                            <label className="block text-xs text-gray-500">Kayıt Tarihi</label>
+                                            <input className="desktop-input w-full disabled:bg-gray-100 disabled:text-gray-500" type="date" value={formData.date} disabled={true} />
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
+                            )}
 
                             {/* Right Pane */}
-                            <div className="w-2/3 flex flex-col bg-white border border-gray-300">
+                            <div className={`${activeSubPanel === 'barcode' ? 'w-2/3' : 'w-full'} flex flex-col bg-white border border-gray-300`}>
                                 <div className="bg-gray-100 border-b border-gray-300 flex">
                                     <button
                                         onClick={() => setActiveSubPanel('barcode')}
@@ -1395,9 +1397,9 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                     <button
                                                         type="button"
                                                         onClick={() => {
-                                                            const c = (document.getElementById('newColor') as HTMLInputElement).value;
-                                                            const s = (document.getElementById('newSize') as HTMLInputElement).value;
-                                                            const b = (document.getElementById('newBarcode') as HTMLInputElement).value;
+                                                            const c = (document.getElementById('newColor') as HTMLInputElement).value.trim();
+                                                            const s = (document.getElementById('newSize') as HTMLInputElement).value.trim();
+                                                            const b = (document.getElementById('newBarcode') as HTMLInputElement).value.trim();
                                                             if (c && s) {
                                                                 handleAddVariant(c, s, b);
                                                                 (document.getElementById('newColor') as HTMLInputElement).value = '';
@@ -1685,11 +1687,16 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                                                 <td className="whitespace-nowrap overflow-hidden text-ellipsis">{v.color} / {v.size}</td>
                                                                                 <td className="p-0">
                                                                                     <input
-                                                                                        type="number"
+                                                                                        type="text"
+                                                                                        inputMode="decimal"
                                                                                         className="w-full h-full border-0 px-2 bg-transparent focus:bg-blue-50 outline-none text-gray-800 text-right font-mono"
-                                                                                        value={v.costPrice || 0}
+                                                                                        value={v.costPrice === undefined ? '' : v.costPrice}
                                                                                         onChange={(e) => {
-                                                                                            const val = Number(e.target.value);
+                                                                                            const raw = e.target.value.replace(/,/g, '.').replace(/[^0-9.]/g, '');
+                                                                                            const parts = raw.split('.');
+                                                                                            const cleanStr = parts[0] + (parts.length > 1 ? '.' + parts.slice(1).join('') : '');
+                                                                                            const val = cleanStr === '' ? undefined : Number(cleanStr);
+                                                                                            if (cleanStr !== '' && isNaN(val)) return;
                                                                                             setFormData({
                                                                                                 ...formData,
                                                                                                 variants: formData.variants.map(vv => (vv.color === v.color && vv.size === v.size) ? { ...vv, costPrice: val } : vv)
@@ -1699,11 +1706,16 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                                                 </td>
                                                                                 <td className="p-0">
                                                                                     <input
-                                                                                        type="number"
+                                                                                        type="text"
+                                                                                        inputMode="decimal"
                                                                                         className="w-full h-full border-0 px-2 bg-transparent focus:bg-blue-50 outline-none text-gray-800 text-right font-mono"
-                                                                                        value={v.salePrice || 0}
+                                                                                        value={v.salePrice === undefined ? '' : v.salePrice}
                                                                                         onChange={(e) => {
-                                                                                            const val = Number(e.target.value);
+                                                                                            const raw = e.target.value.replace(/,/g, '.').replace(/[^0-9.]/g, '');
+                                                                                            const parts = raw.split('.');
+                                                                                            const cleanStr = parts[0] + (parts.length > 1 ? '.' + parts.slice(1).join('') : '');
+                                                                                            const val = cleanStr === '' ? undefined : Number(cleanStr);
+                                                                                            if (cleanStr !== '' && isNaN(val)) return;
                                                                                             setFormData({
                                                                                                 ...formData,
                                                                                                 variants: formData.variants.map(vv => (vv.color === v.color && vv.size === v.size) ? { ...vv, salePrice: val } : vv)
@@ -1714,10 +1726,15 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                                                 {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo', isCenter: true }]).map(w => (
                                                                                     <td key={w.id} className="text-center p-0">
                                                                                         <input
-                                                                                            type="number"
+                                                                                            type="text"
+                                                                                            inputMode="numeric"
                                                                                             className="w-full h-full border-0 text-center outline-none focus:bg-blue-50"
-                                                                                            value={v.stocks ? (v.stocks[w.id] || 0) : 0}
-                                                                                            onChange={(e) => updateStockForGroup(v.color, v.size, w.id, Number(e.target.value))}
+                                                                                            value={v.stocks && v.stocks[w.id] !== undefined ? v.stocks[w.id] : ''}
+                                                                                            onChange={(e) => {
+                                                                                                const raw = e.target.value.replace(/[^0-9-]/g, '');
+                                                                                                if (raw === '-') return; // Allow typing negative temporarily if we had a string state, but for now just ignore solitary '-' or use 0
+                                                                                                updateStockForGroup(v.color, v.size, w.id, raw);
+                                                                                            }}
                                                                                         />
                                                                                     </td>
                                                                                 ))}

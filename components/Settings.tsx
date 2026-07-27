@@ -152,9 +152,17 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
         checkLicense();
     }, [db.settings.licenseKey]);
 
-    const handleDeleteApi = (id: string) => {
-        requestConfirm("Bu entegrasyonu silmek istediğinize emin misiniz?", () => {
-            updateDB(prev => ({ ...prev, apiConfigs: prev.apiConfigs.filter(a => a.id !== id) }));
+    const handleDeleteApi = (id: string, storeName: string, mode?: string) => {
+        const msg = mode === 'TEST' 
+            ? `${storeName} test entegrasyonunu ve ona ait tüm test siparişlerini silmek istediğinize emin misiniz?`
+            : `${storeName} entegrasyonunu silmek istediğinize emin misiniz? (Bu mağazaya ait siparişler de veritabanından silinecektir.)`;
+        
+        requestConfirm(msg, () => {
+            updateDB(prev => ({ 
+                ...prev, 
+                apiConfigs: prev.apiConfigs.filter(a => a.id !== id),
+                orders: prev.orders.filter(o => o.storeName !== storeName)
+            }));
         });
     };
 
@@ -598,7 +606,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <button onClick={() => handleEditApiClick(api)} className="text-blue-600 hover:bg-blue-50 p-2 rounded" title="Düzenle">
                                             <Edit size={16} />
                                         </button>
-                                        <button onClick={() => handleDeleteApi(api.id)} className="text-red-600 hover:bg-red-50 p-2 rounded" title="Sil">
+                                        <button onClick={() => handleDeleteApi(api.id, api.storeName, api.mode)} className="text-red-600 hover:bg-red-50 p-2 rounded" title="Sil">
                                             <Trash size={16} />
                                         </button>
                                     </div>
