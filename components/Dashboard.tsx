@@ -787,21 +787,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     const costMap = new Map<string, number>();
     db.products.forEach(p => {
       p.variants.forEach(v => {
-        if (v.barcode) {
-          costMap.set(v.barcode, v.costPrice || p.costPrice || 0);
-        }
+        const key = `${(p.name || '').trim().toLowerCase()}-${(v.color || '').trim().toLowerCase()}-${(v.size || '').trim().toLowerCase()}`;
+        costMap.set(key, v.costPrice || p.costPrice || 0);
       });
     });
 
     filteredOrders.forEach(order => {
       order.items.forEach(item => {
-        const costPrice = item.costPrice !== undefined ? item.costPrice : (costMap.get(item.barcode) || 0);
+        const key = `${(item.productName || '').trim().toLowerCase()}-${(item.color || '').trim().toLowerCase()}-${(item.size || item.productSize || '').trim().toLowerCase()}`;
+        const costPrice = item.costPrice !== undefined ? item.costPrice : (costMap.get(key) || 0);
         gross += costPrice * item.quantity;
       });
 
       const linkedReturns = db.returns.filter(r => r.orderId === order.id);
       linkedReturns.forEach(r => {
-        const costPrice = r.item.costPrice !== undefined ? r.item.costPrice : (costMap.get(r.item.barcode) || 0);
+        const key = `${(r.item.productName || '').trim().toLowerCase()}-${(r.item.color || '').trim().toLowerCase()}-${(r.item.size || r.item.productSize || '').trim().toLowerCase()}`;
+        const costPrice = r.item.costPrice !== undefined ? r.item.costPrice : (costMap.get(key) || 0);
         returned += costPrice * r.returnQuantity;
       });
     });
@@ -1284,20 +1285,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       {/* Depo Stok Özeti */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 mb-6 mt-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+        <div className="flex justify-between items-center mb-4">
           <h3 className="text-gray-700 font-bold">Depo Stok Özetleri</h3>
-          <div className="flex flex-wrap gap-4">
-            <div className="text-sm font-semibold text-blue-800 bg-blue-50 px-4 py-2 rounded-lg border border-blue-100 shadow-sm flex flex-col">
-              <span className="text-xs text-blue-600 mb-1">Seçili Tarihteki Satış Maliyeti (Brüt)</span>
-              <span className="text-gray-900 text-base">{isPrivacyMode ? '***' : grossSoldCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
-            </div>
-            <div className="text-sm font-semibold text-green-800 bg-green-50 px-4 py-2 rounded-lg border border-green-100 shadow-sm flex flex-col">
-              <span className="text-xs text-green-600 mb-1">Seçili Tarihteki Satış Maliyeti (Net)</span>
-              <span className="text-gray-900 text-base">{isPrivacyMode ? '***' : netSoldCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
-            </div>
-          </div>
         </div>
-        <div className="flex flex-wrap gap-4">
+        <div className="flex flex-wrap gap-4 justify-center">
           {warehouseStats.stats.map(stat => (
             <div key={stat.id} className="p-4 rounded-lg bg-white border border-gray-800 w-full md:w-[320px] flex flex-col justify-between shadow-sm">
               <div className="font-semibold text-gray-800 text-sm mb-2">{stat.name}</div>
@@ -1513,7 +1504,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       {/* Ülke Bazlı Satış Dağılımı */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-        <h3 className="text-lg font-bold text-gray-800 mb-4">Ülke Bazlı Satış Dağılımı</h3>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+          <h3 className="text-lg font-bold text-gray-800">Ülke Bazlı Satış Dağılımı</h3>
+          <div className="flex flex-wrap gap-4">
+            <div className="text-sm font-semibold text-blue-800 bg-blue-50 px-4 py-2 rounded-lg border border-blue-100 shadow-sm flex flex-col">
+              <span className="text-xs text-blue-600 mb-1">Seçili Tarihteki Satış Maliyeti (Brüt)</span>
+              <span className="text-gray-900 text-base">{isPrivacyMode ? '***' : grossSoldCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+            </div>
+            <div className="text-sm font-semibold text-green-800 bg-green-50 px-4 py-2 rounded-lg border border-green-100 shadow-sm flex flex-col">
+              <span className="text-xs text-green-600 mb-1">Seçili Tarihteki Satış Maliyeti (Net)</span>
+              <span className="text-gray-900 text-base">{isPrivacyMode ? '***' : netSoldCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</span>
+            </div>
+          </div>
+        </div>
         {countryAnalytics.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-left">
