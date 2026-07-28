@@ -784,6 +784,8 @@ ipcMain.handle('delete-product-image', async (event, filePath) => {
           }
         }
       }
+
+
       return true;
     } catch (error) {
       console.error('Error deleting product image inner:', error);
@@ -1056,7 +1058,9 @@ async function initSQLite() {
     
     CREATE TABLE IF NOT EXISTS warehouses (
       id TEXT PRIMARY KEY,
-      name TEXT
+      name TEXT,
+      isCenter INTEGER DEFAULT 0,
+      syncDisabled INTEGER DEFAULT 0
     );
     
     CREATE TABLE IF NOT EXISTS api_configs (
@@ -1136,6 +1140,11 @@ async function initSQLite() {
   `);
 
   console.log('[SQLITE] Database initialized at:', dbPath);
+
+  // Migrations for existing databases
+  try { sqliteDb.exec('ALTER TABLE warehouses ADD COLUMN isCenter INTEGER DEFAULT 0'); } catch (err) { /* ignore if exists */ }
+  try { sqliteDb.exec('ALTER TABLE warehouses ADD COLUMN syncDisabled INTEGER DEFAULT 0'); } catch (err) { /* ignore if exists */ }
+
 
   // Check for migration
   const jsonPath = join(userDataPath, 'app_database.json');
@@ -1289,7 +1298,12 @@ ipcMain.handle('db-get-all', async () => {
   try {
     const db = {
       settings: {},
-      warehouses: sqliteDb.prepare('SELECT * FROM warehouses').all(),
+      warehouses: sqliteDb.prepare('SELECT * FROM warehouses').all().map(w => ({
+        id: w.id,
+        name: w.name,
+        isCenter: w.isCenter === 1,
+        syncDisabled: w.syncDisabled === 1
+      })),
       apiConfigs: sqliteDb.prepare('SELECT data FROM api_configs').all().map(r => JSON.parse(r.data)),
       products: sqliteDb.prepare('SELECT data FROM products').all().map(r => JSON.parse(r.data)),
       orders: sqliteDb.prepare('SELECT data FROM orders').all().map(r => JSON.parse(r.data)),

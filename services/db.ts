@@ -415,7 +415,10 @@ export const saveDB = async (db: Database): Promise<void> => {
     // Warehouses
     ops.push({ query: 'DELETE FROM warehouses', params: [] });
     db.warehouses.forEach(w => {
-      ops.push({ query: 'INSERT OR REPLACE INTO warehouses (id, name) VALUES (?, ?)', params: [w.id, w.name] });
+      ops.push({ 
+        query: 'INSERT OR REPLACE INTO warehouses (id, name, isCenter, syncDisabled) VALUES (?, ?, ?, ?)', 
+        params: [w.id, w.name, w.isCenter ? 1 : 0, w.syncDisabled ? 1 : 0] 
+      });
     });
 
     // Products (This is still a bit heavy, but SQLite handles it better than JSON write)
