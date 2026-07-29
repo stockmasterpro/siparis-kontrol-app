@@ -1290,6 +1290,69 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         });
     };
 
+    const getOrderFulfillmentInfo = (order: Order) => {
+        const outOfStock = isOrderOutOfStock(order);
+        if (outOfStock) return { isOutOfStock: true, warehouseInitials: [], warehouseNames: [], itemsFulfillment: {} as Record<string, { whName: string, whInitial: string, qty: number }[]> };
+
+        const usedWarehouses = new Set<string>();
+        const usedWarehouseInitials = new Set<string>();
+        const itemsFulfillment: Record<string, { whName: string, whInitial: string, qty: number }[]> = {};
+        
+        const stockTracker = new Map<string, number>();
+
+        order.items.forEach((item, index) => {
+            const product = db.products.find(p => p.variants.some(v => v.barcode === item.barcode));
+            if (!product) return;
+            const variant = product.variants.find(v => v.barcode === item.barcode);
+            if (!variant || !variant.stocks) return;
+
+            let remaining = item.quantity;
+            const availableWarehouses = db.warehouses.filter(w => (variant.stocks[w.id] || 0) > 0);
+            availableWarehouses.sort((a, b) => (b.isCenter ? 1 : 0) - (a.isCenter ? 1 : 0));
+
+            const fulfillmentForThisItem: { whName: string, whInitial: string, qty: number }[] = [];
+
+            for (const wh of availableWarehouses) {
+                if (remaining <= 0) break;
+                
+                const trackerKey = `${variant.barcode}_${wh.id}`;
+                if (!stockTracker.has(trackerKey)) {
+                    stockTracker.set(trackerKey, variant.stocks[wh.id] || 0);
+                }
+                
+                let stock = stockTracker.get(trackerKey) || 0;
+                
+                if (stock > 0) {
+                    const take = Math.min(stock, remaining);
+                    remaining -= take;
+                    stockTracker.set(trackerKey, stock - take);
+                    
+                    const words = wh.name.split(' ').filter(w => w.trim().length > 0);
+                    let initial = '?';
+                    if (words.length >= 2) {
+                        initial = (words[0][0] + words[1][0]).toUpperCase();
+                    } else if (words.length === 1) {
+                        initial = words[0].substring(0, 2).toUpperCase();
+                    } else if (wh.name.length > 0) {
+                        initial = wh.name.substring(0, 2).toUpperCase();
+                    }
+                    
+                    usedWarehouses.add(wh.name);
+                    usedWarehouseInitials.add(initial);
+                    fulfillmentForThisItem.push({ whName: wh.name, whInitial: initial, qty: take });
+                }
+            }
+            itemsFulfillment[`${item.barcode}_${index}`] = fulfillmentForThisItem;
+        });
+
+        return {
+            isOutOfStock: false,
+            warehouseInitials: Array.from(usedWarehouseInitials),
+            warehouseNames: Array.from(usedWarehouses),
+            itemsFulfillment
+        };
+    };
+
     // Aynı ürün (isim+renk+beden) için farklı barkodlar var mı kontrolü
     const hasConflictingBarcodes = (order: Order): boolean => {
         if (!order.items || order.items.length < 2) return false;
@@ -3589,14 +3652,34 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                 <td className="text-xs font-mono">{order.items[0]?.sku || '-'}</td>
                                 <td className="text-xs">{safeFormatDate(order.orderDate)}</td>
                                 <td className="text-center">
-                                    {isOrderOutOfStock(order) && (
-                                        <div className="group relative inline-block">
-                                            <AlertTriangle className="text-red-600 w-5 h-5 mx-auto" />
-                                            <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-red-600 text-white text-xs p-1 rounded whitespace-nowrap z-50 mb-1">
-                                                Stok Yetersiz!
-                                            </div>
-                                        </div>
-                                    )}
+                                    {(() => {
+                                        const fulfillment = getOrderFulfillmentInfo(order);
+                                        if (fulfillment.isOutOfStock) {
+                                            return (
+                                                <div className="group relative inline-block">
+                                                    <AlertTriangle className="text-red-600 w-5 h-5 mx-auto" />
+                                                    <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-red-600 text-white text-xs p-1 rounded whitespace-nowrap z-50 mb-1">
+                                                        Stok Yetersiz!
+                                                    </div>
+                                                </div>
+                                            );
+                                        }
+                                        if (fulfillment.warehouseInitials.length > 0) {
+                                            return (
+                                                <div className="group relative inline-flex gap-1 justify-center">
+                                                    {fulfillment.warehouseInitials.map((initial, i) => (
+                                                        <span key={i} className="inline-flex items-center justify-center bg-green-100 text-green-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-green-200" title={fulfillment.warehouseNames[i]}>
+                                                            {initial}
+                                                        </span>
+                                                    ))}
+                                                    <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-green-800 text-white text-xs p-1 rounded whitespace-nowrap z-50 mb-1">
+                                                        Stok Karşılanan Depolar: {fulfillment.warehouseNames.join(', ')}
+                                                    </div>
+                                                </div>
+                                            );
+                                        }
+                                        return null;
+                                    })()}
                                 </td>
                                 <td className="text-center">
                                     <div className="flex gap-1 justify-center">
@@ -3683,14 +3766,34 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                     </td>
                                     <td className="text-xs">{ret.orderDate ? safeFormatDate(ret.orderDate) : '-'}</td>
                                     <td className="text-center">
-                                        {associatedOrder && isOrderOutOfStock(associatedOrder) && (
-                                            <div className="group relative inline-block">
-                                                <AlertTriangle className="text-red-600 w-5 h-5 mx-auto" />
-                                                <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-red-600 text-white text-xs p-1 rounded whitespace-nowrap z-50 mb-1">
-                                                    Stok Yetersiz!
-                                                </div>
-                                            </div>
-                                        )}
+                                        {associatedOrder && (() => {
+                                            const fulfillment = getOrderFulfillmentInfo(associatedOrder);
+                                            if (fulfillment.isOutOfStock) {
+                                                return (
+                                                    <div className="group relative inline-block">
+                                                        <AlertTriangle className="text-red-600 w-5 h-5 mx-auto" />
+                                                        <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-red-600 text-white text-xs p-1 rounded whitespace-nowrap z-50 mb-1">
+                                                            Stok Yetersiz!
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                            if (fulfillment.warehouseInitials.length > 0) {
+                                                return (
+                                                    <div className="group relative inline-flex gap-1 justify-center">
+                                                        {fulfillment.warehouseInitials.map((initial, i) => (
+                                                            <span key={i} className="inline-flex items-center justify-center bg-green-100 text-green-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-green-200" title={fulfillment.warehouseNames[i]}>
+                                                                {initial}
+                                                            </span>
+                                                        ))}
+                                                        <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 bg-green-800 text-white text-xs p-1 rounded whitespace-nowrap z-50 mb-1">
+                                                            Stok Karşılanan Depolar: {fulfillment.warehouseNames.join(', ')}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
                                     </td>
                                     <td className="text-center font-bold text-red-600">{ret.returnQuantity}</td>
                                     <td className="text-xs">{safeFormatDate(ret.returnDate, true)}</td>
@@ -3888,7 +3991,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             {/* --- ORDER DETAIL MODAL (DOUBLE CLICK) --- */}
             {
-                detailOrder && (
+                detailOrder && (() => {
+                    const detailFulfillment = getOrderFulfillmentInfo(detailOrder);
+                    return (
                     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] backdrop-blur-sm no-print">
                         <div className="bg-white border border-gray-400 shadow-xl w-[700px] flex flex-col font-sans rounded">
                             <div className="h-10 bg-gray-100 border-b border-gray-300 flex justify-between items-center px-4">
@@ -3941,6 +4046,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                     <th className="p-2 border-b">Ürün Adı</th>
                                                     <th className="p-2 border-b">SKU / Barkod</th>
                                                     <th className="p-2 border-b">Renk / Beden</th>
+                                                    <th className="p-2 border-b text-center">Depo</th>
                                                     <th className="p-2 border-b text-center">Adet</th>
                                                     <th className="p-2 border-b text-right">Birim Fiyat</th>
                                                     <th className="p-2 border-b text-right">Toplam</th>
@@ -3973,6 +4079,21 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                     <span className="ml-1 text-blue-600 font-bold">({item.productSize})</span>
                                                                 )}
                                                             </td>
+                                                            <td className="p-2 text-center">
+                                                                {(() => {
+                                                                    const itemFulfillments = detailFulfillment.itemsFulfillment[`${item.barcode}_${idx}`];
+                                                                    if (!itemFulfillments || itemFulfillments.length === 0) return <span className="text-red-500 font-semibold text-xs">Stok Yok</span>;
+                                                                    return (
+                                                                        <div className="flex flex-col gap-1 items-center">
+                                                                            {itemFulfillments.map((f, fi) => (
+                                                                                <span key={fi} className="inline-flex items-center justify-center bg-green-100 text-green-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-green-200" title={f.whName}>
+                                                                                    {f.whInitial} ({f.qty})
+                                                                                </span>
+                                                                            ))}
+                                                                        </div>
+                                                                    );
+                                                                })()}
+                                                            </td>
                                                             <td className="p-2 text-center font-bold">
                                                                 {qty}
                                                                 {activeTab === 'returned' && totalReturned > 0 && (
@@ -3987,7 +4108,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                             </tbody>
                                             <tfoot className="bg-gray-100">
                                                 <tr>
-                                                    <td colSpan={5} className="p-2 text-right font-bold text-gray-700">GENEL TOPLAM:</td>
+                                                    <td colSpan={6} className="p-2 text-right font-bold text-gray-700">GENEL TOPLAM:</td>
                                                     <td className="p-2 text-right font-bold text-lg text-green-700">
                                                         {detailOrder.items.reduce((acc, i) => {
                                                             const returned = db.returns
@@ -4009,7 +4130,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                             </div>
                         </div>
                     </div>
-                )
+                    );
+                })()
             }
 
             {/* --- PRINT MODAL --- */}
