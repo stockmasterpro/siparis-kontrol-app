@@ -854,23 +854,28 @@ const App: React.FC = () => {
     let lastActivity = Date.now();
 
     const resetTimeout = () => {
-      if (!db) return;
+      const currentDb = dbRef.current;
+      if (!currentDb) return;
+      
       lastActivity = Date.now();
       if (timeoutId) clearTimeout(timeoutId);
 
-      const rawMinutes = db.settings.sessionTimeoutMinutes;
+      const rawMinutes = currentDb.settings.sessionTimeoutMinutes;
       const timeoutMinutes = (typeof rawMinutes === 'number' && rawMinutes >= 1) ? rawMinutes : 5;
 
       timeoutId = setTimeout(() => {
         const inactiveTime = Date.now() - lastActivity;
         const timeoutMs = timeoutMinutes * 60 * 1000;
+        
+        const latestDb = dbRef.current;
+        if (!latestDb) return;
 
         // Debug logging for session stability
         if (inactiveTime >= timeoutMs) {
           console.log(`[SESSION-DEBUG] Timeout Triggered. Inactive: ${inactiveTime}ms, Limit: ${timeoutMs}ms (${timeoutMinutes}m)`);
         }
 
-        if (inactiveTime >= timeoutMs && db?.currentUser) {
+        if (inactiveTime >= timeoutMs && latestDb.currentUser) {
           // Oturum zaman aşımı - şifre iste, kullanıcı adını hatırla seçiliyorsa koru
           if (!rememberMe) setUsername('');
           setPassword('');
@@ -878,18 +883,18 @@ const App: React.FC = () => {
 
           // Zaman aşımında kullanıcıyı active users listesinden çıkar
           const activeUsersList = JSON.parse(localStorage.getItem('activeUsers') || '[]');
-          const updatedActiveUsers = activeUsersList.filter((u: User) => u.id !== db.currentUser?.id);
+          const updatedActiveUsers = activeUsersList.filter((u: User) => u.id !== latestDb.currentUser?.id);
           localStorage.setItem('activeUsers', JSON.stringify(updatedActiveUsers));
           setActiveUsers(updatedActiveUsers);
 
           // CurrentUser'ı null yap ama diğer verileri koru - handleUpdateDB güvenliğini aşmak için doğrudan setDB/saveDB kullan
-          const newDB = { ...db, currentUser: null };
+          const newDB = { ...latestDb, currentUser: null };
           setDB(newDB);
           void saveDB(newDB);
 
           // Bildirim göster
-          if (db.settings.notifications?.systemNotification) {
-            const notifSettings = db.settings.notifications;
+          if (latestDb.settings.notifications?.systemNotification) {
+            const notifSettings = latestDb.settings.notifications;
             const shouldToast = notifSettings?.windowsEnabled !== false;
             const shouldSound = notifSettings?.soundEnabled !== false;
 
@@ -898,11 +903,11 @@ const App: React.FC = () => {
                 title: 'Oturum Zaman Aşımı',
                 body: 'Oturumunuz zaman aşımına uğradı. Lütfen tekrar giriş yapın.',
                 playSound: shouldSound,
-                customSoundPath: db.settings.notifications?.systemSoundPath,
+                customSoundPath: latestDb.settings.notifications?.systemSoundPath,
                 type: 'system'
               });
             } else if (shouldSound) {
-              invokeShowNotification({ title: '', body: '', playSound: true, customSoundPath: db.settings.notifications?.systemSoundPath, type: 'system' });
+              invokeShowNotification({ title: '', body: '', playSound: true, customSoundPath: latestDb.settings.notifications?.systemSoundPath, type: 'system' });
             }
           }
         }

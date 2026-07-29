@@ -60,12 +60,18 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('error', (err) => {
-    const detail = err && (err.message || err.toString && err.toString()) ? (err.message || String(err)) : 'Bilinmeyen hata';
+    let detail = err && (err.message || err.toString && err.toString()) ? (err.message || String(err)) : 'Bilinmeyen hata';
+    
+    const lowerDetail = detail.toLowerCase();
+    if (lowerDetail.includes('net::err_') || lowerDetail.includes('enotfound') || lowerDetail.includes('econnreset') || lowerDetail.includes('etimedout') || lowerDetail.includes('network') || lowerDetail.includes('internet')) {
+      detail = 'İnternet bağlantısı yok veya sunucuya ulaşılamıyor. Lütfen bağlantınızı kontrol edip tekrar deneyin.';
+    }
+
     console.error('[UPDATE] Error:', err);
     if (mainWindow) {
       mainWindow.webContents.send('update-message', {
         type: 'error',
-        message: `Güncelleme kontrolü sırasında hata: ${detail}`
+        message: `Güncelleme kontrol edilemedi: ${detail}`
       });
     }
   });

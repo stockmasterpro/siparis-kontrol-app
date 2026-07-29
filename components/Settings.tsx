@@ -155,14 +155,22 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
     const handleDeleteApi = (id: string, storeName: string, mode?: string) => {
         const msg = mode === 'TEST' 
             ? `${storeName} test entegrasyonunu ve ona ait tüm test siparişlerini silmek istediğinize emin misiniz?`
-            : `${storeName} entegrasyonunu silmek istediğinize emin misiniz? (Bu mağazaya ait siparişler de veritabanından silinecektir.)`;
+            : `${storeName} entegrasyonunu silmek istediğinize emin misiniz? (Daha önce çekilmiş sipariş kayıtları silinmeyecektir.)`;
         
         requestConfirm(msg, () => {
-            updateDB(prev => ({ 
-                ...prev, 
-                apiConfigs: prev.apiConfigs.filter(a => a.id !== id),
-                orders: prev.orders.filter(o => o.storeName !== storeName)
-            }));
+            updateDB(prev => {
+                if (mode === 'TEST') {
+                    return {
+                        ...prev,
+                        apiConfigs: prev.apiConfigs.filter(a => a.id !== id),
+                        orders: prev.orders.filter(o => o.storeName !== storeName)
+                    };
+                }
+                return {
+                    ...prev,
+                    apiConfigs: prev.apiConfigs.filter(a => a.id !== id)
+                };
+            });
         });
     };
 

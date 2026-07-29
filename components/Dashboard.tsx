@@ -42,16 +42,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     }));
   };
 
-  useEffect(() => {
-    let timer;
-    if (!isPrivacyMode) {
-      // 2 minutes = 120000 ms
-      timer = setTimeout(() => {
-        setIsPrivacyMode(true);
-      }, 120000);
-    }
-    return () => clearTimeout(timer);
-  }, [isPrivacyMode]);
+
 
   const PRIORITY_COUNTRIES = [
     { name: 'Türkiye', code: 'TR' },
@@ -430,6 +421,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       const storeCancelledOrdersCount = filteredCancelledOrders.length;
 
       const cancelledItemsQty = filteredCancelledOrders.reduce((acc, order) => acc + order.items.reduce((sum, item) => sum + item.quantity, 0), 0);
+      const returnRate = totalItemsQty > 0 ? (returnedItemsQty / totalItemsQty) * 100 : 0;
 
       const tStats = getStatsForDate(todayStr, storeOrders);
       const yStats = getStatsForDate(yesterdayStr, storeOrders);
@@ -439,6 +431,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         totalOrders: totalItemsQty,
         cancelledOrders: cancelledItemsQty,
         returnedOrders: returnedItemsQty,
+        returnRate,
         netOrders: netItemsQty,
         ordersCount: storeOrdersCount,
         returnedOrdersCount: storeReturnedOrdersCount,
@@ -1094,11 +1087,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
           {/* Gizlilik Modu Toggle */}
           <button
             onClick={() => setIsPrivacyMode(!isPrivacyMode)}
-            className={`flex items-center gap-2 px-4 py-2 border rounded font-medium transition-all ${isPrivacyMode ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+            className={`flex items-center justify-center p-2 border rounded font-medium transition-all ${isPrivacyMode ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-gray-300 text-gray-700 hover:bg-gray-50'}`}
             title="Gizlilik Modu (Hassas Verileri Gizle)"
           >
-            {isPrivacyMode ? <EyeOff size={18} className="text-indigo-500" /> : <Eye size={18} className="text-gray-400" />}
-            <span className="hidden sm:inline">{isPrivacyMode ? 'Gizlilik Açık' : 'Gizlilik Kapalı'}</span>
+            {isPrivacyMode ? <EyeOff size={20} className="text-indigo-500" /> : <Eye size={20} className="text-gray-400" />}
           </button>
 
           {/* Ülkeler Çoklu Seçim Dropdown */}
@@ -1369,6 +1361,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
               <div>
                 <span className="text-gray-500 block font-medium">İptal Sipariş / Ürün</span>
                 <span className="font-bold text-red-600 text-sm">{(store as any).cancelledOrdersCount} Sip. / {store.cancelledOrders} Ürün</span>
+              </div>
+              <div className="col-span-2 mt-1 bg-orange-50 p-2 rounded-md border border-orange-100 flex justify-between items-center">
+                <span className="text-orange-700 font-medium">İade Oranı (Ürün Bazlı)</span>
+                <span className="font-bold text-orange-600 text-sm">{isPrivacyMode ? '***' : `%${(store as any).returnRate.toFixed(2)}`}</span>
               </div>
             </div>
 
