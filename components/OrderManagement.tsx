@@ -2537,6 +2537,24 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                 if (col.key === 'price') {
                                                     return <td key={col.key} className="border border-black p-1 text-right">{item.unitPrice.toFixed(2)}</td>;
                                                 }
+                                                if (col.key === 'warehouse') {
+                                                    const fulfillmentInfo = orderToPrint.fulfillmentInfo || getOrderFulfillmentInfo(orderToPrint);
+                                                    const fArr = fulfillmentInfo?.itemsFulfillment?.[`${item.barcode}_${idx}`] || [];
+                                                    const totalStock = fArr.reduce((sum: number, f: any) => sum + f.qty, 0);
+                                                    const missingStock = Math.max(0, item.quantity - totalStock);
+                                                    
+                                                    let symbols: React.ReactNode[] = [];
+                                                    fArr.forEach((f: any, fIdx: number) => {
+                                                        for(let i=0; i<f.qty; i++) {
+                                                            symbols.push(<span key={`f-${fIdx}-${i}`} style={{fontWeight: 'bold'}}>{f.whInitial}</span>);
+                                                        }
+                                                    });
+                                                    for(let i=0; i<missingStock; i++) {
+                                                        symbols.push(<span key={`m-${i}`} style={{fontWeight: 'bold'}}>!</span>);
+                                                    }
+                                                    
+                                                    return <td key={col.key} className="border border-black p-1 text-center">{symbols.length > 0 ? <div className="flex justify-center gap-1 flex-wrap">{symbols}</div> : '-'}</td>;
+                                                }
                                                 return <td key={col.key} className="border border-black p-1"></td>;
                                             })}
                                         </tr>
@@ -2728,21 +2746,22 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         else if (col.key === 'barcode') val = `<span style="font-family: ${el.fontFamily || 'monospace'};">${item.barcode || ''}</span>`;
                         else if (col.key === 'warehouse') {
                             const fulfillmentInfo = orderToPrint.fulfillmentInfo || getOrderFulfillmentInfo(orderToPrint);
-                            let fArr = fulfillmentInfo?.itemsFulfillment?.[`${item.barcode}_${idx}`];
+                            const fArr = fulfillmentInfo?.itemsFulfillment?.[`${item.barcode}_${idx}`] || [];
                             
-                            if (!fArr || fArr.length === 0) {
-                                const wh = db.warehouses.length > 0 ? [...db.warehouses].sort((a,b) => (a.priority || 999) - (b.priority || 999))[0] : null;
-                                if (wh) {
-                                    const words = wh.name.split(' ').filter(w => w.trim().length > 0);
-                                    let initial = '?';
-                                    if (words.length >= 2) initial = (words[0][0] + words[1][0]).toUpperCase();
-                                    else if (words.length === 1) initial = words[0].substring(0, 2).toUpperCase();
-                                    else if (wh.name.length > 0) initial = wh.name.substring(0, 2).toUpperCase();
-                                    fArr = [{ whName: wh.name, whInitial: initial, qty: item.quantity }];
+                            const totalStock = fArr.reduce((sum: number, f: any) => sum + f.qty, 0);
+                            const missingStock = Math.max(0, item.quantity - totalStock);
+                            
+                            let symbols: string[] = [];
+                            fArr.forEach((f: any) => {
+                                for(let i=0; i<f.qty; i++) {
+                                    symbols.push(`<span style="font-weight:bold;">${f.whInitial}</span>`);
                                 }
+                            });
+                            for(let i=0; i<missingStock; i++) {
+                                symbols.push(`<span style="font-weight:bold;">!</span>`);
                             }
 
-                            val = fArr && fArr.length > 0 ? fArr.map((f: any) => Array(f.qty).fill(`<span style="font-weight:bold;">${f.whInitial}</span>`).join(' ')).join(' ') : '-';
+                            val = symbols.length > 0 ? symbols.join(' ') : '-';
                         }
                         else if (col.key === 'price') val = item.unitPrice.toFixed(2);
                         row += `<td class="border border-black p-1 text-${align}">${val}</td>`;
