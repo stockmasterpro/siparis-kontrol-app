@@ -1376,6 +1376,8 @@ export const syncMarketplaceOrders = async (
               if (config.linkedWarehouseId) {
                   warehouses = warehouses.filter(w => w.id === config.linkedWarehouseId);
                   if (warehouses.length === 0) warehouses = [{ id: 'wh1', name: 'Depo 1' } as any]; // Fallback
+              } else {
+                  warehouses = warehouses.filter(w => !w.syncDisabled);
               }
               
               // SORT WAREHOUSES BY PRIORITY
@@ -1414,29 +1416,8 @@ export const syncMarketplaceOrders = async (
                 }
               }
 
-              // Eğer hala düşülecek miktar varsa ve eksi stoğa izin veriliyorsa ana depodan düş
-              if (remainingQty > 0 && db.settings.allowNegativeStock !== false) {
-                 const currentVariant = currentDbProducts.find(p => p.id === product.id)?.variants.find(v => v.barcode === item.barcode);
-                 if (currentVariant) {
-                   const currentMainStock = currentVariant.stocks[mainWhId] || 0;
-                   const newStock = currentMainStock - remainingQty;
-                   const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, mainWhId, newStock);
-                   currentDbProducts = result.updatedProducts;
-
-                   const wh = warehouses.find(w => w.id === mainWhId) || warehouses[0];
-                   const words = wh.name.split(' ').filter(w => w.trim().length > 0);
-                   let initial = '?';
-                   if (words.length >= 2) initial = (words[0][0] + words[1][0]).toUpperCase();
-                   else if (words.length === 1) initial = words[0].substring(0, 2).toUpperCase();
-                   else if (wh.name.length > 0) initial = wh.name.substring(0, 2).toUpperCase();
-
-                   usedWhInitials.add(initial);
-                   usedWhNames.add(wh.name);
-                   const existing = fulfillmentForThisItem.find(f => f.whName === wh.name);
-                   if (existing) existing.qty += remainingQty;
-                   else fulfillmentForThisItem.push({ whName: wh.name, whInitial: initial, qty: remainingQty });
-                 }
-              }
+              // Eğer hala düşülecek miktar varsa, stok düşümü yapılmaz ve fulfillment array'e eklenmez.
+              // Stok eklendiğinde auto-allocation ile tekrar değerlendirilecektir.
 
               orderFulfillmentInfo.itemsFulfillment[`${item.barcode}_${index}`] = fulfillmentForThisItem;
 
@@ -2586,3 +2567,85 @@ export const syncBarcodeStockBatchPazarama = async (
    return true;
 };
 
+// --- AUTO ALLOCATE PENDING ORDERS ---
+export const autoAllocatePendingOrders = (db: any): any => {
+    let updatedOrders = [...db.orders];
+    let currentDbProducts = [...db.products];
+    let madeChanges = false;
+    
+    updatedOrders = updatedOrders.map(order => {
+        if (!order.fulfillmentInfo?.isOutOfStock) return order;
+        // İptal edilmiş veya teslim edilmiş siparişler için işlem yapma
+        if (order.status === 'İptal Edildi' || order.status === 'Teslim Edildi' || order.status === 'İade Edildi' || order.status === 'Tamamlandı') return order;
+        
+        let stillOutOfStock = false;
+        const newFulfillmentInfo = { 
+            ...order.fulfillmentInfo, 
+            itemsFulfillment: { ...order.fulfillmentInfo.itemsFulfillment },
+            warehouseInitials: [...order.fulfillmentInfo.warehouseInitials],
+            warehouseNames: [...order.fulfillmentInfo.warehouseNames]
+        };
+        
+        order.items.forEach((item: any, index: number) => {
+            const currentItemFulfillments = [...(newFulfillmentInfo.itemsFulfillment[`${item.barcode}_${index}`] || [])];
+            let fulfilledQty = currentItemFulfillments.reduce((sum: number, f: any) => sum + f.qty, 0);
+            let remainingQty = item.quantity - fulfilledQty;
+            
+            if (remainingQty > 0) {
+                // Deneme yap
+                let warehouses = db.warehouses && db.warehouses.length > 0 ? [...db.warehouses] : [{ id: 'wh1', name: 'Depo 1' }];
+                warehouses = warehouses.filter((w: any) => !w.syncDisabled);
+                warehouses.sort((a: any, b: any) => (a.priority ?? 999) - (b.priority ?? 999));
+                
+                for (const wh of warehouses) {
+                    if (remainingQty <= 0) break;
+                    
+                    const product = currentDbProducts.find(p => p.variants.some((v: any) => v.barcode === item.barcode));
+                    if (!product) continue;
+                    const variant = product.variants.find((v: any) => v.barcode === item.barcode);
+                    if (!variant) continue;
+                    
+                    const currentWhStock = variant.stocks[wh.id] || 0;
+                    if (currentWhStock > 0) {
+                        const deduct = Math.min(currentWhStock, remainingQty);
+                        const newStock = currentWhStock - deduct;
+                        remainingQty -= deduct;
+                        
+                        // In integration.ts updateLocalStockWithConsistency is used, I should call it. 
+                        // Wait, updateLocalStockWithConsistency is in integration.ts but is it exported or accessible here? Yes, it's defined in integration.ts.
+                        const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, wh.id, newStock);
+                        currentDbProducts = result.updatedProducts;
+                        
+                        const words = wh.name.split(' ').filter((w: string) => w.trim().length > 0);
+                        let initial = '?';
+                        if (words.length >= 2) initial = (words[0][0] + words[1][0]).toUpperCase();
+                        else if (words.length === 1) initial = words[0].substring(0, 2).toUpperCase();
+                        else if (wh.name.length > 0) initial = wh.name.substring(0, 2).toUpperCase();
+                        
+                        const existing = currentItemFulfillments.find(f => f.whName === wh.name);
+                        if (existing) existing.qty += deduct;
+                        else currentItemFulfillments.push({ whName: wh.name, whInitial: initial, qty: deduct });
+                        
+                        if (!newFulfillmentInfo.warehouseInitials.includes(initial)) newFulfillmentInfo.warehouseInitials.push(initial);
+                        if (!newFulfillmentInfo.warehouseNames.includes(wh.name)) newFulfillmentInfo.warehouseNames.push(wh.name);
+                        
+                        madeChanges = true;
+                    }
+                }
+            }
+            
+            newFulfillmentInfo.itemsFulfillment[`${item.barcode}_${index}`] = currentItemFulfillments;
+            if (remainingQty > 0) {
+                stillOutOfStock = true;
+            }
+        });
+        
+        newFulfillmentInfo.isOutOfStock = stillOutOfStock;
+        return { ...order, fulfillmentInfo: newFulfillmentInfo };
+    });
+    
+    if (madeChanges) {
+        return { ...db, orders: updatedOrders, products: currentDbProducts };
+    }
+    return db;
+};

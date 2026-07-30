@@ -1066,7 +1066,9 @@ async function initSQLite() {
       id TEXT PRIMARY KEY,
       name TEXT,
       isCenter INTEGER DEFAULT 0,
-      syncDisabled INTEGER DEFAULT 0
+      syncDisabled INTEGER DEFAULT 0,
+      priority INTEGER DEFAULT 1,
+      isDefault INTEGER DEFAULT 0
     );
     
     CREATE TABLE IF NOT EXISTS api_configs (
@@ -1150,6 +1152,8 @@ async function initSQLite() {
   // Migrations for existing databases
   try { sqliteDb.exec('ALTER TABLE warehouses ADD COLUMN isCenter INTEGER DEFAULT 0'); } catch (err) { /* ignore if exists */ }
   try { sqliteDb.exec('ALTER TABLE warehouses ADD COLUMN syncDisabled INTEGER DEFAULT 0'); } catch (err) { /* ignore if exists */ }
+  try { sqliteDb.exec('ALTER TABLE warehouses ADD COLUMN priority INTEGER DEFAULT 1'); } catch (err) { /* ignore if exists */ }
+  try { sqliteDb.exec('ALTER TABLE warehouses ADD COLUMN isDefault INTEGER DEFAULT 0'); } catch (err) { /* ignore if exists */ }
 
 
   // Check for migration
@@ -1308,7 +1312,9 @@ ipcMain.handle('db-get-all', async () => {
         id: w.id,
         name: w.name,
         isCenter: w.isCenter === 1,
-        syncDisabled: w.syncDisabled === 1
+        syncDisabled: w.syncDisabled === 1,
+        priority: w.priority || 1,
+        isDefault: w.isDefault === 1
       })),
       apiConfigs: sqliteDb.prepare('SELECT data FROM api_configs').all().map(r => JSON.parse(r.data)),
       products: sqliteDb.prepare('SELECT data FROM products').all().map(r => JSON.parse(r.data)),

@@ -226,7 +226,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     // Order Detail Modal State
     const [detailOrder, setDetailOrder] = useState<Order | null>(null);
-    const [editingFulfillment, setEditingFulfillment] = useState<{barcode: string, index: number} | null>(null);
+    const [editingFulfillment, setEditingFulfillment] = useState<{barcode: string, index: number, orderId: string, splits: {whId: string, qty: number}[]} | null>(null);
 
     const [autoRefreshTrigger, setAutoRefreshTrigger] = useState(0);
     const invokeShowNotification = (options: { title?: string; body?: string; playSound?: boolean; customSoundPath?: string; type?: string }) => {
@@ -396,7 +396,24 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const lastUsedId = localStorage.getItem('lastUsedTemplateId');
         if (savedTemplatesStr) {
             try {
-                const templates = JSON.parse(savedTemplatesStr);
+                const templates = JSON.parse(savedTemplatesStr).map((t: any) => {
+                    if (t.config && t.config.elements) {
+                        t.config.elements = t.config.elements.map((el: any) => {
+                            const defEl = DEFAULT_PRINT_CONFIG.elements.find((e: any) => e.id === el.id);
+                            if (defEl && defEl.tableColumns && el.tableColumns) {
+                                const mergedCols = [...el.tableColumns];
+                                defEl.tableColumns.forEach((defCol: any) => {
+                                    if (!mergedCols.find(c => c.key === defCol.key)) {
+                                        mergedCols.push(defCol);
+                                    }
+                                });
+                                return { ...el, tableColumns: mergedCols };
+                            }
+                            return el;
+                        });
+                    }
+                    return t;
+                });
                 setSavedTemplates(templates);
                 if (templates.length > 0) {
                     const defaultTpl = templates.find((t: any) => t.id === lastUsedId) || templates[0];
@@ -1359,21 +1376,31 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         };
     };
 
-    const handleChangeFulfillment = (orderId: string, barcode: string, idx: number, newWhId: string) => {
-        if (!newWhId) return;
-        const newWh = db.warehouses.find(w => w.id === newWhId);
-        if (!newWh) return;
-
+    const handleSaveSplitFulfillment = (orderId: string, barcode: string, idx: number, splits: {whId: string, qty: number}[]) => {
         const orderForCheck = db.orders.find(o => o.id === orderId);
         if (orderForCheck) {
             const itemForCheck = orderForCheck.items[idx];
             if (itemForCheck) {
-                const product = db.products.find(p => p.variants.some(v => v.barcode === barcode));
-                const variant = product?.variants.find(v => v.barcode === barcode);
-                const stockInNewWh = variant?.stocks[newWhId] || 0;
+                const totalSplit = splits.reduce((acc, s) => acc + s.qty, 0);
+                if (totalSplit > itemForCheck.quantity) {
+                    setNotification({ type: 'error', message: 'Toplam adet, sipariş edilen adeti geçemez.' });
+                    return;
+                }
                 
-                if (stockInNewWh < itemForCheck.quantity) {
-                    setNotification({ type: 'error', message: 'Seçili depoda yeterli stok bulunmuyor (Stok Yetersiz).' });
+                let hasError = false;
+                splits.forEach(s => {
+                    if (s.qty > 0) {
+                        const product = db.products.find(p => p.variants.some(v => v.barcode === barcode));
+                        const variant = product?.variants.find(v => v.barcode === barcode);
+                        const stockInNewWh = variant?.stocks[s.whId] || 0;
+                        if (stockInNewWh < s.qty) {
+                            hasError = true;
+                        }
+                    }
+                });
+                
+                if (hasError) {
+                    setNotification({ type: 'error', message: 'Seçili depoların bazılarında yeterli stok bulunmuyor (Stok Yetersiz).' });
                     return;
                 }
             }
@@ -1415,14 +1442,28 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 }
             });
 
-            // Deduct new stock
+            // Deduct new stock based on splits
+            const newFulfillmentArray: any[] = [];
             const product = currentProducts.find(p => p.variants.some(v => v.barcode === barcode));
             if (product) {
                 const variant = product.variants.find(v => v.barcode === barcode);
                 if (variant) {
-                    const newStock = (variant.stocks[newWh.id] || 0) - item.quantity;
-                    const result = updateLocalStockWithConsistency(currentProducts, product.id, variant.color, variant.size, newWh.id, newStock);
-                    currentProducts = result.updatedProducts;
+                    splits.forEach(split => {
+                        const newWh = prev.warehouses?.find(w => w.id === split.whId);
+                        if (newWh && split.qty > 0) {
+                            const newStock = (variant.stocks[newWh.id] || 0) - split.qty;
+                            const result = updateLocalStockWithConsistency(currentProducts, product.id, variant.color, variant.size, newWh.id, newStock);
+                            currentProducts = result.updatedProducts;
+                            
+                            const words = newWh.name.split(' ').filter(w => w.trim().length > 0);
+                            let initial = '?';
+                            if (words.length >= 2) initial = (words[0][0] + words[1][0]).toUpperCase();
+                            else if (words.length === 1) initial = words[0].substring(0, 2).toUpperCase();
+                            else if (newWh.name.length > 0) initial = newWh.name.substring(0, 2).toUpperCase();
+                            
+                            newFulfillmentArray.push({ whName: newWh.name, whInitial: initial, qty: split.qty });
+                        }
+                    });
                     
                     const up = currentProducts.find(p => p.id === product.id);
                     if (up) {
@@ -1435,17 +1476,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 }
             }
 
-            const words = newWh.name.split(' ').filter(w => w.trim().length > 0);
-            let initial = '?';
-            if (words.length >= 2) initial = (words[0][0] + words[1][0]).toUpperCase();
-            else if (words.length === 1) initial = words[0].substring(0, 2).toUpperCase();
-            else if (newWh.name.length > 0) initial = newWh.name.substring(0, 2).toUpperCase();
-
-            newFulfillment.itemsFulfillment[itemKey] = [{
-                whName: newWh.name,
-                whInitial: initial,
-                qty: item.quantity
-            }];
+            newFulfillment.itemsFulfillment[itemKey] = newFulfillmentArray;
 
             const newWhInitials = new Set<string>();
             const newWhNames = new Set<string>();
@@ -2693,8 +2724,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         else if (col.key === 'sku') val = `<span style="font-family: ${el.fontFamily || 'monospace'};">${item.sku || ''}</span>`;
                         else if (col.key === 'barcode') val = `<span style="font-family: ${el.fontFamily || 'monospace'};">${item.barcode || ''}</span>`;
                         else if (col.key === 'warehouse') {
-                            const fArr = orderToPrint.fulfillmentInfo?.itemsFulfillment?.[`${item.barcode}_${idx}`];
-                            val = fArr && fArr.length > 0 ? fArr.map(f => `<span style="font-weight:bold;">${f.whInitial}</span>`).join(', ') : '-';
+                            const fulfillmentInfo = orderToPrint.fulfillmentInfo || getOrderFulfillmentInfo(orderToPrint);
+                            const fArr = fulfillmentInfo?.itemsFulfillment?.[`${item.barcode}_${idx}`];
+                            val = fArr && fArr.length > 0 ? fArr.map((f: any) => Array(f.qty).fill(`<span style="font-weight:bold;">${f.whInitial}</span>`).join(' ')).join(' ') : '-';
                         }
                         else if (col.key === 'price') val = item.unitPrice.toFixed(2);
                         row += `<td class="border border-black p-1 text-${align}">${val}</td>`;
@@ -4215,22 +4247,51 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                     const itemFulfillments = detailFulfillment.itemsFulfillment[`${item.barcode}_${idx}`];
                                                                     const isEditing = editingFulfillment?.barcode === item.barcode && editingFulfillment?.index === idx;
 
-                                                                    if (isEditing) {
+                                                                    if (isEditing && editingFulfillment) {
+                                                                        const totalQty = qty;
+                                                                        const currentSplits = editingFulfillment.splits || [];
+                                                                        const totalSplitQty = currentSplits.reduce((acc, s) => acc + s.qty, 0);
+                                                                        const isValid = totalSplitQty <= totalQty;
+
                                                                         return (
-                                                                            <select
-                                                                                className="text-xs border rounded p-1 w-full outline-none focus:border-blue-500 bg-white shadow-sm"
-                                                                                autoFocus
-                                                                                onBlur={() => setEditingFulfillment(null)}
-                                                                                onChange={(e) => {
-                                                                                    handleChangeFulfillment(detailOrder.id, item.barcode, idx, e.target.value);
-                                                                                    setEditingFulfillment(null);
-                                                                                }}
-                                                                            >
-                                                                                <option value="">Depo Seç</option>
-                                                                                {db.warehouses?.map(w => (
-                                                                                    <option key={w.id} value={w.id}>{w.name}</option>
-                                                                                ))}
-                                                                            </select>
+                                                                            <div className="flex flex-col gap-2 p-2 bg-white border border-gray-300 rounded shadow-lg absolute z-10 w-48 -ml-24 mt-2">
+                                                                                <div className="text-xs font-bold border-b pb-1">Dağıtım (Gereken: {totalQty})</div>
+                                                                                {db.warehouses?.map(w => {
+                                                                                    const split = currentSplits.find(s => s.whId === w.id);
+                                                                                    return (
+                                                                                        <div key={w.id} className="flex justify-between items-center text-xs">
+                                                                                            <span className="truncate w-24 text-left" title={w.name}>{w.name}</span>
+                                                                                            <input 
+                                                                                                type="number" 
+                                                                                                min="0" 
+                                                                                                max={totalQty}
+                                                                                                value={split ? split.qty : ''}
+                                                                                                placeholder="0"
+                                                                                                className="w-14 border rounded p-1 text-right focus:border-blue-500 outline-none"
+                                                                                                onChange={(e) => {
+                                                                                                    const val = parseInt(e.target.value) || 0;
+                                                                                                    const newSplits = [...currentSplits];
+                                                                                                    const existingIdx = newSplits.findIndex(s => s.whId === w.id);
+                                                                                                    if (existingIdx >= 0) newSplits[existingIdx].qty = val;
+                                                                                                    else newSplits.push({whId: w.id, qty: val});
+                                                                                                    setEditingFulfillment({...editingFulfillment, splits: newSplits.filter(s => s.qty > 0)});
+                                                                                                }}
+                                                                                            />
+                                                                                        </div>
+                                                                                    );
+                                                                                })}
+                                                                                <div className="flex justify-between mt-2 pt-2 border-t">
+                                                                                    <button onClick={() => setEditingFulfillment(null)} className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200">İptal</button>
+                                                                                    <button 
+                                                                                        disabled={!isValid}
+                                                                                        onClick={() => {
+                                                                                            handleSaveSplitFulfillment(editingFulfillment.orderId, editingFulfillment.barcode, editingFulfillment.index, editingFulfillment.splits);
+                                                                                            setEditingFulfillment(null);
+                                                                                        }} 
+                                                                                        className={`text-xs px-2 py-1 text-white rounded transition-colors ${isValid ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed'}`}>Kaydet</button>
+                                                                                </div>
+                                                                                {!isValid && <div className="text-[10px] text-red-500 mt-1 leading-tight text-left">Toplam ({totalSplitQty}), siparişi ({totalQty}) geçemez!</div>}
+                                                                            </div>
                                                                         );
                                                                     }
 
@@ -4238,7 +4299,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                         <div className="flex flex-col items-center gap-1">
                                                                             <span className="text-red-500 font-semibold text-xs">Stok Yok</span>
                                                                             <button 
-                                                                                onClick={() => setEditingFulfillment({barcode: item.barcode, index: idx})} 
+                                                                                onClick={() => {
+                                                                                    setEditingFulfillment({barcode: item.barcode, index: idx, orderId: detailOrder.id, splits: []});
+                                                                                }} 
                                                                                 className="mt-1 text-[11px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer"
                                                                             >
                                                                                 Depo Değiştir
@@ -4253,7 +4316,13 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                                 </span>
                                                                             ))}
                                                                             <button 
-                                                                                onClick={() => setEditingFulfillment({barcode: item.barcode, index: idx})} 
+                                                                                onClick={() => {
+                                                                                    const splits = itemFulfillments.map((f: any) => {
+                                                                                        const wh = db.warehouses?.find(w => w.name === f.whName);
+                                                                                        return { whId: wh?.id || '', qty: f.qty };
+                                                                                    });
+                                                                                    setEditingFulfillment({barcode: item.barcode, index: idx, orderId: detailOrder.id, splits});
+                                                                                }} 
                                                                                 className="mt-1 text-[11px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer"
                                                                             >
                                                                                 Depo Değiştir

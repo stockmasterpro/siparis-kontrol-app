@@ -414,8 +414,8 @@ export const saveDB = async (db: Database): Promise<void> => {
     ops.push({ query: 'DELETE FROM warehouses', params: [] });
     db.warehouses.forEach(w => {
       ops.push({ 
-        query: 'INSERT OR REPLACE INTO warehouses (id, name, isCenter, syncDisabled) VALUES (?, ?, ?, ?)', 
-        params: [w.id, w.name, w.isCenter ? 1 : 0, w.syncDisabled ? 1 : 0] 
+        query: 'INSERT OR REPLACE INTO warehouses (id, name, isCenter, syncDisabled, priority, isDefault) VALUES (?, ?, ?, ?, ?, ?)', 
+        params: [w.id, w.name, w.isCenter ? 1 : 0, w.syncDisabled ? 1 : 0, w.priority || 1, w.isDefault ? 1 : 0] 
       });
     });
 

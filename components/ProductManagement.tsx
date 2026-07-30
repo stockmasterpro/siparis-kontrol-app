@@ -4,7 +4,7 @@ import { Database, Product, Variant, Warehouse, UserRole } from '../types';
 import { Plus, Trash2, Edit, Save, Copy, Download, Upload, Search, Archive, FileSpreadsheet, Check, X, FileMinus, HardDrive, Globe, Image as ImageIcon, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from 'xlsx';
-import { syncBarcodeStock } from '../services/integration';
+import { syncBarcodeStock, autoAllocatePendingOrders } from '../services/integration';
 import { getSyncableStock, getTotalStock, getSyncableStockForApi } from '../utils/stockUtils';
 
 const uuid = () => Math.random().toString(36).substr(2, 9);
@@ -301,7 +301,8 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         updateDB(prev => {
             const newProducts = prev.products.filter(p => p.id !== formData.id);
             newProducts.push(formData);
-            return { ...prev, products: newProducts };
+            const newState = { ...prev, products: newProducts };
+            return autoAllocatePendingOrders(newState);
         });
 
         // Sync Check: Arka planda barkod bazlı toplu stok gönderimi
