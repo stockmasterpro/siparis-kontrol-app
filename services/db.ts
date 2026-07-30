@@ -70,14 +70,25 @@ function mergeDismissedKeys(a?: string[], b?: string[]): string[] {
 
 // Merge shared data with local session data
 const mergeDatabases = (localDb: Database, sharedDb: Partial<Database>): Database => {
+  let mergedWarehouses = sharedDb.warehouses || localDb.warehouses || [];
+  const needsNumbering = mergedWarehouses.length > 0 && mergedWarehouses.every(w => !w.priority || w.priority === 1);
+  if (needsNumbering) {
+    mergedWarehouses = mergedWarehouses.map((w, index) => ({
+      ...w,
+      priority: index + 1
+    }));
+  }
+
   return {
     ...localDb,
     // Merge shared data (products, orders, etc.) but keep session-specific data
     products: sharedDb.products || localDb.products,
+    questions: sharedDb.questions || localDb.questions,
+    returnClaims: sharedDb.returnClaims || localDb.returnClaims,
     orders: sharedDb.orders || localDb.orders,
     returns: sharedDb.returns || localDb.returns,
     apiConfigs: sharedDb.apiConfigs || localDb.apiConfigs,
-    warehouses: sharedDb.warehouses || localDb.warehouses,
+    warehouses: mergedWarehouses,
     settings: { ...localDb.settings, ...sharedDb.settings },
     dismissedOrderImportKeys: mergeDismissedKeys(localDb.dismissedOrderImportKeys, sharedDb.dismissedOrderImportKeys),
     // Keep session-specific data
@@ -96,6 +107,15 @@ const migrateAndValidateDB = (data: any): Database => {
     return INITIAL_DB;
   }
 
+  let loadedWarehouses = Array.isArray(data.warehouses) ? data.warehouses : INITIAL_DB.warehouses;
+  const needsNumbering = loadedWarehouses.length > 0 && loadedWarehouses.every(w => !w.priority || w.priority === 1);
+  if (needsNumbering) {
+    loadedWarehouses = loadedWarehouses.map((w, index) => ({
+      ...w,
+      priority: index + 1
+    }));
+  }
+
   // Eksik alanları varsayılan değerlerle doldur
   const migrated: Database = {
     currentUser: data.currentUser || null,
@@ -104,7 +124,7 @@ const migrateAndValidateDB = (data: any): Database => {
     orders: Array.isArray(data.orders) ? data.orders : [],
     returns: Array.isArray(data.returns) ? data.returns : [],
     apiConfigs: Array.isArray(data.apiConfigs) ? data.apiConfigs : [],
-    warehouses: Array.isArray(data.warehouses) ? data.warehouses : INITIAL_DB.warehouses,
+    warehouses: loadedWarehouses,
     questions: Array.isArray(data.questions) ? data.questions : [],
     returnClaims: Array.isArray(data.returnClaims) ? data.returnClaims : [],
     dismissedOrderImportKeys: Array.isArray(data.dismissedOrderImportKeys)

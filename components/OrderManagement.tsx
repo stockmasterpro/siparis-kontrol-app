@@ -43,7 +43,7 @@ interface PrintElement {
     isImage?: boolean; // For image elements
     rotation?: number;
     textAlign?: 'left' | 'center' | 'right';
-    localizedNotes?: { id: string; countries: string[]; content: string }[];
+    localizedNotes?: { id: string; countries: string[]; content: string; fontSize?: number }[];
 }
 
 interface PrintConfig {
@@ -2571,6 +2571,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         const cCodeUpper = cCode.toUpperCase();
                         const localized = el.localizedNotes?.find(n => n.countries.some(c => c.toUpperCase() === cCodeUpper));
                         content = localized ? localized.content : (el.content || '');
+                        if (localized?.fontSize) {
+                            elStyle.fontSize = `${localized.fontSize}pt`;
+                        }
                     } else if (el.key === 'totalPrice') {
                         const total = orderToPrint.items.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0);
                         content = `${total.toFixed(2)} ₺`;
@@ -2699,7 +2702,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         printConfig.elements.filter(e => e.visible).forEach(el => {
             const elRotation = el.rotation || 0;
             const transformOrigin = 'top left'; // Elements position origin is top left
-            const elStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; width: ${el.width ? el.width + 'mm' : 'auto'}; height: ${el.height ? el.height + 'mm' : 'auto'}; font-weight: bold; color: black; white-space: pre-wrap; text-transform: ${el.forceUppercase ? 'uppercase' : 'none'}; transform: translateX(${el.textAlign === 'center' ? '-50%' : el.textAlign === 'right' ? '-100%' : '0'}) rotate(${elRotation}deg); transform-origin: ${transformOrigin}; text-align: ${el.textAlign || 'left'};`;
+            let elStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; font-size: ${el.fontSize}pt; font-family: ${el.fontFamily || 'Arial, sans-serif'}; width: ${el.width ? el.width + 'mm' : 'auto'}; height: ${el.height ? el.height + 'mm' : 'auto'}; font-weight: bold; color: black; white-space: pre-wrap; text-transform: ${el.forceUppercase ? 'uppercase' : 'none'}; transform: translateX(${el.textAlign === 'center' ? '-50%' : el.textAlign === 'right' ? '-100%' : '0'}) rotate(${elRotation}deg); transform-origin: ${transformOrigin}; text-align: ${el.textAlign || 'left'};`;
 
             let content = '';
 
@@ -2725,7 +2728,20 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         else if (col.key === 'barcode') val = `<span style="font-family: ${el.fontFamily || 'monospace'};">${item.barcode || ''}</span>`;
                         else if (col.key === 'warehouse') {
                             const fulfillmentInfo = orderToPrint.fulfillmentInfo || getOrderFulfillmentInfo(orderToPrint);
-                            const fArr = fulfillmentInfo?.itemsFulfillment?.[`${item.barcode}_${idx}`];
+                            let fArr = fulfillmentInfo?.itemsFulfillment?.[`${item.barcode}_${idx}`];
+                            
+                            if (!fArr || fArr.length === 0) {
+                                const wh = db.warehouses.length > 0 ? [...db.warehouses].sort((a,b) => (a.priority || 999) - (b.priority || 999))[0] : null;
+                                if (wh) {
+                                    const words = wh.name.split(' ').filter(w => w.trim().length > 0);
+                                    let initial = '?';
+                                    if (words.length >= 2) initial = (words[0][0] + words[1][0]).toUpperCase();
+                                    else if (words.length === 1) initial = words[0].substring(0, 2).toUpperCase();
+                                    else if (wh.name.length > 0) initial = wh.name.substring(0, 2).toUpperCase();
+                                    fArr = [{ whName: wh.name, whInitial: initial, qty: item.quantity }];
+                                }
+                            }
+
                             val = fArr && fArr.length > 0 ? fArr.map((f: any) => Array(f.qty).fill(`<span style="font-weight:bold;">${f.whInitial}</span>`).join(' ')).join(' ') : '-';
                         }
                         else if (col.key === 'price') val = item.unitPrice.toFixed(2);
@@ -2766,6 +2782,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 const cCodeUpper = cCode.toUpperCase();
                 const localized = el.localizedNotes?.find(n => n.countries.some(c => c.toUpperCase() === cCodeUpper));
                 content = localized ? localized.content : (el.content || '');
+                if (localized?.fontSize) {
+                    elStyleStr = elStyleStr.replace(`font-size: ${el.fontSize}pt`, `font-size: ${localized.fontSize}pt`);
+                }
             } else if (el.key === 'totalPrice') {
                 const total = orderToPrint.items.reduce((acc, i) => acc + (i.unitPrice * i.quantity), 0);
                 content = `${total.toFixed(2)} ₺`;
@@ -4613,9 +4632,23 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                     </label>
                                                                     
                                                                     {el.localizedNotes?.map((locNote, index) => (
-                                                                        <div key={locNote.id} className="bg-gray-50 p-2 rounded border border-gray-200 mt-2">
-                                                                            <div className="flex justify-between items-start mb-1">
-                                                                                <div className="text-[9px] font-bold text-gray-600 uppercase">Çeviri {index + 1}</div>
+                                                                        <div key={locNote.id} className="mb-2 p-1 border border-gray-200 bg-white">
+                                                                            <div className="flex justify-between items-center mb-1">
+                                                                                <div className="text-[9px] font-bold text-gray-600 uppercase flex items-center gap-2">
+                                                                                    Çeviri {index + 1}
+                                                                                    <input
+                                                                                        type="number"
+                                                                                        className="border px-1 w-12 text-[9px] font-normal"
+                                                                                        placeholder="Punto"
+                                                                                        value={locNote.fontSize || el.fontSize}
+                                                                                        title="Yazı Tipi Boyutu (Punto)"
+                                                                                        onChange={e => {
+                                                                                            const newNotes = [...(el.localizedNotes || [])];
+                                                                                            newNotes[index].fontSize = Number(e.target.value);
+                                                                                            handleElementChange(el.id, 'localizedNotes', newNotes);
+                                                                                        }}
+                                                                                    />
+                                                                                </div>
                                                                                 <button 
                                                                                     onClick={() => {
                                                                                         const newNotes = el.localizedNotes?.filter(n => n.id !== locNote.id);
