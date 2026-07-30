@@ -786,7 +786,24 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
     
     const setCenterWarehouse = (id: string) => {
         const existingWarehouses = db.warehouses || [];
-        const updatedWarehouses = existingWarehouses.map(w => ({ ...w, isCenter: w.id === id }));
+        const updatedWarehouses = existingWarehouses.map(w => ({ ...w, isCenter: w.id === id, isDefault: w.id === id }));
+        updateDB(prev => ({ ...prev, warehouses: updatedWarehouses }));
+    };
+
+    const updateWarehousePriority = (id: string, priorityValue: string) => {
+        const existingWarehouses = db.warehouses || [];
+        let newPriority = parseInt(priorityValue);
+        if (isNaN(newPriority) || newPriority < 1) newPriority = 1;
+
+        // Benzersiz kontrolü (kullanıcı girdiği numara zaten varsa yer değiştirebilir veya reddedebiliriz)
+        // Reddedelim ve kullanıcıya uyarı verelim
+        const conflict = existingWarehouses.find(w => w.id !== id && w.priority === newPriority);
+        if (conflict) {
+            setNotification({ type: 'error', message: `Bu sıra numarası (${newPriority}) zaten "${conflict.name}" deposunda kullanılıyor!` });
+            return;
+        }
+
+        const updatedWarehouses = existingWarehouses.map(w => w.id === id ? { ...w, priority: newPriority } : w);
         updateDB(prev => ({ ...prev, warehouses: updatedWarehouses }));
     };
 
@@ -1614,13 +1631,22 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                             {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo', isCenter: true }]).map(w => (
                                                                 <th key={w.id} style={{ width: '150px', textAlign: 'center' }}>
                                                                     <div className="flex items-center justify-center gap-1 group relative">
-                                                                        <button 
-                                                                            title="Merkez Yap" 
-                                                                            onClick={() => setCenterWarehouse(w.id)} 
-                                                                            className={`text-sm outline-none ${w.isCenter ? 'text-yellow-500' : 'text-gray-300 hover:text-yellow-400'}`}
-                                                                        >
-                                                                            ★
-                                                                        </button>
+                                                                        <div className="flex flex-col items-center gap-0.5">
+                                                                            <button 
+                                                                                title="Varsayılan Yap (İadeler buraya gelir)" 
+                                                                                onClick={() => setCenterWarehouse(w.id)} 
+                                                                                className={`text-sm outline-none leading-none ${w.isCenter || w.isDefault ? 'text-yellow-500' : 'text-gray-300 hover:text-yellow-400'}`}
+                                                                            >
+                                                                                ★
+                                                                            </button>
+                                                                            <input
+                                                                                title="Stok Düşüm Sırası (Aynı sayı olamaz)"
+                                                                                className="w-6 text-center text-[9px] border rounded outline-none px-0"
+                                                                                value={w.priority || ''}
+                                                                                placeholder="-"
+                                                                                onChange={(e) => updateWarehousePriority(w.id, e.target.value)}
+                                                                            />
+                                                                        </div>
                                                                         {editingWarehouseId === w.id ? (
                                                                             <input 
                                                                                 autoFocus

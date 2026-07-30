@@ -1341,21 +1341,52 @@ export const syncMarketplaceOrders = async (
 
       const isSuspended = !allBarcodesExist;
 
+      let orderFulfillmentInfo = {
+        isOutOfStock: false,
+        warehouseInitials: [] as string[],
+        warehouseNames: [] as string[],
+        itemsFulfillment: {} as Record<string, { whName: string, whInitial: string, qty: number }[]>
+      };
+      const usedWhInitials = new Set<string>();
+      const usedWhNames = new Set<string>();
+
       // STOK DÜŞME (Sadece askıda değilse)
       // "tüm barkodlar tanımlı ise siparişler sayfasına düşer, her bir barkod için tek tek ... stokdan adetleri kadar düşer"
       if (!isSuspended) {
-        orderItems.forEach(item => {
+        orderItems.forEach((item, index) => {
+          let totalAvailableStockForItem = 0;
+          currentDbProducts.forEach(product => {
+            const variant = product.variants.find(v => v.barcode === item.barcode);
+            if (variant) {
+                const whList = db.warehouses || [];
+                totalAvailableStockForItem += whList.reduce((sum, wh) => sum + (variant.stocks[wh.id] || 0), 0);
+            }
+          });
+
+          if (totalAvailableStockForItem < item.quantity) {
+             orderFulfillmentInfo.isOutOfStock = true;
+          }
+
           // ÖNEMLİ: Aynı barkoda sahip TÜM ürünleri bul ve stoklarını düşür
           currentDbProducts.forEach(product => {
             const variant = product.variants.find(v => v.barcode === item.barcode);
             if (variant) {
               let remainingQty = item.quantity;
-              let warehouses = db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' } as any];
+              let warehouses = db.warehouses && db.warehouses.length > 0 ? [...db.warehouses] : [{ id: 'wh1', name: 'Merkez Depo' } as any];
               if (config.linkedWarehouseId) {
                   warehouses = warehouses.filter(w => w.id === config.linkedWarehouseId);
                   if (warehouses.length === 0) warehouses = [{ id: 'wh1', name: 'Merkez Depo' } as any]; // Fallback
               }
-              const mainWhId = warehouses[0].id;
+              
+              // SORT WAREHOUSES BY PRIORITY
+              warehouses.sort((a, b) => {
+                  const prioA = a.priority ?? 999;
+                  const prioB = b.priority ?? 999;
+                  return prioA - prioB;
+              });
+
+              const mainWhId = warehouses.find(w => w.isDefault || w.isCenter)?.id || warehouses[0].id;
+              const fulfillmentForThisItem: { whName: string, whInitial: string, qty: number }[] = [];
 
               for (const wh of warehouses) {
                 if (remainingQty <= 0) break;
@@ -1370,6 +1401,16 @@ export const syncMarketplaceOrders = async (
                   remainingQty -= deduct;
                   const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, wh.id, newStock);
                   currentDbProducts = result.updatedProducts;
+
+                  const words = wh.name.split(' ').filter(w => w.trim().length > 0);
+                  let initial = '?';
+                  if (words.length >= 2) initial = (words[0][0] + words[1][0]).toUpperCase();
+                  else if (words.length === 1) initial = words[0].substring(0, 2).toUpperCase();
+                  else if (wh.name.length > 0) initial = wh.name.substring(0, 2).toUpperCase();
+
+                  usedWhInitials.add(initial);
+                  usedWhNames.add(wh.name);
+                  fulfillmentForThisItem.push({ whName: wh.name, whInitial: initial, qty: deduct });
                 }
               }
 
@@ -1381,8 +1422,23 @@ export const syncMarketplaceOrders = async (
                    const newStock = currentMainStock - remainingQty;
                    const result = updateLocalStockWithConsistency(currentDbProducts, product.id, variant.color, variant.size, mainWhId, newStock);
                    currentDbProducts = result.updatedProducts;
+
+                   const wh = warehouses.find(w => w.id === mainWhId) || warehouses[0];
+                   const words = wh.name.split(' ').filter(w => w.trim().length > 0);
+                   let initial = '?';
+                   if (words.length >= 2) initial = (words[0][0] + words[1][0]).toUpperCase();
+                   else if (words.length === 1) initial = words[0].substring(0, 2).toUpperCase();
+                   else if (wh.name.length > 0) initial = wh.name.substring(0, 2).toUpperCase();
+
+                   usedWhInitials.add(initial);
+                   usedWhNames.add(wh.name);
+                   const existing = fulfillmentForThisItem.find(f => f.whName === wh.name);
+                   if (existing) existing.qty += remainingQty;
+                   else fulfillmentForThisItem.push({ whName: wh.name, whInitial: initial, qty: remainingQty });
                  }
               }
+
+              orderFulfillmentInfo.itemsFulfillment[`${item.barcode}_${index}`] = fulfillmentForThisItem;
 
               // Sync listesine ekle - ÖNEMLİ: Sadece siparişteki barkod değil, 
               // o varyantla (Renk/Beden) eşleşen TÜM barkodları senkronizasyon listesine ekle.
@@ -1397,6 +1453,9 @@ export const syncMarketplaceOrders = async (
             }
           });
         });
+
+        orderFulfillmentInfo.warehouseInitials = Array.from(usedWhInitials);
+        orderFulfillmentInfo.warehouseNames = Array.from(usedWhNames);
       }
 
       // SİPARİŞİ OLUŞTUR
@@ -1444,7 +1503,8 @@ export const syncMarketplaceOrders = async (
           apiOrder.invoiceAddress.district,
           apiOrder.invoiceAddress.city
         ].filter(Boolean).join(', ') : undefined,
-        fullData: apiOrder // API'den gelen tüm veriyi sakla
+        fullData: apiOrder, // API'den gelen tüm veriyi sakla
+        fulfillmentInfo: !isSuspended ? orderFulfillmentInfo : undefined // Siparişin stok düşüm bilgisi
       };
 
       // Auto Process Logic if enabled (Active orders only)

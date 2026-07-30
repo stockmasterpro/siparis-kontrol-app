@@ -259,7 +259,8 @@ Mağaza: ${claim.storeName}
         }
 
         const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
-        const whId = apiConfig?.linkedWarehouseId || (db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1');
+        const defaultWh = db.warehouses?.find(w => w.isDefault || w.isCenter) || db.warehouses?.[0];
+        const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
         const currentStock = variant.stocks[whId] || 0;
         const newStock = currentStock + returnQty;
 
@@ -412,7 +413,8 @@ Mağaza: ${claim.storeName}
 
                         // Update stocks
                         const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
-                        const whId = apiConfig?.linkedWarehouseId || (db.warehouses && db.warehouses.length > 0 ? db.warehouses[0].id : 'wh1');
+                        const defaultWh = db.warehouses?.find(w => w.isDefault || w.isCenter) || db.warehouses?.[0];
+                        const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
                         const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
                         const currentStock = variant.stocks[whId] || 0;
                         const newStock = currentStock + returnQty;

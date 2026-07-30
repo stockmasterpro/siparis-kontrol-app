@@ -29,8 +29,10 @@ export interface User {
 export interface Warehouse {
   id: string;
   name: string;
-  isCenter?: boolean;
+  isCenter?: boolean; // Gelecekte silinebilir, geriye uyumluluk için tutuluyor
   syncDisabled?: boolean; // İnternet satışına kapalı mı?
+  priority?: number; // Stok düşüm sırası
+  isDefault?: boolean; // Yıldızlı (zorunlu varsayılan iade ve ana depo)
 }
 
 export interface Variant {
@@ -109,6 +111,12 @@ export interface Order {
   postalCode?: string; // Posta Kodu
   fullData?: any; // API'den gelen ham verinin tamamı (İleride lazım olursa diye)
   isDeleted?: boolean; // Soft delete flag for cancelled orders
+  fulfillmentInfo?: {
+    isOutOfStock: boolean;
+    warehouseInitials: string[];
+    warehouseNames: string[];
+    itemsFulfillment: Record<string, { whName: string, whInitial: string, qty: number }[]>;
+  }; // Siparişin hangi depodan düştüğü bilgisi (stok yetersizse onu da saklar)
 }
 
 export interface ReturnRecord {

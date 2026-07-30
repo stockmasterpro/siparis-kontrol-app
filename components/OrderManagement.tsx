@@ -225,6 +225,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     // Order Detail Modal State
     const [detailOrder, setDetailOrder] = useState<Order | null>(null);
+    const [editingFulfillment, setEditingFulfillment] = useState<{barcode: string, index: number} | null>(null);
 
     const [autoRefreshTrigger, setAutoRefreshTrigger] = useState(0);
     const invokeShowNotification = (options: { title?: string; body?: string; playSound?: boolean; customSoundPath?: string; type?: string }) => {
@@ -1291,6 +1292,10 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     };
 
     const getOrderFulfillmentInfo = (order: Order) => {
+        if (order.fulfillmentInfo) {
+            return order.fulfillmentInfo;
+        }
+
         const outOfStock = isOrderOutOfStock(order);
         if (outOfStock) return { isOutOfStock: true, warehouseInitials: [], warehouseNames: [], itemsFulfillment: {} as Record<string, { whName: string, whInitial: string, qty: number }[]> };
 
@@ -1308,7 +1313,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             let remaining = item.quantity;
             const availableWarehouses = db.warehouses.filter(w => (variant.stocks[w.id] || 0) > 0);
-            availableWarehouses.sort((a, b) => (b.isCenter ? 1 : 0) - (a.isCenter ? 1 : 0));
+            availableWarehouses.sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
 
             const fulfillmentForThisItem: { whName: string, whInitial: string, qty: number }[] = [];
 
@@ -1351,6 +1356,112 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             warehouseNames: Array.from(usedWarehouses),
             itemsFulfillment
         };
+    };
+
+    const handleChangeFulfillment = (orderId: string, barcode: string, idx: number, newWhId: string) => {
+        if (!newWhId) return;
+        const newWh = db.warehouses.find(w => w.id === newWhId);
+        if (!newWh) return;
+
+        let barcodesToSync: Record<string, number> = {};
+
+        updateDB(prev => {
+            const updatedOrders = [...prev.orders];
+            const orderIndex = updatedOrders.findIndex(o => o.id === orderId);
+            if (orderIndex === -1) return prev;
+            
+            const order = { ...updatedOrders[orderIndex] };
+            if (!order.fulfillmentInfo) {
+                 order.fulfillmentInfo = getOrderFulfillmentInfo(order);
+            }
+            
+            const newFulfillment = JSON.parse(JSON.stringify(order.fulfillmentInfo));
+            const itemKey = `${barcode}_${idx}`;
+            const item = order.items[idx];
+            if (!item) return prev;
+
+            const oldFulfillments = newFulfillment.itemsFulfillment[itemKey] || [];
+            let currentProducts = [...prev.products];
+            
+            // Revert old stocks
+            oldFulfillments.forEach((f: any) => {
+                const oldWh = prev.warehouses?.find(w => w.name === f.whName);
+                if (oldWh) {
+                    const product = currentProducts.find(p => p.variants.some(v => v.barcode === barcode));
+                    if (product) {
+                        const variant = product.variants.find(v => v.barcode === barcode);
+                        if (variant) {
+                            const newStock = (variant.stocks[oldWh.id] || 0) + f.qty;
+                            const result = updateLocalStockWithConsistency(currentProducts, product.id, variant.color, variant.size, oldWh.id, newStock);
+                            currentProducts = result.updatedProducts;
+                        }
+                    }
+                }
+            });
+
+            // Deduct new stock
+            const product = currentProducts.find(p => p.variants.some(v => v.barcode === barcode));
+            if (product) {
+                const variant = product.variants.find(v => v.barcode === barcode);
+                if (variant) {
+                    const newStock = (variant.stocks[newWh.id] || 0) - item.quantity;
+                    const result = updateLocalStockWithConsistency(currentProducts, product.id, variant.color, variant.size, newWh.id, newStock);
+                    currentProducts = result.updatedProducts;
+                    
+                    const up = currentProducts.find(p => p.id === product.id);
+                    if (up) {
+                        up.variants.forEach(pv => {
+                            if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
+                                barcodesToSync[pv.barcode] = getSyncableStock(pv, prev.warehouses || []);
+                            }
+                        });
+                    }
+                }
+            }
+
+            const words = newWh.name.split(' ').filter(w => w.trim().length > 0);
+            let initial = '?';
+            if (words.length >= 2) initial = (words[0][0] + words[1][0]).toUpperCase();
+            else if (words.length === 1) initial = words[0].substring(0, 2).toUpperCase();
+            else if (newWh.name.length > 0) initial = newWh.name.substring(0, 2).toUpperCase();
+
+            newFulfillment.itemsFulfillment[itemKey] = [{
+                whName: newWh.name,
+                whInitial: initial,
+                qty: item.quantity
+            }];
+
+            const newWhInitials = new Set<string>();
+            const newWhNames = new Set<string>();
+            let outOfStock = false;
+
+            Object.values(newFulfillment.itemsFulfillment).forEach((arr: any) => {
+                if (!arr || arr.length === 0) outOfStock = true;
+                arr?.forEach((f: any) => {
+                    newWhInitials.add(f.whInitial);
+                    newWhNames.add(f.whName);
+                });
+            });
+
+            newFulfillment.warehouseInitials = Array.from(newWhInitials);
+            newFulfillment.warehouseNames = Array.from(newWhNames);
+            newFulfillment.isOutOfStock = outOfStock;
+
+            order.fulfillmentInfo = newFulfillment;
+            updatedOrders[orderIndex] = order;
+
+            if (detailOrder && detailOrder.id === order.id) {
+                setDetailOrder(order);
+            }
+
+            return { ...prev, orders: updatedOrders, products: currentProducts };
+        });
+        
+        if (Object.keys(barcodesToSync).length > 0) {
+            syncBarcodeStockBatchMultiple(barcodesToSync, db.apiConfigs || []).catch(console.error);
+        }
+        
+        setNotification({ type: 'success', message: 'Depo tahsisi değiştirildi ve stoklar otomatik güncellendi.' });
     };
 
     // Aynı ürün (isim+renk+beden) için farklı barkodlar var mı kontrolü
@@ -4082,14 +4193,51 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                             <td className="p-2 text-center">
                                                                 {(() => {
                                                                     const itemFulfillments = detailFulfillment.itemsFulfillment[`${item.barcode}_${idx}`];
-                                                                    if (!itemFulfillments || itemFulfillments.length === 0) return <span className="text-red-500 font-semibold text-xs">Stok Yok</span>;
+                                                                    const isEditing = editingFulfillment?.barcode === item.barcode && editingFulfillment?.index === idx;
+
+                                                                    if (isEditing) {
+                                                                        return (
+                                                                            <select
+                                                                                className="text-xs border rounded p-1 w-full outline-none focus:border-blue-500 bg-white shadow-sm"
+                                                                                autoFocus
+                                                                                onBlur={() => setEditingFulfillment(null)}
+                                                                                onChange={(e) => {
+                                                                                    handleChangeFulfillment(detailOrder.id, item.barcode, idx, e.target.value);
+                                                                                    setEditingFulfillment(null);
+                                                                                }}
+                                                                            >
+                                                                                <option value="">Depo Seç</option>
+                                                                                {db.warehouses?.map(w => (
+                                                                                    <option key={w.id} value={w.id}>{w.name}</option>
+                                                                                ))}
+                                                                            </select>
+                                                                        );
+                                                                    }
+
+                                                                    if (!itemFulfillments || itemFulfillments.length === 0) return (
+                                                                        <div className="flex flex-col items-center gap-1 group relative">
+                                                                            <span className="text-red-500 font-semibold text-xs">Stok Yok</span>
+                                                                            <button 
+                                                                                onClick={() => setEditingFulfillment({barcode: item.barcode, index: idx})} 
+                                                                                className="hidden group-hover:block absolute -bottom-4 text-[10px] text-blue-500 hover:underline bg-white px-1 shadow rounded z-10"
+                                                                            >
+                                                                                Değiştir
+                                                                            </button>
+                                                                        </div>
+                                                                    );
                                                                     return (
-                                                                        <div className="flex flex-col gap-1 items-center">
+                                                                        <div className="flex flex-col gap-1 items-center group relative">
                                                                             {itemFulfillments.map((f, fi) => (
                                                                                 <span key={fi} className="inline-flex items-center justify-center bg-green-100 text-green-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-green-200" title={f.whName}>
                                                                                     {f.whInitial} ({f.qty})
                                                                                 </span>
                                                                             ))}
+                                                                            <button 
+                                                                                onClick={() => setEditingFulfillment({barcode: item.barcode, index: idx})} 
+                                                                                className="hidden group-hover:block absolute -bottom-4 text-[10px] text-blue-500 hover:underline bg-white px-1 shadow rounded z-10"
+                                                                            >
+                                                                                Değiştir
+                                                                            </button>
                                                                         </div>
                                                                     );
                                                                 })()}
