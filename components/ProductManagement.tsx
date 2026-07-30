@@ -729,16 +729,25 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
     };
 
     const addNewWarehouseDirect = () => {
-        const existingWarehouses = (db.warehouses && db.warehouses.length > 0) ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo', isCenter: true }];
+        const existingWarehouses = (db.warehouses && db.warehouses.length > 0) ? db.warehouses : [{ id: 'wh1', name: 'Depo 1', isCenter: true, priority: 1 }];
         
-        let newNum = existingWarehouses.length;
+        let maxNum = 0;
+        existingWarehouses.forEach(w => {
+            const match = w.name.match(/Depo\s+(\d+)/i);
+            if (match) {
+                const num = parseInt(match[1], 10);
+                if (num > maxNum) maxNum = num;
+            }
+        });
+        
+        let newNum = maxNum + 1;
         let newName = `Depo ${newNum}`;
         while (existingWarehouses.some(w => w.name === newName)) {
             newNum++;
             newName = `Depo ${newNum}`;
         }
         
-        const newWh: Warehouse = { id: uuid(), name: newName };
+        const newWh: Warehouse = { id: uuid(), name: newName, priority: newNum };
         updateDB(prev => ({ ...prev, warehouses: [...existingWarehouses, newWh] }));
     };
 
@@ -746,7 +755,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         const existingWarehouses = db.warehouses || [];
         const target = existingWarehouses.find(w => w.id === id);
         if (target?.isCenter) {
-            setNotification({ type: 'error', message: 'Merkez depo silinemez!' });
+            setNotification({ type: 'error', message: 'Ana depo (Merkez) silinemez!' });
             return;
         }
         
@@ -1125,7 +1134,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                     </div>
                                 </div>
                                 <div className="space-y-1">
-                                    {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }]).map(wh => {
+                                    {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Depo 1' }]).map(wh => {
                                         const qty = exactBarcodeMatch.variant.stocks[wh.id] || 0;
                                         return (
                                             <div key={wh.id} className="flex justify-between items-center bg-gray-50 p-1.5 rounded">
@@ -1628,7 +1637,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                             </th>
                                                             <th style={{ width: '80px', textAlign: 'right' }}>Maliyet</th>
                                                             <th style={{ width: '80px', textAlign: 'right' }}>PSF</th>
-                                                            {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo', isCenter: true }]).map(w => (
+                                                            {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Depo 1', isCenter: true, priority: 1 }]).map(w => (
                                                                 <th key={w.id} style={{ width: '150px', textAlign: 'center' }}>
                                                                     <div className="flex items-center justify-center gap-1 group relative">
                                                                         <div className="flex flex-col items-center gap-0.5">
@@ -1749,7 +1758,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                                                                         }}
                                                                                     />
                                                                                 </td>
-                                                                                {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo', isCenter: true }]).map(w => (
+                                                                                {(db.warehouses && db.warehouses.length > 0 ? db.warehouses : [{ id: 'wh1', name: 'Depo 1', isCenter: true, priority: 1 }]).map(w => (
                                                                                     <td key={w.id} className="text-center p-0">
                                                                                         <input
                                                                                             type="text"

@@ -1363,6 +1363,21 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const newWh = db.warehouses.find(w => w.id === newWhId);
         if (!newWh) return;
 
+        const orderForCheck = db.orders.find(o => o.id === orderId);
+        if (orderForCheck) {
+            const itemForCheck = orderForCheck.items[idx];
+            if (itemForCheck) {
+                const product = db.products.find(p => p.variants.some(v => v.barcode === barcode));
+                const variant = product?.variants.find(v => v.barcode === barcode);
+                const stockInNewWh = variant?.stocks[newWhId] || 0;
+                
+                if (stockInNewWh < itemForCheck.quantity) {
+                    setNotification({ type: 'error', message: 'Seçili depoda yeterli stok bulunmuyor (Stok Yetersiz).' });
+                    return;
+                }
+            }
+        }
+
         let barcodesToSync: Record<string, number> = {};
 
         updateDB(prev => {
@@ -4215,18 +4230,18 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                     }
 
                                                                     if (!itemFulfillments || itemFulfillments.length === 0) return (
-                                                                        <div className="flex flex-col items-center gap-1 group relative">
+                                                                        <div className="flex flex-col items-center gap-1">
                                                                             <span className="text-red-500 font-semibold text-xs">Stok Yok</span>
                                                                             <button 
                                                                                 onClick={() => setEditingFulfillment({barcode: item.barcode, index: idx})} 
-                                                                                className="hidden group-hover:block absolute -bottom-4 text-[10px] text-blue-500 hover:underline bg-white px-1 shadow rounded z-10"
+                                                                                className="mt-1 text-[11px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer"
                                                                             >
-                                                                                Değiştir
+                                                                                Depo Değiştir
                                                                             </button>
                                                                         </div>
                                                                     );
                                                                     return (
-                                                                        <div className="flex flex-col gap-1 items-center group relative">
+                                                                        <div className="flex flex-col gap-1 items-center">
                                                                             {itemFulfillments.map((f, fi) => (
                                                                                 <span key={fi} className="inline-flex items-center justify-center bg-green-100 text-green-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-green-200" title={f.whName}>
                                                                                     {f.whInitial} ({f.qty})
@@ -4234,9 +4249,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                             ))}
                                                                             <button 
                                                                                 onClick={() => setEditingFulfillment({barcode: item.barcode, index: idx})} 
-                                                                                className="hidden group-hover:block absolute -bottom-4 text-[10px] text-blue-500 hover:underline bg-white px-1 shadow rounded z-10"
+                                                                                className="mt-1 text-[11px] px-2 py-0.5 bg-blue-50 text-blue-600 rounded border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer"
                                                                             >
-                                                                                Değiştir
+                                                                                Depo Değiştir
                                                                             </button>
                                                                         </div>
                                                                     );

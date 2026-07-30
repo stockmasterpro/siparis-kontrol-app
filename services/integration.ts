@@ -1372,10 +1372,10 @@ export const syncMarketplaceOrders = async (
             const variant = product.variants.find(v => v.barcode === item.barcode);
             if (variant) {
               let remainingQty = item.quantity;
-              let warehouses = db.warehouses && db.warehouses.length > 0 ? [...db.warehouses] : [{ id: 'wh1', name: 'Merkez Depo' } as any];
+              let warehouses = db.warehouses && db.warehouses.length > 0 ? [...db.warehouses] : [{ id: 'wh1', name: 'Depo 1' } as any];
               if (config.linkedWarehouseId) {
                   warehouses = warehouses.filter(w => w.id === config.linkedWarehouseId);
-                  if (warehouses.length === 0) warehouses = [{ id: 'wh1', name: 'Merkez Depo' } as any]; // Fallback
+                  if (warehouses.length === 0) warehouses = [{ id: 'wh1', name: 'Depo 1' } as any]; // Fallback
               }
               
               // SORT WAREHOUSES BY PRIORITY

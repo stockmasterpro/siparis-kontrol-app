@@ -710,7 +710,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   // --- Depo Stok Analizi ---
   const warehouseStats = useMemo(() => {
     const stats: Record<string, { id: string, name: string, quantity: number, costValue: number, saleValue: number }> = {};
-    const warehouses = (db.warehouses && db.warehouses.length > 0) ? db.warehouses : [{ id: 'wh1', name: 'Merkez Depo' }];
+    const warehouses = (db.warehouses && db.warehouses.length > 0) ? db.warehouses : [{ id: 'wh1', name: 'Depo 1' }];
     
     // Initialize stats
     warehouses.forEach(wh => {
