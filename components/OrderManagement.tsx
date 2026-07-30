@@ -80,6 +80,7 @@ const DEFAULT_PRINT_CONFIG: PrintConfig = {
                 { key: 'quantity', label: 'Adet', visible: true },
                 { key: 'sku', label: 'SKU', visible: true },
                 { key: 'barcode', label: 'Barkod', visible: true },
+                { key: 'warehouse', label: 'Depo', visible: true },
                 { key: 'price', label: 'Fiyat', visible: true }
             ]
         },
@@ -2680,7 +2681,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 });
                 tableHeader += `</tr></thead>`;
 
-                let tableRows = orderToPrint.items.map(item => {
+                let tableRows = orderToPrint.items.map((item, idx) => {
                     let row = '<tr>';
                     visibleCols.forEach(col => {
                         const align = col.key === 'productName' ? 'left' : col.key === 'price' ? 'right' : 'center';
@@ -2691,6 +2692,10 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         else if (col.key === 'quantity') val = String(item.quantity);
                         else if (col.key === 'sku') val = `<span style="font-family: ${el.fontFamily || 'monospace'};">${item.sku || ''}</span>`;
                         else if (col.key === 'barcode') val = `<span style="font-family: ${el.fontFamily || 'monospace'};">${item.barcode || ''}</span>`;
+                        else if (col.key === 'warehouse') {
+                            const fArr = orderToPrint.fulfillmentInfo?.itemsFulfillment?.[`${item.barcode}_${idx}`];
+                            val = fArr && fArr.length > 0 ? fArr.map(f => `<span style="font-weight:bold;">${f.whInitial}</span>`).join(', ') : '-';
+                        }
                         else if (col.key === 'price') val = item.unitPrice.toFixed(2);
                         row += `<td class="border border-black p-1 text-${align}">${val}</td>`;
                     });
