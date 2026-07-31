@@ -1983,6 +1983,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         'Barkod': gi.barcodes.join(', '),
                         'Renk': gi.color,
                         'Beden': gi.sizes.join(', '),
+                        'Maliyet Fiyatı': (db.products.find(p => p.variants.some(v => v.barcode === gi.barcodes[0]))?.variants.find(v => v.barcode === gi.barcodes[0])?.costPrice ?? db.products.find(p => p.variants.some(v => v.barcode === gi.barcodes[0]))?.costPrice ?? 0).toFixed(2),
                         'İade Adet': qty,
                         'Birim Fiyat': price,
                         'Toplam Fiyat': price * qty,
@@ -2003,6 +2004,14 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     const countryCode = getEffectiveOrderCountryCode(o);
                     const countryName = PRIORITY_COUNTRIES.find(c => c.code === countryCode)?.name || countryCode;
 
+                    const variant = db.products.find(p => p.variants.some(v => v.barcode === item.barcode))?.variants.find(v => v.barcode === item.barcode);
+                    const product = db.products.find(p => p.variants.some(v => v.barcode === item.barcode));
+                    const costPrice = variant?.costPrice ?? product?.costPrice ?? 0;
+                    
+                    const fulfillmentInfo = o.fulfillmentInfo || getOrderFulfillmentInfo(o);
+                    const fArr = fulfillmentInfo?.itemsFulfillment?.[`${item.barcode}_${index}`] || [];
+                    const whNames = fArr.map((f: any) => `${f.whName} (${f.qty})`).join(', ') || '-';
+
                     const orderData: any = {
                         'Mağaza': o.storeName,
                         'Satıcı ID': o.fullData?.supplierId || config?.supplierId || '-',
@@ -2019,7 +2028,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         'SKU': item.sku || '',
                         'Barkod': item.barcode,
                         'Renk': item.color,
-                        'Beden': item.productSize || item.size || db.products.find(p => p.variants.some(v => v.barcode === item.barcode))?.variants.find(v => v.barcode === item.barcode)?.size || '-',
+                        'Beden': item.productSize || item.size || variant?.size || '-',
+                        'Depo': whNames,
+                        'Maliyet Fiyatı': costPrice.toFixed(2),
                         'Adet': item.quantity,
                         'Birim Fiyat': item.unitPrice.toFixed(2),
                         'Kalem Toplamı': (item.unitPrice * item.quantity).toFixed(2),

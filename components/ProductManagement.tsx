@@ -21,6 +21,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
+    const [dismissedExactMatch, setDismissedExactMatch] = useState('');
     const [activeSubPanel, setActiveSubPanel] = useState<'none' | 'barcode' | 'stock' | 'images'>('none');
     const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
     const [tableZoom, setTableZoom] = useState(1); // Tablo ölçeklendirme
@@ -1121,9 +1122,9 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
-                    {exactBarcodeMatch && (
+                    {exactBarcodeMatch && dismissedExactMatch !== searchTerm && (
                         <>
-                            <div className="fixed inset-0 z-40" onClick={() => setSearchTerm('')}></div>
+                            <div className="fixed inset-0 z-40" onClick={() => setDismissedExactMatch(searchTerm)}></div>
                             <div className="absolute top-12 left-0 z-50 bg-white border border-blue-300 shadow-xl rounded-lg p-4 w-80 text-sm">
                                 <div className="flex justify-between items-start mb-2 border-b pb-2">
                                     <div>
