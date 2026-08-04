@@ -1,7 +1,7 @@
 {
   "name": "e-ticaret-yonetim-paneli",
   "private": true,
-  "version": "1.8.36",
+  "version": "1.8.37",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
