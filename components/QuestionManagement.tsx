@@ -287,9 +287,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
     };
 
     const availableStores = useMemo(() => {
-        const stores = (db.questions || []).map(q => q.storeName);
-        return Array.from(new Set(stores)).filter(Boolean);
-    }, [db.questions]);
+        return Array.from(new Set(db.apiConfigs.map(c => c.storeName))).filter(Boolean).sort();
+    }, [db.apiConfigs]);
 
     return (
         <div className="flex flex-col h-full space-y-4">

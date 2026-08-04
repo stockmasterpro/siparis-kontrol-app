@@ -3689,7 +3689,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                 </button>
                                                             </div>
                                                             <div className="p-1">
-                                                                {Array.from(new Set(db.orders.map(o => o.storeName)))
+                                                                {Array.from(new Set(db.apiConfigs.map(c => c.storeName)))
                                                                     .filter((s): s is string => Boolean(s))
                                                                     .sort()
                                                                     .map(storeName => (
