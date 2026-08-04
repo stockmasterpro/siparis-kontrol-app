@@ -1505,7 +1505,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         });
         
         if (Object.keys(barcodesToSync).length > 0) {
-            syncBarcodeStockBatchMultiple(barcodesToSync, db.apiConfigs || []).catch(console.error);
+            const itemsToSync = Object.entries(barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
+            syncBarcodeStockBatchMultiple(db.apiConfigs || [], itemsToSync, db.settings).catch(console.error);
         }
         
         setNotification({ type: 'success', message: 'Depo tahsisi değiştirildi ve stoklar otomatik güncellendi.' });
@@ -2719,9 +2720,11 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
 
     const renderPrintPageHTML = async (order: Order): Promise<string> => {
-        // Yazdırma öncesi Trendyol'dan güncel verileri çek
-        const trendyolOrder = await fetchOrderDetailsFromTrendyol(order);
-        const orderToPrint = trendyolOrder || order;
+        // Not: Yazdırma işlemi sırasında her sipariş için Trendyol API'sine istek atmak, 
+        // çok sayıda siparişte ciddi yavaşlamalara (her sipariş için ~300ms) sebep oluyordu.
+        // Bu yüzden yazdırma esnasındaki otomatik veri çekme işlemi devre dışı bırakıldı.
+        // Siparişlerin güncel verisi gerekiyorsa yazdırmadan önce "Güncelle" işlemi kullanılmalıdır.
+        const orderToPrint = order;
 
         const { w, h } = getPageDimensions();
         const styleStr = `width: ${w}mm; height: ${h}mm; background-color: white; position: relative; overflow: hidden; page-break-after: always;`;
@@ -2940,7 +2943,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     return shouldMark ? { ...o, isPrinted: true } : o;
                 }) 
             }));
-            console.log(`[PRINT-DEBUG] Toplam ${updatedOrders.filter(o => o.isPrinted).length} yazdırılmış sipariş var`);
+            console.log(`[PRINT-DEBUG] Seçili ${selectedOrders.length} sipariş yazdırıldı olarak işaretlendi.`);
         } catch (error) {
             console.error('Print/PDF generation error:', error);
             setNotification({ type: 'error', message: 'Hata oluştu.' });

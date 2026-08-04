@@ -1,7 +1,7 @@
 {
   "name": "e-ticaret-yonetim-paneli",
   "private": true,
-  "version": "1.8.35",
+  "version": "1.8.36",
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
@@ -56,10 +56,6 @@
       "artifactName": "${name}-setup-${version}.${ext}"
     },
     "extraResources": [
-      {
-        "from": "build/icon.png",
-        "to": "icon.png"
-      },
       {
         "from": "assets/",
         "to": "assets/"

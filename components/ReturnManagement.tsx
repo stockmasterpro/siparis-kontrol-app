@@ -5,6 +5,7 @@ import { format } from 'date-fns';
 import { tr } from 'date-fns/locale';
 import * as XLSX from 'xlsx';
 import { syncMarketplaceClaims, approveMarketplaceClaim, updateLocalStockWithConsistency, syncBarcodeStockBatchMultiple } from '../services/integration';
+import { getSyncableStock } from '../utils/stockUtils';
 import { v4 as uuidv4 } from 'uuid';
 
 interface Props {
@@ -261,7 +262,7 @@ Mağaza: ${claim.storeName}
         const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
         const defaultWh = db.warehouses?.find(w => w.isDefault || w.isCenter) || db.warehouses?.[0];
         const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
-        const currentStock = variant.stocks[whId] || 0;
+        const currentStock = (variant.stocks && variant.stocks[whId]) || 0;
         const newStock = currentStock + returnQty;
 
         const result = updateLocalStockWithConsistency(
@@ -416,7 +417,7 @@ Mağaza: ${claim.storeName}
                         const defaultWh = db.warehouses?.find(w => w.isDefault || w.isCenter) || db.warehouses?.[0];
                         const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
                         const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
-                        const currentStock = variant.stocks[whId] || 0;
+                        const currentStock = (variant.stocks && variant.stocks[whId]) || 0;
                         const newStock = currentStock + returnQty;
 
                         const result = updateLocalStockWithConsistency(

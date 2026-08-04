@@ -531,7 +531,7 @@ export const updateLocalStockWithConsistency = (
         return {
           ...v,
           stocks: {
-            ...v.stocks,
+            ...(v.stocks || {}),
             [warehouseId]: newStock
           }
         };

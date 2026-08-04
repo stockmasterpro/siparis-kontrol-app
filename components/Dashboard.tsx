@@ -613,10 +613,15 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   const getMonthOptions = () => {
     const months = [];
     const currentDate = new Date();
-    const startDate = db.trialStartDate ? new Date(db.trialStartDate) : new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1);
+    const trialStart = db.trialStartDate ? new Date(db.trialStartDate) : currentDate;
+    const sixMonthsAgo = new Date(currentDate.getFullYear(), currentDate.getMonth() - 5, 1);
+    
+    const limitDate = trialStart < sixMonthsAgo ? trialStart : sixMonthsAgo;
+    const startDate = new Date(limitDate.getFullYear(), limitDate.getMonth(), 1);
+    
     let rollingDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
 
-    while (rollingDate >= new Date(startDate.getFullYear(), startDate.getMonth(), 1)) {
+    while (rollingDate >= startDate) {
       const yearMonth = `${rollingDate.getFullYear()}-${String(rollingDate.getMonth() + 1).padStart(2, '0')}`;
       const monthName = rollingDate.toLocaleDateString('tr-TR', { year: 'numeric', month: 'long' });
       months.push({ value: yearMonth, label: monthName });
@@ -917,8 +922,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   };
 
   // --- Ülke Bazlı Analiz ---
+  const getFlagEmoji = (countryCode: string) => {
+    const flags: Record<string, string> = {
+      'TR': '🇹🇷', 'DE': '🇩🇪', 'SA': '🇸🇦', 'RO': '🇷🇴', 'GR': '🇬🇷',
+      'AZ': '🇦🇿', 'AE': '🇦🇪', 'QA': '🇶🇦', 'KW': '🇰🇼', 'OM': '🇴🇲',
+      'BG': '🇧🇬', 'MD': '🇲🇩', 'RS': '🇷🇸', 'UA': '🇺🇦'
+    };
+    return flags[countryCode] || '🌍';
+  };
+
   const countryAnalytics = useMemo(() => {
-    const stats: Record<string, { code: string, name: string, count: number, quantity: number, revenue: number, netCost: number }> = {};
+    const stats: Record<string, { code: string, name: string, count: number, quantity: number, netQuantity: number, revenue: number, netRevenue: number, netCost: number }> = {};
     const cList = [
       { name: 'Almanya', code: 'DE' },
       { name: 'Suudi Arabistan', code: 'SA' },
@@ -948,11 +962,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       const code = getEffectiveOrderCountryCode(order);
       if (!stats[code]) {
         const countryName = cList.find(c => c.code === code)?.name || code;
-        stats[code] = { code, name: countryName, count: 0, quantity: 0, revenue: 0, netCost: 0 };
+        stats[code] = { code, name: countryName, count: 0, quantity: 0, netQuantity: 0, revenue: 0, netRevenue: 0, netCost: 0 };
       }
       stats[code].count += 1;
-      stats[code].quantity += order.items.reduce((sum, item) => sum + item.quantity, 0);
-      stats[code].revenue += order.items.reduce((sum, item) => sum + item.totalPrice, 0);
+      const orderQuantity = order.items.reduce((sum, item) => sum + item.quantity, 0);
+      stats[code].quantity += orderQuantity;
+      const orderGrossRevenue = order.items.reduce((sum, item) => sum + item.totalPrice, 0);
+      stats[code].revenue += orderGrossRevenue;
 
       let orderGrossCost = 0;
       order.items.forEach(item => {
@@ -962,14 +978,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       });
 
       let orderReturnedCost = 0;
+      let orderReturnedQty = 0;
+      let orderReturnedRevenue = 0;
       const linkedReturns = db.returns.filter(r => r.orderId === order.id);
       linkedReturns.forEach(r => {
         const key = `${(r.item.productName || '').trim().toLowerCase()}-${(r.item.color || '').trim().toLowerCase()}-${(r.item.size || r.item.productSize || '').trim().toLowerCase()}`;
         const costPrice = r.item.costPrice !== undefined ? r.item.costPrice : (costMap.get(key) || 0);
         orderReturnedCost += costPrice * r.returnQuantity;
+        orderReturnedQty += r.returnQuantity;
+        orderReturnedRevenue += (r.item.unitPrice || 0) * r.returnQuantity;
       });
 
       stats[code].netCost += (orderGrossCost - orderReturnedCost);
+      stats[code].netQuantity += (orderQuantity - orderReturnedQty);
+      stats[code].netRevenue += (orderGrossRevenue - orderReturnedRevenue);
     });
 
     return Object.values(stats).sort((a, b) => b.revenue - a.revenue);
@@ -1516,7 +1538,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
                   <th className="pb-3 font-medium">Ülke</th>
                   <th className="pb-3 font-medium">Sipariş</th>
                   <th className="pb-3 font-medium">Satış Adeti</th>
+                  <th className="pb-3 font-medium">Net Satış Adeti</th>
                   <th className="pb-3 font-medium">Ciro</th>
+                  <th className="pb-3 font-medium">Net Ciro</th>
                   <th className="pb-3 font-medium">Ürün Maliyeti Net</th>
                 </tr>
               </thead>
@@ -1524,16 +1548,29 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
                 {countryAnalytics.map((c, i) => (
                   <tr key={i} className="border-b last:border-0 hover:bg-gray-50">
                     <td className="py-3 font-medium text-gray-900 flex items-center gap-2">
-                      <span className="w-6 text-center">{c.code === 'TR' ? '🇹🇷' : c.code === 'DE' ? '🇩🇪' : c.code === 'SA' ? '🇸🇦' : '🌍'}</span>
-                      {c.name}
+                      <span className="w-6 text-center text-lg">{getFlagEmoji(c.code)}</span>
+                      {c.name} <span className="text-gray-400 text-xs">({c.code})</span>
                     </td>
                     <td className="py-3 text-gray-700">{c.count}</td>
                     <td className="py-3 text-gray-700">{c.quantity}</td>
+                    <td className="py-3 text-gray-700 font-semibold">{c.netQuantity}</td>
                     <td className="py-3 font-bold text-gray-900">{isPrivacyMode ? '***' : c.revenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                    <td className="py-3 font-bold text-green-700">{isPrivacyMode ? '***' : c.netRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
                     <td className="py-3 font-bold text-gray-900">{isPrivacyMode ? '***' : c.netCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
                   </tr>
                 ))}
               </tbody>
+              <tfoot className="bg-gray-50 font-bold text-sm">
+                <tr>
+                  <td className="py-3 px-2">TOPLAM</td>
+                  <td className="py-3">{countryAnalytics.reduce((acc, c) => acc + c.count, 0)}</td>
+                  <td className="py-3">{countryAnalytics.reduce((acc, c) => acc + c.quantity, 0)}</td>
+                  <td className="py-3 text-blue-700">{countryAnalytics.reduce((acc, c) => acc + c.netQuantity, 0)}</td>
+                  <td className="py-3 text-gray-700">{isPrivacyMode ? '***' : countryAnalytics.reduce((acc, c) => acc + c.revenue, 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                  <td className="py-3 text-green-700">{isPrivacyMode ? '***' : countryAnalytics.reduce((acc, c) => acc + c.netRevenue, 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                  <td className="py-3 text-red-700">{isPrivacyMode ? '***' : countryAnalytics.reduce((acc, c) => acc + c.netCost, 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         ) : (
