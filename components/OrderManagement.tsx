@@ -2194,57 +2194,63 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 return;
             }
 
-            let currentProducts = [...db.products];
-            const newReturnRecords: ReturnRecord[] = [];
             const barcodesToSync: { [key: string]: number } = {};
 
-            itemsToReturn.forEach(({ item, qty }) => {
-                newReturnRecords.push({
-                    id: uuid(),
-                    orderId: returnOrderTarget.id,
-                    marketplaceOrderId: returnOrderTarget.marketplaceOrderId,
-                    customerName: returnOrderTarget.customerName,
-                    item: item,
-                    returnQuantity: qty,
-                    returnDate: new Date().toISOString()
-                });
+            updateDB(prev => {
+                let currentProducts = [...prev.products];
+                const newReturnRecords: ReturnRecord[] = [];
 
-                const product = currentProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
-                if (product) {
-                    const variant = product.variants.find(v => v.barcode === item.barcode);
-                    if (variant) {
-                        const whId = 'wh1';
-                        const currentStock = variant.stocks[whId] || 0;
-                        const newStock = currentStock + qty;
+                itemsToReturn.forEach(({ item, qty }) => {
+                    newReturnRecords.push({
+                        id: uuid(),
+                        orderId: returnOrderTarget.id,
+                        marketplaceOrderId: returnOrderTarget.marketplaceOrderId,
+                        customerName: returnOrderTarget.customerName,
+                        item: item,
+                        returnQuantity: qty,
+                        returnDate: new Date().toISOString()
+                    });
 
-                        const result = updateLocalStockWithConsistency(
-                            currentProducts,
-                            product.id,
-                            variant.color,
-                            variant.size,
-                            whId,
-                            newStock
-                        );
-                        currentProducts = result.updatedProducts;
+                    const product = currentProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
+                    if (product) {
+                        const variant = product.variants.find(v => v.barcode === item.barcode);
+                        if (variant) {
+                            const apiConfig = prev.apiConfigs.find(c => c.storeName === returnOrderTarget.storeName);
+                            const defaultWh = prev.warehouses?.find(w => w.isDefault || w.isCenter) || prev.warehouses?.[0];
+                            const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
 
-                        // ÖNEMLİ: Ürün kartındaki TÜM barkodları senkronizasyon listesine ekle (İade durumu)
-                        const up = currentProducts.find(p => p.id === product.id);
-                        if (up) {
-                            up.variants.forEach(pv => {
-                                if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                                    barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
-                                }
-                            });
+                            const currentStock = (variant.stocks && variant.stocks[whId]) || 0;
+                            const newStock = currentStock + qty;
+
+                            const result = updateLocalStockWithConsistency(
+                                currentProducts,
+                                product.id,
+                                variant.color,
+                                variant.size,
+                                whId,
+                                newStock
+                            );
+                            currentProducts = result.updatedProducts;
+
+                            // ÖNEMLİ: Ürün kartındaki TÜM barkodları senkronizasyon listesine ekle (İade durumu)
+                            const up = currentProducts.find(p => p.id === product.id);
+                            if (up) {
+                                up.variants.forEach(pv => {
+                                    if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
+                                        barcodesToSync[pv.barcode] = getSyncableStock(pv, prev.warehouses || []);
+                                    }
+                                });
+                            }
                         }
                     }
-                }
-            });
+                });
 
-            updateDB(prev => ({
-                ...prev,
-                products: currentProducts,
-                returns: [...prev.returns, ...newReturnRecords]
-            }));
+                return {
+                    ...prev,
+                    products: currentProducts,
+                    returns: [...prev.returns, ...newReturnRecords]
+                };
+            });
 
             // Sync if enabled - Barkod bazlı stok gönderimi
             if (Object.keys(barcodesToSync).length > 0) {
