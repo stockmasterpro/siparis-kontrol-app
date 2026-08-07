@@ -7,7 +7,7 @@ import { Download, X, Check, Filter, ChevronDown, Eye, EyeOff } from 'lucide-rea
 import * as XLSX from 'xlsx';
 import { getTotalStock } from '../utils/stockUtils';
 
-
+import { fetchDashboardStats } from '../services/db';
 
 interface DashboardProps {
   db: Database;
@@ -19,6 +19,11 @@ const getLocalMonth = () => {
 };
 
 export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
+  const [dashboardOrders, setDashboardOrders] = useState<any[]>([]);
+  const [dashboardProducts, setDashboardProducts] = useState<any[]>([]);
+  const [dashboardReturns, setDashboardReturns] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
   const [filterType, setFilterType] = useState<'day' | 'month' | 'year' | 'range'>('month');
   const [selectedDay, setSelectedDay] = useState<string>(new Date().toISOString().split('T')[0]);
   const [selectedMonth, setSelectedMonth] = useState<string>(getLocalMonth());
@@ -35,6 +40,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   const [isPrivacyMode, setIsPrivacyMode] = useState(true);
   const [expandedStores, setExpandedStores] = useState<Record<string, boolean>>({});
 
+  useEffect(() => {
+    setIsLoading(true);
+    fetchDashboardStats({}).then(res => {
+      setDashboardOrders(res.orders || []);
+      setDashboardProducts(res.products || []);
+      setDashboardReturns(res.returns || []);
+      setIsLoading(false);
+    });
+
+    const handleSync = () => {
+      fetchDashboardStats({}).then(res => {
+        setDashboardOrders(res.orders || []);
+        setDashboardProducts(res.products || []);
+        setDashboardReturns(res.returns || []);
+      });
+    };
+    window.addEventListener('sync-completed', handleSync);
+    return () => window.removeEventListener('sync-completed', handleSync);
+  }, []);
+
   const toggleStore = (storeName: string) => {
     setExpandedStores(prev => ({
       ...prev,
@@ -42,7 +67,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     }));
   };
 
-
+  if (isLoading) {
+    return <div className="p-8 flex justify-center items-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div></div>;
+  }
 
   const PRIORITY_COUNTRIES = [
     { name: 'Türkiye', code: 'TR' },
@@ -71,7 +98,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
   const validBarcodesSet = useMemo(() => {
     const barcodes = new Set<string>();
-    db.products.forEach(p => {
+    dashboardProducts.forEach(p => {
       if (p.variants) {
         p.variants.forEach(v => {
           if (v.barcode) {
@@ -81,16 +108,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       }
     });
     return barcodes;
-  }, [db.products]);
+  }, [dashboardProducts]);
 
-  const totalProducts = db.products.length;
+  const totalProducts = dashboardProducts.length;
 
   // --- Tarih Bazlı Filtreleme ---
   const filteredOrders = useMemo(() => {
-    let baseOrders = db.orders.filter(o => {
+    let baseOrders = dashboardOrders.filter(o => {
       if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_')) return false;
       // İptal edilmiş ve iadesi olmayan siparişleri filtrele (iade edilenler toplam siparişte kalmalı)
-      if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
+      if (o.status === OrderStatus.CANCELLED && !dashboardReturns.some(r => r.orderId === o.id)) return false;
       
       // Barkodları tanımlı mı kontrolü
       return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
@@ -140,14 +167,14 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     }
 
     return baseOrders;
-  }, [db.orders, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, selectedCountries, validBarcodesSet, db.returns]);
+  }, [dashboardOrders, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, selectedCountries, validBarcodesSet, dashboardReturns]);
 
   const filteredReturns = useMemo(() => {
-    let baseReturns = db.returns;
+    let baseReturns = dashboardReturns;
 
     if (selectedCountries.length > 0) {
       baseReturns = baseReturns.filter(r => {
-        const order = db.orders.find(o => o.id === r.orderId);
+        const order = dashboardOrders.find(o => o.id === r.orderId);
         if (!order) return false;
         const codeUpper = getEffectiveOrderCountryCode(order).toUpperCase();
         return selectedCountries.some(code => codeUpper === code.toUpperCase());
@@ -190,16 +217,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     }
 
     return baseReturns;
-  }, [db.returns, db.orders, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, selectedCountries]);
+  }, [dashboardReturns, dashboardOrders, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, selectedCountries]);
 
   // GLOBAL STATS (Filtered by selected range/period)
   const totalOrders = filteredOrders.length;
   
   const cancelledOrdersCount = useMemo(() => {
-    let baseOrders = db.orders.filter(o => {
+    let baseOrders = dashboardOrders.filter(o => {
       if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_')) return false;
       // Sadece iptal edilmiş ve iadesi olmayanlar
-      if (!(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id))) return false;
+      if (!(o.status === OrderStatus.CANCELLED && !dashboardReturns.some(r => r.orderId === o.id))) return false;
       return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
     });
 
@@ -246,11 +273,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     }
 
     return baseOrders.length;
-  }, [db.orders, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, selectedCountries, validBarcodesSet, db.returns]);
+  }, [dashboardOrders, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, selectedCountries, validBarcodesSet, dashboardReturns]);
 
   const returnedOrdersCount = useMemo(() => {
-    return filteredOrders.filter(o => db.returns.some(r => r.orderId === o.id)).length;
-  }, [filteredOrders, db.returns]);
+    return filteredOrders.filter(o => dashboardReturns.some(r => r.orderId === o.id)).length;
+  }, [filteredOrders, dashboardReturns]);
 
   const netOrdersCount = totalOrders - returnedOrdersCount;
 
@@ -260,10 +287,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
   const returnedItemsQty = useMemo(() => {
     return filteredOrders.reduce((sum, order) => {
-      const linkedReturns = db.returns.filter(r => r.orderId === order.id);
+      const linkedReturns = dashboardReturns.filter(r => r.orderId === order.id);
       return sum + linkedReturns.reduce((acc, r) => acc + r.returnQuantity, 0);
     }, 0);
-  }, [filteredOrders, db.returns]);
+  }, [filteredOrders, dashboardReturns]);
 
   const netItemsQty = totalItemsQty - returnedItemsQty;
 
@@ -278,10 +305,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
   const totalReturnsValue = useMemo(() => {
     return filteredOrders.reduce((total, order) => {
-      const linkedReturns = db.returns.filter(r => r.orderId === order.id);
+      const linkedReturns = dashboardReturns.filter(r => r.orderId === order.id);
       return total + linkedReturns.reduce((sum, r) => sum + (r.item.unitPrice * r.returnQuantity), 0);
     }, 0);
-  }, [filteredOrders, db.returns]);
+  }, [filteredOrders, dashboardReturns]);
 
   const totalRevenue = grossRevenue - totalReturnsValue;
 
@@ -294,13 +321,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       return localDateStr === dateStr;
     });
 
-    const dayTotalOrders = dayOrders.filter(o => !(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)));
-    const dayReturned = dayTotalOrders.filter(o => db.returns.some(r => r.orderId === o.id));
+    const dayTotalOrders = dayOrders.filter(o => !(o.status === OrderStatus.CANCELLED && !dashboardReturns.some(r => r.orderId === o.id)));
+    const dayReturned = dayTotalOrders.filter(o => dashboardReturns.some(r => r.orderId === o.id));
 
     const dailyGross = dayTotalOrders.reduce((acc, order) => acc + order.items.reduce((sum, item) => sum + item.totalPrice, 0), 0);
 
     const dailyReturns = dayTotalOrders.reduce((total, order) => {
-      const linkedReturns = db.returns.filter(r => r.orderId === order.id);
+      const linkedReturns = dashboardReturns.filter(r => r.orderId === order.id);
       return total + linkedReturns.reduce((sum, r) => sum + (r.item.unitPrice * r.returnQuantity), 0);
     }, 0);
 
@@ -325,7 +352,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       todayStats: getStatsForDate(todayStr, filteredOrders),
       yesterdayStats: getStatsForDate(yesterdayStr, filteredOrders)
     };
-  }, [filteredOrders, db.returns]);
+  }, [filteredOrders, dashboardReturns]);
 
   const todayRevenue = todayStats.revenue;
   const yesterdayRevenue = yesterdayStats.revenue;
@@ -342,7 +369,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
     return db.apiConfigs.map(config => {
       const storeOrders = filteredOrders.filter(o => o.storeName === config.storeName);
-      const storeTotalOrdersList = storeOrders.filter(o => !(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)));
+      const storeTotalOrdersList = storeOrders.filter(o => !(o.status === OrderStatus.CANCELLED && !dashboardReturns.some(r => r.orderId === o.id)));
       
       const totalItemsQty = storeTotalOrdersList.reduce((acc, order) => acc + order.items.reduce((sum, item) => sum + item.quantity, 0), 0);
 
@@ -358,16 +385,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       const storeGrossRevenue = storeTotalOrdersList.reduce((acc, order) => acc + order.items.reduce((sum, item) => sum + item.totalPrice, 0), 0);
 
       const storeOrderIds = new Set(storeTotalOrdersList.map(o => o.id));
-      const linkedReturns = db.returns.filter(r => storeOrderIds.has(r.orderId));
+      const linkedReturns = dashboardReturns.filter(r => storeOrderIds.has(r.orderId));
       const storeReturnsValue = linkedReturns.reduce((acc, r) => acc + (r.item.unitPrice * r.returnQuantity), 0);
       const returnedItemsQty = linkedReturns.reduce((acc, r) => acc + r.returnQuantity, 0);
 
       const netItemsQty = totalItemsQty - returnedItemsQty;
 
       // Count cancelled orders for this store using the same logic (excluding soft-deleted cancelled orders)
-      let storeCancelledOrdersBase = db.orders.filter(o => {
+      let storeCancelledOrdersBase = dashboardOrders.filter(o => {
         if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_') || o.storeName !== config.storeName) return false;
-        if (!(o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id))) return false;
+        if (!(o.status === OrderStatus.CANCELLED && !dashboardReturns.some(r => r.orderId === o.id))) return false;
         return o.items.every(item => item.barcode && item.barcode !== 'NO-BARCODE' && validBarcodesSet.has(item.barcode));
       });
       if (selectedCountries.length > 0) {
@@ -416,7 +443,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       }
 
       const storeOrdersCount = storeTotalOrdersList.length;
-      const storeReturnedOrdersCount = storeTotalOrdersList.filter(o => db.returns.some(r => r.orderId === o.id)).length;
+      const storeReturnedOrdersCount = storeTotalOrdersList.filter(o => dashboardReturns.some(r => r.orderId === o.id)).length;
       const storeNetOrdersCount = storeOrdersCount - storeReturnedOrdersCount;
       const storeCancelledOrdersCount = filteredCancelledOrders.length;
 
@@ -452,7 +479,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         yesterdayCount: yStats.netCount
       };
     });
-  }, [db.apiConfigs, filteredOrders, db.returns, selectedCountries, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, validBarcodesSet]);
+  }, [db.apiConfigs, filteredOrders, dashboardReturns, selectedCountries, filterType, selectedDay, selectedMonth, selectedYear, startDate, endDate, validBarcodesSet]);
 
   // --- Real Data Aggregation ---
   // 1. Günlük Satış Özeti (Dinamik)
@@ -508,10 +535,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       const dayData: any = { name: dayName, date: dateStr };
 
       db.apiConfigs.forEach(config => {
-        const dayOrders = db.orders.filter(o => {
+        const dayOrders = dashboardOrders.filter(o => {
           if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_') || o.storeName !== config.storeName) return false;
           // İptal edilmiş ve iadesi olmayanları filtrele
-          if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
+          if (o.status === OrderStatus.CANCELLED && !dashboardReturns.some(r => r.orderId === o.id)) return false;
 
           // Barkodları tanımlı mı kontrolü
           const allBarcodesExist = o.items.every(item =>
@@ -533,10 +560,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
         const dailyGross = dayOrders.reduce((acc, o) => acc + o.items.reduce((sum, i) => sum + i.totalPrice, 0), 0);
         const dayOrderIds = new Set(dayOrders.map(o => o.id));
-        const linkedReturns = db.returns.filter(r => dayOrderIds.has(r.orderId));
+        const linkedReturns = dashboardReturns.filter(r => dayOrderIds.has(r.orderId));
         const dailyReturnsDeduction = linkedReturns.reduce((acc, r) => acc + (r.item.unitPrice * r.returnQuantity), 0);
 
-        const returnedCount = dayOrders.filter(o => db.returns.some(r => r.orderId === o.id)).length;
+        const returnedCount = dayOrders.filter(o => dashboardReturns.some(r => r.orderId === o.id)).length;
         const netOrdersCount = dayOrders.length - returnedCount;
 
         dayData[config.storeName] = dailyGross - dailyReturnsDeduction;
@@ -545,7 +572,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       return dayData;
     });
-  }, [chartDays, db.orders, db.apiConfigs, db.returns, filterType, selectedMonth, selectedCountries, validBarcodesSet]);
+  }, [chartDays, dashboardOrders, db.apiConfigs, dashboardReturns, filterType, selectedMonth, selectedCountries, validBarcodesSet]);
 
   const chartMonths = useMemo(() => {
     const months = [];
@@ -574,10 +601,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       const monthData: any = { name: month.monthName };
 
       db.apiConfigs.forEach(config => {
-        const monthOrders = db.orders.filter(o => {
+        const monthOrders = dashboardOrders.filter(o => {
           if (o.isSuspended || o.isDeleted || o.id.includes('_OLD_') || o.storeName !== config.storeName) return false;
           // İptal edilmiş ve iadesi olmayanları filtrele
-          if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
+          if (o.status === OrderStatus.CANCELLED && !dashboardReturns.some(r => r.orderId === o.id)) return false;
 
           // Barkodları tanımlı mı kontrolü
           const allBarcodesExist = o.items.every(item =>
@@ -599,7 +626,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
         const monthlyGross = monthOrders.reduce((acc, o) => acc + o.items.reduce((sum, i) => sum + i.totalPrice, 0), 0);
         const monthOrderIds = new Set(monthOrders.map(o => o.id));
-        const linkedReturns = db.returns.filter(r => monthOrderIds.has(r.orderId));
+        const linkedReturns = dashboardReturns.filter(r => monthOrderIds.has(r.orderId));
         const monthlyReturnsDeduction = linkedReturns.reduce((acc, r) => acc + (r.item.unitPrice * r.returnQuantity), 0);
 
         monthData[config.storeName] = monthlyGross - monthlyReturnsDeduction;
@@ -607,7 +634,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       return monthData;
     });
-  }, [chartMonths, db.orders, db.apiConfigs, db.returns, selectedCountries, validBarcodesSet]);
+  }, [chartMonths, dashboardOrders, db.apiConfigs, dashboardReturns, selectedCountries, validBarcodesSet]);
 
   // --- Ay Seçenekleri ---
   const getMonthOptions = () => {
@@ -648,7 +675,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     const lookbackDate = new Date();
     lookbackDate.setDate(lookbackDate.getDate() - lookbackDays);
 
-    const recentOrders = db.orders.filter(o => {
+    const recentOrders = dashboardOrders.filter(o => {
       if (o.isSuspended || o.status === OrderStatus.CANCELLED || o.id.includes('_OLD_')) return false;
       if (new Date(o.orderDate) < lookbackDate) return false;
 
@@ -671,7 +698,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     };
 
     const criticalItems: any[] = [];
-    db.products.forEach(product => {
+    dashboardProducts.forEach(product => {
       const uniqueColorSizeMap = new Map<string, any>();
       product.variants.forEach(variant => {
         const key = `${(variant.color || '').trim().toLowerCase()}-${(variant.size || '').trim().toLowerCase()}`;
@@ -710,7 +737,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     });
 
     return criticalItems.sort((a, b) => a.daysOfStock - b.daysOfStock).slice(0, 15);
-  }, [db.orders, db.products, validBarcodesSet, db.settings.stockAlertLookbackDays, db.settings.stockAlertProjectionDays]);
+  }, [dashboardOrders, dashboardProducts, validBarcodesSet, db.settings.stockAlertLookbackDays, db.settings.stockAlertProjectionDays]);
 
   // --- Depo Stok Analizi ---
   const warehouseStats = useMemo(() => {
@@ -722,7 +749,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       stats[wh.id] = { id: wh.id, name: wh.name, quantity: 0, costValue: 0, saleValue: 0 };
     });
 
-    db.products.forEach(p => {
+    dashboardProducts.forEach(p => {
       const uniqueColorSizeMap = new Map<string, any>();
       p.variants.forEach(v => {
         const key = `${(v.color || '').trim().toLowerCase()}-${(v.size || '').trim().toLowerCase()}`;
@@ -755,7 +782,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     });
 
     return { stats: Object.values(stats), total };
-  }, [db.products, db.warehouses]);
+  }, [dashboardProducts, db.warehouses]);
 
   // --- Satılan Ürünlerin Maliyeti (Filtreli) ---
   const { grossSoldCost, returnedSoldCost, netSoldCost } = useMemo(() => {
@@ -763,7 +790,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     let returned = 0;
 
     const costMap = new Map<string, number>();
-    db.products.forEach(p => {
+    dashboardProducts.forEach(p => {
       p.variants.forEach(v => {
         const key = `${(p.name || '').trim().toLowerCase()}-${(v.color || '').trim().toLowerCase()}-${(v.size || '').trim().toLowerCase()}`;
         costMap.set(key, v.costPrice || p.costPrice || 0);
@@ -777,7 +804,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         gross += costPrice * item.quantity;
       });
 
-      const linkedReturns = db.returns.filter(r => r.orderId === order.id);
+      const linkedReturns = dashboardReturns.filter(r => r.orderId === order.id);
       linkedReturns.forEach(r => {
         const key = `${(r.item.productName || '').trim().toLowerCase()}-${(r.item.color || '').trim().toLowerCase()}-${(r.item.size || r.item.productSize || '').trim().toLowerCase()}`;
         const costPrice = r.item.costPrice !== undefined ? r.item.costPrice : (costMap.get(key) || 0);
@@ -790,7 +817,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       returnedSoldCost: returned,
       netSoldCost: gross - returned
     };
-  }, [filteredOrders, db.returns, db.products]);
+  }, [filteredOrders, dashboardReturns, dashboardProducts]);
 
   // --- Rapor Oluşturma ---
   const generateExcelReport = () => {
@@ -809,10 +836,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       return;
     }
 
-    const reportOrders = db.orders.filter(o => {
+    const reportOrders = dashboardOrders.filter(o => {
       if (o.isSuspended || o.id.includes('_OLD_')) return false;
       // İptal edilmiş ve iadesi olmayanları filtrele (iade edilenler rapora insin)
-      if (o.status === OrderStatus.CANCELLED && !db.returns.some(r => r.orderId === o.id)) return false;
+      if (o.status === OrderStatus.CANCELLED && !dashboardReturns.some(r => r.orderId === o.id)) return false;
       
       // Barkodları tanımlı mı kontrolü
       const allBarcodesExist = o.items.every(item =>
@@ -885,7 +912,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         // Calculate cost price for the item
         let costPrice = item.costPrice;
         if (costPrice === undefined) {
-          for (const product of db.products) {
+          for (const product of dashboardProducts) {
             const variant = product.variants.find(v => v.barcode === item.barcode);
             if (variant) {
               costPrice = variant.costPrice || product.costPrice || 0;
@@ -895,7 +922,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
         }
         const unitCost = costPrice || 0;
 
-        const itemReturns = db.returns.filter(r => r.orderId === order.id && r.item.barcode === item.barcode);
+        const itemReturns = dashboardReturns.filter(r => r.orderId === order.id && r.item.barcode === item.barcode);
         const itemReturnedQty = itemReturns.reduce((sum, r) => sum + r.returnQuantity, 0);
         const itemReturnedCiro = itemReturns.reduce((sum, r) => sum + (r.item.unitPrice * r.returnQuantity), 0);
         const itemReturnedCost = itemReturnedQty * unitCost;
@@ -951,7 +978,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     ];
 
     const costMap = new Map<string, number>();
-    db.products.forEach(p => {
+    dashboardProducts.forEach(p => {
       p.variants.forEach(v => {
         const key = `${(p.name || '').trim().toLowerCase()}-${(v.color || '').trim().toLowerCase()}-${(v.size || '').trim().toLowerCase()}`;
         costMap.set(key, v.costPrice || p.costPrice || 0);
@@ -980,7 +1007,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       let orderReturnedCost = 0;
       let orderReturnedQty = 0;
       let orderReturnedRevenue = 0;
-      const linkedReturns = db.returns.filter(r => r.orderId === order.id);
+      const linkedReturns = dashboardReturns.filter(r => r.orderId === order.id);
       linkedReturns.forEach(r => {
         const key = `${(r.item.productName || '').trim().toLowerCase()}-${(r.item.color || '').trim().toLowerCase()}-${(r.item.size || r.item.productSize || '').trim().toLowerCase()}`;
         const costPrice = r.item.costPrice !== undefined ? r.item.costPrice : (costMap.get(key) || 0);
@@ -995,7 +1022,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     });
 
     return Object.values(stats).sort((a, b) => b.revenue - a.revenue);
-  }, [filteredOrders, db.products, db.returns]);
+  }, [filteredOrders, dashboardProducts, dashboardReturns]);
 
   return (
     <div className="space-y-6">
@@ -1137,7 +1164,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
                         onClick={() => {
                           const allCodes = Array.from(new Set([
                             ...PRIORITY_COUNTRIES.map(c => c.code),
-                            ...db.orders.filter(o => !o.id.includes('_OLD_')).map(o => getEffectiveOrderCountryCode(o)).filter(c => c && c !== 'TR')
+                            ...dashboardOrders.filter(o => !o.id.includes('_OLD_')).map(o => getEffectiveOrderCountryCode(o)).filter(c => c && c !== 'TR')
                           ]));
                           setSelectedCountries(allCodes as string[]);
                         }}
@@ -1180,7 +1207,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
                     ))}
 
                     {/* Diğer Ülkeler */}
-                    {db.orders
+                    {dashboardOrders
                       .filter(o => !o.id.includes('_OLD_'))
                       .map(o => getEffectiveOrderCountryCode(o))
                       .filter((c, i, a) => c && c !== 'TR' && !PRIORITY_COUNTRIES.some(p => p.code === c) && a.indexOf(c) === i)

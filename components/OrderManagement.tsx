@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from 'xlsx';
 import { syncBarcodeStock, syncBarcodeStockBatch, updateLocalStockWithConsistency, syncOrderStatusToMarketplaces, fetchOrdersFromTrendyol, syncMarketplaceOrders, syncBarcodeStockBatchMultiple } from '../services/integration';
 import { getSyncableStock, getTotalStock, getSyncableStockForApi } from '../utils/stockUtils';
+import { fetchOrdersPaginated } from '../services/db';
 // @ts-ignore
 import JsBarcode from 'jsbarcode';
 import { compressImage } from '../utils/imageUtils';
@@ -96,6 +97,11 @@ const DEFAULT_PRINT_CONFIG: PrintConfig = {
 };
 
 export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activeTab, onTabChange, onBadgeCountUpdate, setNotification, requestConfirm }) => {
+    const [orders, setOrders] = useState<Order[]>([]);
+    const [totalOrders, setTotalOrders] = useState(0);
+    const [ordersPage, setOrdersPage] = useState(1);
+    const limit = 50;
+
     const [selectedOrders, setSelectedOrders] = useState<string[]>([]);
     const [zoomLevel, setZoomLevel] = useState(100);
     // Search and Filter States
@@ -210,7 +216,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         dateFilterEnd,
         printedFilter,
         selectedStatuses,
-        db.orders // db değişirse de güncelle
+        orders // db değişirse de güncelle
     ]);
 
     // Reset page on tab or filter change
@@ -229,6 +235,41 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     const [editingFulfillment, setEditingFulfillment] = useState<{barcode: string, index: number, orderId: string, splits: {whId: string, qty: number}[]} | null>(null);
 
     const [autoRefreshTrigger, setAutoRefreshTrigger] = useState(0);
+
+    const saveOrdersToSQLite = async (ordersToSave: Order[]) => {
+        if (window.require) {
+            const { ipcRenderer } = window.require('electron');
+            const ops = ordersToSave.map(o => ({
+                query: 'INSERT OR REPLACE INTO orders (id, data) VALUES (?, ?)',
+                params: [o.id, JSON.stringify(o)]
+            }));
+            if (ops.length > 0) {
+                await ipcRenderer.invoke('sqlite-transaction', ops);
+                setAutoRefreshTrigger(prev => prev + 1);
+            }
+        }
+    };
+
+    useEffect(() => {
+        let statusFilter = '';
+        if (activeTab === 'active' && selectedStatuses.length > 0) statusFilter = selectedStatuses[0];
+        else if (activeTab === 'suspended' && suspendedStatuses.length > 0) statusFilter = suspendedStatuses[0];
+        else if (activeTab === 'cancelled') statusFilter = OrderStatus.CANCELLED;
+
+        fetchOrdersPaginated({
+            page: ordersPage,
+            limit,
+            search: searchTerm || orderSearch || customerSearch || barcodeSearch || productNameSearch || cargoSearch || skuSearch,
+            status: statusFilter,
+            dateStart: dateFilterStart,
+            dateEnd: dateFilterEnd,
+            storeName: selectedStores[0] || ''
+        }).then(res => {
+            setOrders(res.orders || []);
+            setTotalOrders(res.total || 0);
+        }).catch(err => console.error(err));
+    }, [ordersPage, limit, searchTerm, orderSearch, customerSearch, barcodeSearch, productNameSearch, cargoSearch, skuSearch, activeTab, selectedStatuses, suspendedStatuses, dateFilterStart, dateFilterEnd, selectedStores, autoRefreshTrigger]);
+
     const invokeShowNotification = (options: { title?: string; body?: string; playSound?: boolean; customSoundPath?: string; type?: string }) => {
         try {
             if (window.require) {
@@ -362,7 +403,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         }
     };
 
-    // Filtre verildiğinde tarih/görünürlük sınırını kapatmak için (liste her zaman db.orders üzerinden)
+    // Filtre verildiğinde tarih/görünürlük sınırını kapatmak için (liste her zaman orders üzerinden)
     const [showAllOrders, setShowAllOrders] = useState(false);
 
 
@@ -474,7 +515,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const handleCheckSuspendedOrderEvent = async (event: CustomEvent<{ orderId: string }>) => {
             // Kısa bir gecikme ile db'nin güncellenmesini bekle
             setTimeout(() => {
-                const order = db.orders.find(o => o.id === event.detail.orderId);
+                const order = orders.find(o => o.id === event.detail.orderId);
                 if (order && order.isSuspended && !order.wasSuspended) {
                     // handleCheckSuspended'i çağır
                     handleCheckSuspended(order).catch(err => console.error('Auto-check suspended order error:', err));
@@ -486,7 +527,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         return () => {
             window.removeEventListener('checkSuspendedOrder', handleCheckSuspendedOrderEvent as EventListener);
         };
-    }, [db.orders]);
+    }, [orders]);
 
 
     const handleAddManualItem = () => {
@@ -602,9 +643,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }
         }
 
+        await saveOrdersToSQLite([newOrder]);
         updateDB(prev => ({
             ...prev,
-            orders: [newOrder, ...prev.orders],
             products: updatedProducts
         }));
 
@@ -667,8 +708,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             await updateDB(prev => {
                 const prevOrderIds = new Set(prev.orders.map(o => o.id));
-                const deletedOrderIds = new Set(db.orders.filter(o => !prevOrderIds.has(o.id)).map(o => o.id));
-                const manualOrdersAddedDuringSync = prev.orders.filter(o => !db.orders.some(co => co.id === o.id));
+                const deletedOrderIds = new Set(orders.filter(o => !prevOrderIds.has(o.id)).map(o => o.id));
+                const manualOrdersAddedDuringSync = prev.orders.filter(o => !orders.some(co => co.id === o.id));
 
                 const finalOrders = result.updatedOrders
                     .filter(o => !deletedOrderIds.has(o.id))
@@ -691,10 +732,10 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
                 return {
                     ...prev,
-                    products: finalProducts,
-                    orders: finalOrders
+                    products: finalProducts
                 };
             });
+            setAutoRefreshTrigger(prev => prev + 1);
 
             // OTOMATİK STOK GÜNCELLEME (Tüm mağazalara)
             if (Object.keys(result.barcodesToSync).length > 0) {
@@ -781,7 +822,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
 
     const getFilteredOrders = () => {
-        let list = db.orders.filter(o => !o.isDeleted);
+        let list = orders.filter(o => !o.isDeleted);
 
         if (activeTab === 'cancelled') {
             // İade alınanları ve eski sürüm arşiv kayıtlarını İptal Edilenler sayfasında gösterme
@@ -949,7 +990,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     // Sipariş sayım fonksiyonları
     const getOrderCount = (tab: 'active' | 'cancelled' | 'suspended' | 'returned') => {
-        let list = db.orders;
+        let list = orders;
 
         if (tab === 'cancelled') {
             list = list.filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_'));
@@ -970,7 +1011,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }
             const groups = new Set();
             retList.forEach(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 const storeName = associatedOrder ? associatedOrder.storeName : '-';
                 groups.add(`${r.marketplaceOrderId}::${storeName}`);
             });
@@ -1111,7 +1152,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         // Mağaza (çoklu seçim)
         if (selectedStores.length > 0) {
             list = list.filter(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 const storeName = associatedOrder ? associatedOrder.storeName : '-';
                 return selectedStores.includes(storeName);
             });
@@ -1121,7 +1162,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (cargoSearch) {
             const lower = cargoSearch.toLowerCase();
             list = list.filter(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 const cargoCode = associatedOrder ? String(associatedOrder.cargoCode || '') : '';
                 return cargoCode.toLowerCase().includes(lower);
             });
@@ -1143,7 +1184,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (customerSearch) {
             const lower = customerSearch.toLowerCase();
             list = list.filter(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 const name = r.customerName || (associatedOrder ? associatedOrder.customerName : '');
                 return name.toLowerCase().includes(lower);
             });
@@ -1172,7 +1213,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         // Ülke Filtresi
         if (selectedCountries.length > 0) {
             list = list.filter(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 if (!associatedOrder) return false;
                 const codeUpper = getEffectiveOrderCountryCode(associatedOrder).toUpperCase();
                 return selectedCountries.some(code => codeUpper === code.toUpperCase());
@@ -1183,7 +1224,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (searchTerm) {
             const lower = searchTerm.toLowerCase();
             list = list.filter(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 const customerMatch = (r.customerName || (associatedOrder ? associatedOrder.customerName : '')).toLowerCase().includes(lower);
                 const orderMatch = (r.marketplaceOrderId || '').toLowerCase().includes(lower);
                 const storeMatch = (associatedOrder ? associatedOrder.storeName : '').toLowerCase().includes(lower);
@@ -1203,7 +1244,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const groups: { [key: string]: any } = {};
 
         list.forEach(r => {
-            const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+            const associatedOrder = orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
             const storeName = associatedOrder ? associatedOrder.storeName : '-';
             const key = `${r.marketplaceOrderId}::${storeName}`;
             
@@ -1377,7 +1418,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     };
 
     const handleSaveSplitFulfillment = (orderId: string, barcode: string, idx: number, splits: {whId: string, qty: number}[]) => {
-        const orderForCheck = db.orders.find(o => o.id === orderId);
+        const orderForCheck = orders.find(o => o.id === orderId);
         if (orderForCheck) {
             const itemForCheck = orderForCheck.items[idx];
             if (itemForCheck) {
@@ -1500,8 +1541,10 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             if (detailOrder && detailOrder.id === order.id) {
                 setDetailOrder(order);
             }
+            
+            saveOrdersToSQLite([order]).catch(console.error);
 
-            return { ...prev, orders: updatedOrders, products: currentProducts };
+            return { ...prev, products: currentProducts };
         });
         
         if (Object.keys(barcodesToSync).length > 0) {
@@ -1668,7 +1711,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
         if (updatedOrder) {
             // Update in database
-            updateDB(prev => ({ ...prev, orders: prev.orders.map(o => o.id === order.id ? updatedOrder : o) }));
+            await saveOrdersToSQLite([updatedOrder]);
             setDetailOrder(updatedOrder);
             setNotification({ type: 'success', message: 'Sipariş detayları pazaryerinden güncellendi.' });
         } else {
@@ -1679,7 +1722,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     const handleProcessOrders = async () => {
         const orderIdsToProcess = selectedOrders.filter(id => {
-            const o = db.orders.find(ord => ord.id === id);
+            const o = orders.find(ord => ord.id === id);
             return o && (o.status === OrderStatus.NEW || o.isSuspended);
         });
 
@@ -1696,7 +1739,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             // Her siparişi önce Trendyol'dan güncelle ki ID'ler kesin doğru olsun
             for (const id of orderIdsToProcess) {
-                const localOrder = db.orders.find(o => o.id === id);
+                const localOrder = orders.find(o => o.id === id);
                 if (!localOrder) continue;
 
                 const freshOrder = await fetchOrderDetailsFromTrendyol(localOrder);
@@ -1712,16 +1755,11 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             await syncOrderStatusToMarketplaces(db.apiConfigs, updatedOrdersToProcess, OrderStatus.PROCESSING);
 
             // Başarılı olursa yerel DB'yi güncelle
-            updateDB(prev => ({ 
-                ...prev, 
-                orders: prev.orders.map(o => {
-                    const processed = updatedOrdersToProcess.find(p => p.id === o.id);
-                    if (processed) {
-                        return { ...processed, status: OrderStatus.PROCESSING, isSuspended: o.isSuspended };
-                    }
-                    return o;
-                }) 
-            }));
+            const finalOrdersToProcess = updatedOrdersToProcess.map(p => {
+                const existing = orders.find(o => o.id === p.id);
+                return { ...p, status: OrderStatus.PROCESSING, isSuspended: existing ? existing.isSuspended : false };
+            });
+            await saveOrdersToSQLite(finalOrdersToProcess);
 
             setNotification({
                 type: 'success',
@@ -1744,7 +1782,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             return;
         }
 
-        const order = db.orders.find(o => o.id === orderId);
+        const order = orders.find(o => o.id === orderId);
         if (!order) return;
 
         const isSuspended = order.isSuspended === true;
@@ -1800,19 +1838,20 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             // 2. DB'yi Güncelle (Senkronizasyondan ÖNCE yap ki sync güncel veriyi okusun)
 
+            const targetOrder = orders.find(o => o.id === orderId);
+            if (targetOrder) {
+                if (targetOrder.status === OrderStatus.CANCELLED) {
+                    await saveOrdersToSQLite([{ ...targetOrder, isDeleted: true }]);
+                } else {
+                    if (window.require) {
+                        const { ipcRenderer } = window.require('electron');
+                        await ipcRenderer.invoke('sqlite-transaction', [{ query: 'DELETE FROM orders WHERE id = ?', params: [orderId] }]);
+                        setAutoRefreshTrigger(prev => prev + 1);
+                    }
+                }
+            }
             updateDB(prev => ({
                 ...prev,
-                orders: prev.orders.map(o => {
-                    if (o.id === orderId && o.status === OrderStatus.CANCELLED) {
-                        return { ...o, isDeleted: true };
-                    }
-                    return o;
-                }).filter(o => {
-                    if (o.id === orderId) {
-                        return o.status === OrderStatus.CANCELLED;
-                    }
-                    return true;
-                }),
                 returns: prev.returns.filter(r => r.orderId !== orderId),
                 products: currentProducts
             }));
@@ -1860,7 +1899,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         }
 
         // Count suspended, cancelled vs regular orders for messaging
-        const selectedOrderObjects = selectedOrders.map(id => db.orders.find(o => o.id === id)).filter(Boolean);
+        const selectedOrderObjects = selectedOrders.map(id => orders.find(o => o.id === id)).filter(Boolean);
         const stockAffectingOrders = selectedOrderObjects.filter(o => o && !o.isSuspended && o.status !== OrderStatus.CANCELLED);
         const regularCount = stockAffectingOrders.length;
 
@@ -1873,7 +1912,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             const barcodesToSync: { [key: string]: number } = {};
 
             selectedOrders.forEach(orderId => {
-                const order = db.orders.find(o => o.id === orderId);
+                const order = orders.find(o => o.id === orderId);
                 if (!order) return;
 
                 // Sadece aktif (askıda ve iptal DEĞİL) ise stok iadesi yap
@@ -1923,19 +1962,32 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             // 2. DB'yi Güncelle
 
+            const ops: any[] = [];
+            const ordersToUpdate: Order[] = [];
+            
+            selectedOrders.forEach(orderId => {
+                const targetOrder = orders.find(o => o.id === orderId);
+                if (targetOrder) {
+                    if (targetOrder.status === OrderStatus.CANCELLED) {
+                        ordersToUpdate.push({ ...targetOrder, isDeleted: true });
+                    } else {
+                        ops.push({ query: 'DELETE FROM orders WHERE id = ?', params: [orderId] });
+                    }
+                }
+            });
+
+            if (window.require && ops.length > 0) {
+                const { ipcRenderer } = window.require('electron');
+                window.require('electron').ipcRenderer.invoke('sqlite-transaction', ops).then(() => {
+                    setAutoRefreshTrigger(prev => prev + 1);
+                });
+            }
+            if (ordersToUpdate.length > 0) {
+                saveOrdersToSQLite(ordersToUpdate);
+            }
+
             updateDB(prev => ({
                 ...prev,
-                orders: prev.orders.map(o => {
-                    if (selectedOrders.includes(o.id) && o.status === OrderStatus.CANCELLED) {
-                        return { ...o, isDeleted: true };
-                    }
-                    return o;
-                }).filter(o => {
-                    if (selectedOrders.includes(o.id)) {
-                        return o.status === OrderStatus.CANCELLED;
-                    }
-                    return true;
-                }),
                 products: currentProducts
             }));
 
@@ -2137,20 +2189,11 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (allItemsFound) {
             // Update Order Status - Askıdan çıkar ve tekrar askıya gitmesini engelle
             const updatedOrderData = trendyolOrder || order;
+            const finalSuspendedOrder = { ...updatedOrderData, items: newItems, isSuspended: false, wasSuspended: true };
+            saveOrdersToSQLite([finalSuspendedOrder]);
             updateDB(prev => ({ 
                 ...prev, 
-                products: currentProducts, 
-                orders: prev.orders.map(o => {
-                    if (o.id === order.id) {
-                        return {
-                            ...updatedOrderData,
-                            items: newItems,
-                            isSuspended: false,
-                            wasSuspended: true
-                        };
-                    }
-                    return o;
-                }) 
+                products: currentProducts
             }));
 
             // Sync if enabled - Barkod bazlı stok gönderimi
@@ -2280,25 +2323,26 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const orderIds = new Set(records.map(r => r.orderId));
 
         requestConfirm('Seçili iade kayıtlarını silmek istediğinize emin misiniz? Bu işlem stokları etkilemez.', () => {
-            updateDB(prev => {
-                // İade kaydını sil
-                const newReturns = prev.returns.filter(r => !recordIds.has(r.id));
-
-                // Eğer sipariş tam iade durumundaysa (İptal Edildi), siparişi de sistemden tamamen sil
-                let newOrders = prev.orders;
-                orderIds.forEach(orderId => {
-                    const associatedOrder = prev.orders.find(o => o.id === orderId);
-                    if (associatedOrder && associatedOrder.status === OrderStatus.CANCELLED) {
-                        newOrders = newOrders.filter(o => o.id !== orderId);
-                    }
-                });
-
-                return {
-                    ...prev,
-                    returns: newReturns,
-                    orders: newOrders
-                };
+            const ordersToDelete: string[] = [];
+            orderIds.forEach(orderId => {
+                const associatedOrder = orders.find(o => o.id === orderId);
+                if (associatedOrder && associatedOrder.status === OrderStatus.CANCELLED) {
+                    ordersToDelete.push(orderId);
+                }
             });
+            
+            if (window.require && ordersToDelete.length > 0) {
+                const { ipcRenderer } = window.require('electron');
+                const ops = ordersToDelete.map(id => ({ query: 'DELETE FROM orders WHERE id = ?', params: [id] }));
+                window.require('electron').ipcRenderer.invoke('sqlite-transaction', ops).then(() => {
+                    setAutoRefreshTrigger(prev => prev + 1);
+                });
+            }
+
+            updateDB(prev => ({
+                ...prev,
+                returns: prev.returns.filter(r => !recordIds.has(r.id))
+            }));
 
             setNotification({ type: 'success', message: 'İade kaydı silindi.' });
         });
@@ -2306,23 +2350,18 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     const handleBulkDeleteReturns = async () => {
         requestConfirm('Tüm iade kayıtlarını silmek istediğinize emin misiniz? Bu işlem stokları etkilemez.', () => {
-            updateDB(prev => {
-                // İptal edilmiş (tam iade) siparişleri de temizle
-                const returnedOrderIds = new Set(prev.returns.map(r => r.orderId));
-                const newOrders = prev.orders.filter(o => {
-                    // Eğer siparişin bir iadesi varsa ve durumu İptal Edildi ise siparişi de sil
-                    if (returnedOrderIds.has(o.id) && o.status === OrderStatus.CANCELLED) {
-                        return false;
-                    }
-                    return true;
+            const returnedOrderIds = new Set(db.returns.map(r => r.orderId));
+            if (window.require && returnedOrderIds.size > 0) {
+                const { ipcRenderer } = window.require('electron');
+                const ops = Array.from(returnedOrderIds).map(id => ({ query: 'DELETE FROM orders WHERE status = ? AND id = ?', params: [OrderStatus.CANCELLED, id] }));
+                window.require('electron').ipcRenderer.invoke('sqlite-transaction', ops).then(() => {
+                    setAutoRefreshTrigger(prev => prev + 1);
                 });
-
-                return {
-                    ...prev,
-                    returns: [],
-                    orders: newOrders
-                };
-            });
+            }
+            updateDB(prev => ({
+                ...prev,
+                returns: []
+            }));
 
             setNotification({ type: 'success', message: 'Tüm iade kayıtları silindi.' });
         });
@@ -2371,16 +2410,19 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 }
             });
 
+            const ordersToUpdate: Order[] = [];
+            orderIds.forEach(orderId => {
+                const associatedOrder = orders.find(o => o.id === orderId);
+                if (associatedOrder && associatedOrder.status === OrderStatus.CANCELLED) {
+                    ordersToUpdate.push({ ...associatedOrder, status: OrderStatus.DELIVERED });
+                }
+            });
+            saveOrdersToSQLite(ordersToUpdate);
+
             updateDB(prev => ({
                 ...prev,
                 products: currentProducts,
-                returns: prev.returns.filter(r => !recordIds.has(r.id)),
-                orders: prev.orders.map(o => {
-                    if (orderIds.has(o.id) && o.status === OrderStatus.CANCELLED) {
-                        return { ...o, status: OrderStatus.DELIVERED };
-                    }
-                    return o;
-                })
+                returns: prev.returns.filter(r => !recordIds.has(r.id))
             }));
 
             // 3. Stok Senkronizasyonunu Tetikle
@@ -2415,7 +2457,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         detectPrinters();
 
         // Preview için Trendyol'dan güncel verileri çek
-        const ordersToPreview = db.orders.filter(o => finalSelectedOrders.includes(o.id));
+        const ordersToPreview = orders.filter(o => finalSelectedOrders.includes(o.id));
         const updatedPreviewOrders = await Promise.all(
             ordersToPreview.map(async (order) => {
                 const trendyolOrder = await fetchOrderDetailsFromTrendyol(order);
@@ -2942,13 +2984,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             // Mark orders as printed
             console.log(`[PRINT-DEBUG] Yazdırılacak siparişler:`, selectedOrders);
-            updateDB(prev => ({ 
-                ...prev, 
-                orders: prev.orders.map(o => {
-                    const shouldMark = selectedOrders.includes(o.id);
-                    return shouldMark ? { ...o, isPrinted: true } : o;
-                }) 
-            }));
+            const updatedPrintedOrders = orders.filter(o => selectedOrders.includes(o.id)).map(o => ({ ...o, isPrinted: true }));
+            saveOrdersToSQLite(updatedPrintedOrders);
             console.log(`[PRINT-DEBUG] Seçili ${selectedOrders.length} sipariş yazdırıldı olarak işaretlendi.`);
         } catch (error) {
             console.error('Print/PDF generation error:', error);
@@ -3677,7 +3714,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => {
-                                                                        const stores = Array.from(new Set(db.orders.map(o => o.storeName)))
+                                                                        const stores = Array.from(new Set(orders.map(o => o.storeName)))
                                                                             .filter((s): s is string => Boolean(s))
                                                                             .sort();
                                                                         setSelectedStores(stores);
@@ -3741,7 +3778,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                     onClick={() => {
                                                                         const allCodes = Array.from(new Set([
                                                                             ...PRIORITY_COUNTRIES.map(c => c.code),
-                                                                            ...db.orders.map(o => getEffectiveOrderCountryCode(o))
+                                                                            ...orders.map(o => getEffectiveOrderCountryCode(o))
                                                                         ]));
                                                                         setSelectedCountries(allCodes);
                                                                     }}
@@ -3775,7 +3812,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
                                                                 {/* Other Countries from DB */}
                                                                 {(() => {
-                                                                    const dbCountryCodes = Array.from(new Set(db.orders
+                                                                    const dbCountryCodes = Array.from(new Set(orders
                                                                         .map(o => getEffectiveOrderCountryCode(o).toUpperCase())
                                                                         .filter(c => c && c !== 'TR' && !PRIORITY_COUNTRIES.some(p => p.code === c))
                                                                     )).sort() as string[];
@@ -3937,7 +3974,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
                         {/* Returned Items List */}
                         {activeTab === 'returned' && getPaginatedOrders().map((ret: any) => {
-                            const associatedOrder = db.orders.find(o => o.id === ret.originalRecords[0]?.orderId || o.marketplaceOrderId === ret.marketplaceOrderId);
+                            const associatedOrder = orders.find(o => o.id === ret.originalRecords[0]?.orderId || o.marketplaceOrderId === ret.marketplaceOrderId);
                             return (
                                 <tr
                                     key={ret.id}
