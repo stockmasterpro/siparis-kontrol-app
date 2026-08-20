@@ -507,7 +507,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                     </p>
                                 </div>
 
-                                {(newApi.type === 'TRENDYOL' || newApi.type === 'HEPSIBURADA') && (
+                                {(newApi.type === 'TRENDYOL' || newApi.type === 'HEPSIBURADA' || newApi.type === 'N11' || newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') && (
                                     <div className="col-span-2">
                                         <label className="block text-xs font-bold text-gray-500 mb-2 uppercase">Senkronizasyon Ayarları</label>
                                         <div className="grid grid-cols-4 gap-4 bg-white p-3 border rounded">

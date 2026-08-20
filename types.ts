@@ -255,6 +255,8 @@ export interface AppSettings {
 export interface Database {
   users: User[];
   currentUser: User | null;
+  products: Product[];
+  orders: Order[];
   returns: ReturnRecord[];
   apiConfigs: ApiConfig[];
   warehouses: Warehouse[];
@@ -266,11 +268,3 @@ export interface Database {
   /** Pazaryerinden tekrar içeri alınmaması gereken paket anahtarları (mağaza::siparişNo::paketId) */
   dismissedOrderImportKeys?: string[];
 }
-
-export interface PaginatedResponse<T> {
-  data: T[];
-  total: number;
-  page: number;
-  limit: number;
-}
-
