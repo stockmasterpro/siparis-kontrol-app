@@ -94,24 +94,25 @@ function setupAutoUpdater() {
 
     // Windows System Notification
     showSystemNotification(
-      'Sipariş Kontrol - Güncelleme Hazır',
-      `Yeni sürüm (${info.version}) başarıyla indirildi. Yüklemek için onayınız bekleniyor.`,
-      () => {
-        if (mainWindow) {
-          if (mainWindow.isMinimized()) mainWindow.restore();
-          mainWindow.show();
-          mainWindow.focus();
-        }
-      }
+      'Sipariş Kontrol - Güncelleme Kuruluyor',
+      `Yeni sürüm (${info.version}) indirildi. Uygulama otomatik olarak yeniden başlatılıyor...`,
+      () => {}
     );
 
     if (mainWindow) {
       mainWindow.webContents.send('update-message', {
         type: 'downloaded',
         version: info.version,
-        message: 'Güncelleme başarıyla indirildi. Yüklemek için uygulamayı yeniden başlatın.'
+        message: 'Güncelleme başarıyla indirildi. Otomatik olarak yükleniyor...'
       });
     }
+
+    // Bypass UI approval: Auto install after 3 seconds
+    // This ensures updates apply even if the React UI has crashed
+    setTimeout(() => {
+      console.log('[UPDATE] Auto-installing update...');
+      autoUpdater.quitAndInstall(false, true);
+    }, 3000);
   });
 
   if (!app.isPackaged) {
