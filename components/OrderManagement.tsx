@@ -536,7 +536,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         let foundProduct: Product | null = null;
         let foundVariant: Variant | null = null;
 
-        for (const p of db.products) {
+        for (const p of (db.products || [])) {
             const v = p.variants.find(v => v.barcode === manualBarcode);
             if (v) {
                 foundProduct = p;
@@ -612,7 +612,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             isPrinted: false
         };
 
-        let updatedProducts = [...db.products];
+        let updatedProducts = [...(db.products || [])];
         const barcodesToSync: { [key: string]: number } = {};
 
         for (const item of newOrder.items) {
@@ -723,8 +723,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     .concat(manualOrdersAddedDuringSync);
 
                 const prevProductIds = new Set(prev.products.map(p => p.id));
-                const deletedProductIds = new Set(db.products.filter(p => !prevProductIds.has(p.id)).map(p => p.id));
-                const manualProductsAddedDuringSync = prev.products.filter(p => !db.products.some(cp => cp.id === p.id));
+                const deletedProductIds = new Set(((db.products || []) || []).filter(p => !prevProductIds.has(p.id)).map(p => p.id));
+                const manualProductsAddedDuringSync = prev.products.filter(p => !((db.products || []) || []).some(cp => cp.id === p.id));
 
                 const finalProducts = result.updatedProducts
                     .filter(p => !deletedProductIds.has(p.id))
@@ -1335,7 +1335,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     // Stok kontrolü fonksiyonu
     const getStockStatus = (barcode: string): number => {
         if (!barcode) return 0;
-        const product = db.products.find(p => p.variants.some(v => v.barcode === barcode));
+        const product = ((db.products || []) || []).find(p => p.variants.some(v => v.barcode === barcode));
         if (!product) return 0;
         const variant = product.variants.find(v => v.barcode === barcode);
         if (!variant || !variant.stocks) return 0;
@@ -1365,7 +1365,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const stockTracker = new Map<string, number>();
 
         order.items.forEach((item, index) => {
-            const product = db.products.find(p => p.variants.some(v => v.barcode === item.barcode));
+            const product = ((db.products || []) || []).find(p => p.variants.some(v => v.barcode === item.barcode));
             if (!product) return;
             const variant = product.variants.find(v => v.barcode === item.barcode);
             if (!variant || !variant.stocks) return;
@@ -1431,7 +1431,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 let hasError = false;
                 splits.forEach(s => {
                     if (s.qty > 0) {
-                        const product = db.products.find(p => p.variants.some(v => v.barcode === barcode));
+                        const product = ((db.products || []) || []).find(p => p.variants.some(v => v.barcode === barcode));
                         const variant = product?.variants.find(v => v.barcode === barcode);
                         const stockInNewWh = variant?.stocks[s.whId] || 0;
                         if (stockInNewWh < s.qty) {
@@ -1796,7 +1796,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         }
 
         requestConfirm(confirmMsg, async () => {
-            let currentProducts = [...db.products];
+            let currentProducts = [...(db.products || [])];
             const barcodesToSync: { [key: string]: number } = {};
 
             // 1. Stoğu geri ekle (Sadece stock-affecting ise)
@@ -1908,7 +1908,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             : `${selectedOrders.length} adet seçili (askıda veya iptal) siparişi silmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz.`;
 
         requestConfirm(confirmMsg, async () => {
-            let currentProducts = [...db.products];
+            let currentProducts = [...(db.products || [])];
             const barcodesToSync: { [key: string]: number } = {};
 
             selectedOrders.forEach(orderId => {
@@ -2036,7 +2036,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         'Barkod': gi.barcodes.join(', '),
                         'Renk': gi.color,
                         'Beden': gi.sizes.join(', '),
-                        'Maliyet Fiyatı': (db.products.find(p => p.variants.some(v => v.barcode === gi.barcodes[0]))?.variants.find(v => v.barcode === gi.barcodes[0])?.costPrice ?? db.products.find(p => p.variants.some(v => v.barcode === gi.barcodes[0]))?.costPrice ?? 0).toFixed(2),
+                        'Maliyet Fiyatı': (((db.products || []) || []).find(p => p.variants.some(v => v.barcode === gi.barcodes[0]))?.variants.find(v => v.barcode === gi.barcodes[0])?.costPrice ?? ((db.products || []) || []).find(p => p.variants.some(v => v.barcode === gi.barcodes[0]))?.costPrice ?? 0).toFixed(2),
                         'İade Adet': qty,
                         'Birim Fiyat': price,
                         'Toplam Fiyat': price * qty,
@@ -2057,8 +2057,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     const countryCode = getEffectiveOrderCountryCode(o);
                     const countryName = PRIORITY_COUNTRIES.find(c => c.code === countryCode)?.name || countryCode;
 
-                    const variant = db.products.find(p => p.variants.some(v => v.barcode === item.barcode))?.variants.find(v => v.barcode === item.barcode);
-                    const product = db.products.find(p => p.variants.some(v => v.barcode === item.barcode));
+                    const variant = ((db.products || []) || []).find(p => p.variants.some(v => v.barcode === item.barcode))?.variants.find(v => v.barcode === item.barcode);
+                    const product = ((db.products || []) || []).find(p => p.variants.some(v => v.barcode === item.barcode));
                     const costPrice = variant?.costPrice ?? product?.costPrice ?? 0;
                     
                     const fulfillmentInfo = o.fulfillmentInfo || getOrderFulfillmentInfo(o);
@@ -2134,7 +2134,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         // Önce Trendyol'dan güncel sipariş detaylarını çek
         const trendyolOrder = await fetchOrderDetailsFromTrendyol(order);
 
-        let currentProducts = [...db.products];
+        let currentProducts = [...(db.products || [])];
         let barcodesToSync: { [key: string]: number } = {};
         let allItemsFound = true;
 
@@ -2373,7 +2373,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const orderIds = new Set(records.map(r => r.orderId));
 
         requestConfirm('Bu iade işlemini geri almak istediğinize emin misiniz? İade edilen ürün stoğu geri düşülecektir.', async () => {
-            let currentProducts = [...db.products];
+            let currentProducts = [...(db.products || [])];
             const barcodesToSync: { [key: string]: number } = {};
 
             // 1. Stoğu geri düş (İade işlemi stoğu artırmıştı, şimdi azaltacağız)

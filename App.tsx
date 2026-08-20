@@ -1187,7 +1187,7 @@ const App: React.FC = () => {
     if (overrideOrderCounts.active !== null) {
       activeCount = overrideOrderCounts.active;
     } else {
-      activeCount = db.orders.filter(o =>
+      activeCount = (db.orders || []).filter(o =>
         !o.isSuspended &&
         o.status !== OrderStatus.CANCELLED &&
         (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING) // Sadece işlem bekleyenler
@@ -1196,8 +1196,8 @@ const App: React.FC = () => {
 
     return {
       active: activeCount,
-      cancelled: db.orders.filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_') && new Date(o.orderDate) >= thresholdDate).length,
-      suspended: db.orders.filter(
+      cancelled: (db.orders || []).filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_') && new Date(o.orderDate) >= thresholdDate).length,
+      suspended: (db.orders || []).filter(
         o =>
           o.isSuspended &&
           (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING)

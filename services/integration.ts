@@ -2642,8 +2642,8 @@ export const syncBarcodeStockBatchPazarama = async (
 
 // --- AUTO ALLOCATE PENDING ORDERS ---
 export const autoAllocatePendingOrders = (db: any): any => {
-    let updatedOrders = [...db.orders];
-    let currentDbProducts = [...db.products];
+    let updatedOrders = [...(db.orders || [])];
+    let currentDbProducts = [...(db.products || [])];
     let madeChanges = false;
     
     updatedOrders = updatedOrders.map(order => {
