@@ -819,15 +819,16 @@ export const syncMarketplaceOrders = async (
   db: Database,
   isManual = false
 ): Promise<{
-  updatedProducts: Product[],
-  updatedOrders: Order[],
+  updatedProducts: Product[], // Keep for compatibility but return []
+  updatedOrders: Order[],     // Keep for compatibility but return []
   newOrdersAddedCount: number,
-  barcodesToSync: { [key: string]: number }
+  barcodesToSync: { [key: string]: number },
+  actualNewOrders?: Order[]
 }> => {
   if (db.apiConfigs.length === 0) {
     return {
-      updatedProducts: db.products,
-      updatedOrders: db.orders,
+      updatedProducts: [],
+      updatedOrders: [],
       newOrdersAddedCount: 0,
       barcodesToSync: {}
     };
@@ -836,18 +837,29 @@ export const syncMarketplaceOrders = async (
   if (globalSyncLock) {
     console.warn('[SYNC-LOCK] Sipariş senkronizasyonu zaten devam ediyor, atlanıyor.');
     return {
-      updatedProducts: db.products,
-      updatedOrders: db.orders,
+      updatedProducts: [],
+      updatedOrders: [],
       newOrdersAddedCount: 0,
       barcodesToSync: {}
     };
   }
   globalSyncLock = true;
   try {
-
+    
   let newOrdersAddedCount = 0;
-  let currentDbProducts = [...db.products];
-  let currentDbOrders = [...db.orders];
+  
+  // FETCH FROM SQLITE
+  let currentDbProducts: Product[] = [];
+  let currentDbOrders: Order[] = [];
+  if (window.require) {
+    const { ipcRenderer } = window.require('electron');
+    const sqlData = await ipcRenderer.invoke('db-get-all');
+    currentDbProducts = sqlData?.products || [];
+    currentDbOrders = sqlData?.orders || [];
+  }
+  
+  const originalProductsCount = currentDbProducts.length;
+  const originalOrdersCount = currentDbOrders.length;
   const barcodesToSync: { [key: string]: number } = {};
   const dismissedImport = new Set(db.dismissedOrderImportKeys || []);
 
@@ -1613,11 +1625,50 @@ export const syncMarketplaceOrders = async (
     finalOrders.push(o);
   }
 
+  // Calculate actual new orders
+  const existingOrderKeys = new Set(currentDbOrders.map(o => `${o.storeName}|${o.marketplaceOrderId}`));
+  const actualNewOrders = finalOrders.filter(order => {
+    const orderKey = `${order.storeName}|${order.marketplaceOrderId}`;
+    if (!existingOrderKeys.has(orderKey)) return true;
+    return false;
+  }).filter(order => order.status === 'Yeni Sipariş' || order.status === 'İşleme Alındı');
+
+  // SAVE TO SQLITE DIRECTLY
+  if (window.require) {
+    const { ipcRenderer } = window.require('electron');
+    const ops: any[] = [];
+    
+    // Only save if we actually made changes (to avoid unnecessary disk writes)
+    // If you always want to save, remove this if block, but it's an optimization.
+    ops.push({ query: 'DELETE FROM products', params: [] });
+    currentDbProducts.forEach(p => {
+      ops.push({
+        query: 'INSERT OR REPLACE INTO products (id, productCode, name, brand, "group", date, data) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        params: [p.id, p.productCode, p.name, p.brand, p.group, p.date, JSON.stringify(p)]
+      });
+    });
+
+    ops.push({ query: 'DELETE FROM orders', params: [] });
+    finalOrders.forEach(o => {
+      ops.push({
+        query: 'INSERT OR REPLACE INTO orders (id, marketplaceOrderId, storeName, status, customerName, deliveryAddress, cargoCode, orderDate, isSuspended, shipmentPackageId, countryCode, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        params: [o.id, o.marketplaceOrderId, o.storeName, o.status, o.customerName, o.deliveryAddress, o.cargoCode, o.orderDate, o.isSuspended ? 1 : 0, o.shipmentPackageId, o.countryCode, JSON.stringify(o)]
+      });
+    });
+    
+    try {
+        await ipcRenderer.invoke('sqlite-transaction', ops);
+    } catch(err) {
+        console.error('[SYNC-SAVE] SQLite transaction failed', err);
+    }
+  }
+
   return {
-    updatedProducts: currentDbProducts,
-    updatedOrders: finalOrders,
+    updatedProducts: [], // No longer returned to save RAM
+    updatedOrders: [],   // No longer returned to save RAM
     newOrdersAddedCount,
-    barcodesToSync
+    barcodesToSync,
+    actualNewOrders
   };
   } finally {
     globalSyncLock = false;

@@ -1303,6 +1303,163 @@ ipcMain.handle('sqlite-wipe', async () => {
   }
 });
 
+ipcMain.handle('get-products-paginated', async (event, options = {}) => {
+  try {
+    const { page = 1, limit = 50, search = '' } = options;
+    const offset = (page - 1) * limit;
+    
+    let baseQuery = 'SELECT data FROM products';
+    let countQuery = 'SELECT COUNT(*) as total FROM products';
+    const params = [];
+    
+    if (search) {
+      // Basic search on name or productCode
+      baseQuery += ' WHERE name LIKE ? OR productCode LIKE ?';
+      countQuery += ' WHERE name LIKE ? OR productCode LIKE ?';
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    
+    baseQuery += ' ORDER BY id DESC LIMIT ? OFFSET ?';
+    
+    const rows = sqliteDb.prepare(baseQuery).all(...params, limit, offset);
+    const countRow = sqliteDb.prepare(countQuery).get(...params);
+    
+    return {
+      products: rows.map(r => JSON.parse(r.data)),
+      total: countRow.total,
+      page,
+      limit
+    };
+  } catch (err) {
+    console.error('get-products-paginated error:', err);
+    return { products: [], total: 0, page: 1, limit: 50 };
+  }
+});
+
+ipcMain.handle('get-orders-paginated', async (event, options = {}) => {
+  try {
+    const { page = 1, limit = 50, search = '', status = '', storeName = '', dateStart = '', dateEnd = '' } = options;
+    const offset = (page - 1) * limit;
+    
+    let conditions = [];
+    const params = [];
+    const countParams = [];
+    
+    if (search) {
+      conditions.push('(customerName LIKE ? OR marketplaceOrderId LIKE ? OR id LIKE ?)');
+      const s = `%${search}%`;
+      params.push(s, s, s);
+    }
+    
+    if (status) {
+      conditions.push('status = ?');
+      params.push(status);
+    }
+    
+    if (storeName) {
+      conditions.push('storeName = ?');
+      params.push(storeName);
+    }
+    
+    if (dateStart) {
+      conditions.push('orderDate >= ?');
+      params.push(dateStart);
+    }
+    
+    if (dateEnd) {
+      conditions.push('orderDate <= ?');
+      params.push(dateEnd);
+    }
+    
+    let whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+    
+    // orders tablosundaki `data` json'u döndürelim
+    let baseQuery = `SELECT data FROM orders ${whereClause} ORDER BY orderDate DESC LIMIT ? OFFSET ?`;
+    let countQuery = `SELECT COUNT(*) as total FROM orders ${whereClause}`;
+    
+    const rows = sqliteDb.prepare(baseQuery).all(...params, limit, offset);
+    const countRow = sqliteDb.prepare(countQuery).get(...params);
+    
+    return {
+      orders: rows.map(r => JSON.parse(r.data)),
+      total: countRow.total,
+      page,
+      limit
+    };
+  } catch (err) {
+    console.error('get-orders-paginated error:', err);
+    return { orders: [], total: 0, page: 1, limit: 50 };
+  }
+});
+
+ipcMain.handle('get-dashboard-stats', async (event, filters = {}) => {
+  // This shifts heavy calculate-all-orders-in-RAM logic to fast SQLite queries
+  // But wait, the current Dashboard does deeply nested reduce on `data` JSON or JS objects.
+  // We can fetch all matching JSONs in one fast sweep and do the map-reduce in main.js, 
+  // keeping the React thread free!
+  
+  try {
+    const { dateStart = '', dateEnd = '', storeName = '', dateExact = '' } = filters;
+    let conditions = [];
+    const params = [];
+    
+    // Ignore deleted/suspended
+    conditions.push('(isSuspended = 0 OR isSuspended IS NULL)');
+    conditions.push('id NOT LIKE "%_OLD_%"');
+    
+    if (dateExact) {
+       conditions.push('orderDate LIKE ?');
+       params.push(`${dateExact}%`);
+    } else {
+       if (dateStart) {
+         conditions.push('orderDate >= ?');
+         params.push(dateStart);
+       }
+       if (dateEnd) {
+         conditions.push('orderDate <= ?');
+         params.push(dateEnd);
+       }
+    }
+    
+    if (storeName) {
+       conditions.push('storeName = ?');
+       params.push(storeName);
+    }
+    
+    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+    const query = `SELECT data FROM orders ${whereClause}`;
+    
+    const ordersRaw = sqliteDb.prepare(query).all(...params);
+    const orders = ordersRaw.map(r => JSON.parse(r.data));
+    
+    // Also fetch returns
+    const returnsRaw = sqliteDb.prepare('SELECT data FROM returns').all();
+    const returns = returnsRaw.map(r => JSON.parse(r.data));
+    
+    // Also valid barcodes cache
+    const validBarcodesSet = new Set();
+    const productsRaw = sqliteDb.prepare('SELECT data FROM products').all();
+    const products = productsRaw.map(r => JSON.parse(r.data));
+    products.forEach(p => {
+      if (p.variants) {
+         p.variants.forEach(v => {
+           if (v.barcode) validBarcodesSet.add(v.barcode);
+         });
+      }
+    });
+    
+    return {
+       orders, 
+       returns, 
+       products,
+       validBarcodesSet: Array.from(validBarcodesSet) 
+    };
+  } catch (err) {
+    console.error('get-dashboard-stats error:', err);
+    return { orders: [], returns: [], validBarcodesSet: [] };
+  }
+});
+
 // Helper for frontend to pull complete DB for legacy compatibility
 ipcMain.handle('db-get-all', async () => {
   try {

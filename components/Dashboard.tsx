@@ -7,7 +7,7 @@ import { Download, X, Check, Filter, ChevronDown, Eye, EyeOff } from 'lucide-rea
 import * as XLSX from 'xlsx';
 import { getTotalStock } from '../utils/stockUtils';
 
-
+import { fetchDashboardStats } from '../services/db';
 
 interface DashboardProps {
   db: Database;
@@ -19,6 +19,11 @@ const getLocalMonth = () => {
 };
 
 export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
+  const [dashboardOrders, setDashboardOrders] = useState<any[]>([]);
+  const [dashboardProducts, setDashboardProducts] = useState<any[]>([]);
+  const [dashboardReturns, setDashboardReturns] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
   const [filterType, setFilterType] = useState<'day' | 'month' | 'year' | 'range'>('month');
   const [selectedDay, setSelectedDay] = useState<string>(new Date().toISOString().split('T')[0]);
   const [selectedMonth, setSelectedMonth] = useState<string>(getLocalMonth());
@@ -35,6 +40,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   const [isPrivacyMode, setIsPrivacyMode] = useState(true);
   const [expandedStores, setExpandedStores] = useState<Record<string, boolean>>({});
 
+  useEffect(() => {
+    setIsLoading(true);
+    fetchDashboardStats({}).then(res => {
+      setDashboardOrders(res.orders || []);
+      setDashboardProducts(res.products || []);
+      setDashboardReturns(res.returns || []);
+      setIsLoading(false);
+    });
+
+    const handleSync = () => {
+      fetchDashboardStats({}).then(res => {
+        setDashboardOrders(res.orders || []);
+        setDashboardProducts(res.products || []);
+        setDashboardReturns(res.returns || []);
+      });
+    };
+    window.addEventListener('sync-completed', handleSync);
+    return () => window.removeEventListener('sync-completed', handleSync);
+  }, []);
+
   const toggleStore = (storeName: string) => {
     setExpandedStores(prev => ({
       ...prev,
@@ -42,7 +67,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     }));
   };
 
-
+  if (isLoading) {
+    return <div className="p-8 flex justify-center items-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div></div>;
+  }
 
   const PRIORITY_COUNTRIES = [
     { name: 'Türkiye', code: 'TR' },
@@ -68,10 +95,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     // Muhtemelen boş bırakıp "Boş = Hepsi" yapmak yerine, tam tersi kontrol sağlamak istiyor.
     // Ben başlangıçta PRİORİTY + olanları seçili getireceğim.
   }, []);
-
-  const dashboardProducts = db.products || [];
-  const dashboardOrders = db.orders || [];
-  const dashboardReturns = db.returns || [];
 
   const validBarcodesSet = useMemo(() => {
     const barcodes = new Set<string>();

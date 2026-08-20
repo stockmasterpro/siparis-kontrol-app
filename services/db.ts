@@ -10,8 +10,6 @@ const INITIAL_DB: Database = {
   warehouses: [
     { id: 'wh1', name: 'Depo 1', isCenter: true, priority: 1 }
   ],
-  products: [],
-  orders: [],
   returns: [],
   apiConfigs: [],
   questions: [],
@@ -81,11 +79,9 @@ const mergeDatabases = (localDb: Database, sharedDb: Partial<Database>): Databas
 
   return {
     ...localDb,
-    // Merge shared data (products, orders, etc.) but keep session-specific data
-    products: sharedDb.products || localDb.products,
+    // Merge shared data (questions, returns, etc.) but keep session-specific data
     questions: sharedDb.questions || localDb.questions,
     returnClaims: sharedDb.returnClaims || localDb.returnClaims,
-    orders: sharedDb.orders || localDb.orders,
     returns: sharedDb.returns || localDb.returns,
     apiConfigs: sharedDb.apiConfigs || localDb.apiConfigs,
     warehouses: mergedWarehouses,
@@ -120,8 +116,6 @@ const migrateAndValidateDB = (data: any): Database => {
   const migrated: Database = {
     currentUser: data.currentUser || null,
     users: Array.isArray(data.users) ? data.users : [],
-    products: Array.isArray(data.products) ? data.products : [],
-    orders: Array.isArray(data.orders) ? data.orders : [],
     returns: Array.isArray(data.returns) ? data.returns : [],
     apiConfigs: Array.isArray(data.apiConfigs) ? data.apiConfigs : [],
     warehouses: loadedWarehouses,
@@ -329,62 +323,6 @@ export const loadDBFromFile = async (): Promise<Database> => {
   return loadDB();
 };
 
-export const migrateProductImages = async (db: Database): Promise<Database> => {
-  if (!window.require) return db;
-  const { electron } = (window as any);
-  let migrationNeeded = false;
-
-  const updatedProducts = await Promise.all(db.products.map(async (product) => {
-    let productUpdated = false;
-    const updatedVariants = await Promise.all(product.variants.map(async (variant) => {
-      if (!variant.images || variant.images.length === 0) return variant;
-
-      let variantUpdated = false;
-      const updatedImages = await Promise.all(variant.images.map(async (img, index) => {
-        // Eğer görsel hala base64 ise taşı
-        if (img.startsWith('data:image/')) {
-          migrationNeeded = true;
-          variantUpdated = true;
-          productUpdated = true;
-
-          const extension = img.split(';')[0].split('/')[1] || 'jpg';
-          const fileName = `img_${Date.now()}_${index}.${extension}`;
-
-          try {
-            const result = await electron.saveProductImage({
-              productCode: product.productCode,
-              color: variant.color,
-              fileName: fileName,
-              base64Data: img
-            });
-
-            if (result.success) {
-              return result.url; // 'app-img://...'
-            }
-          } catch (err) {
-            console.error('Migration failed for image:', err);
-          }
-        }
-        return img;
-      }));
-
-      return variantUpdated ? { ...variant, images: updatedImages } : variant;
-    }));
-
-    return productUpdated ? { ...product, variants: updatedVariants } : product;
-  }));
-
-  if (migrationNeeded) {
-    console.log('[MIGRATION] Base64 görseller HDD klasörlerine taşındı.');
-    const newDb = { ...db, products: updatedProducts };
-    // Save the migrated DB immediately
-    await saveDB(newDb);
-    return newDb;
-  }
-
-  return db;
-};
-
 export const saveDB = async (db: Database): Promise<void> => {
   // 1. Sync small session data to localStorage
   const sessionData = { currentUser: db.currentUser };
@@ -439,23 +377,7 @@ export const saveDB = async (db: Database): Promise<void> => {
       });
     });
 
-    // Products (This is still a bit heavy, but SQLite handles it better than JSON write)
-    ops.push({ query: 'DELETE FROM products', params: [] });
-    db.products.forEach(p => {
-      ops.push({
-        query: 'INSERT OR REPLACE INTO products (id, productCode, name, brand, "group", date, data) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        params: [p.id, p.productCode, p.name, p.brand, p.group, p.date, JSON.stringify(p)]
-      });
-    });
-
-    // Orders
-    ops.push({ query: 'DELETE FROM orders', params: [] });
-    db.orders.forEach(o => {
-      ops.push({
-        query: 'INSERT OR REPLACE INTO orders (id, marketplaceOrderId, storeName, status, customerName, deliveryAddress, cargoCode, orderDate, isSuspended, shipmentPackageId, countryCode, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        params: [o.id, o.marketplaceOrderId, o.storeName, o.status, o.customerName, o.deliveryAddress, o.cargoCode, o.orderDate, o.isSuspended ? 1 : 0, o.shipmentPackageId, o.countryCode, JSON.stringify(o)]
-      });
-    });
+    // Note: Products and Orders are now managed dynamically via direct IPC inserts, not via saveDB.
 
     // Questions, Returns
     // v1.4.2: Wipe actions-needed tables before re-inserting to prevent ghost records
@@ -653,20 +575,24 @@ export const importBackup = (file: File, options: {
   reader.readAsText(file, 'utf-8');
 };
 
-export const fetchProductsPaginated = async (params: { page: number; limit: number; search?: string }): Promise<{ products: Product[]; total: number }> => {
-  const db = loadDB();
-  let filtered = db.products || [];
-  if (params.search) {
-      const s = params.search.toLowerCase();
-      filtered = filtered.filter(p => 
-          p.name.toLowerCase().includes(s) || 
-          p.productCode.toLowerCase().includes(s) || 
-          (p.variants && p.variants.some(v => v.barcode && v.barcode.toLowerCase().includes(s)))
-      );
-  }
-  const total = filtered.length;
-  const start = (params.page - 1) * params.limit;
-  const paginated = filtered.slice(start, start + params.limit);
-  return { products: paginated, total };
+// ==========================================
+// NEW: Paginated & Backend Fetch Methods
+// ==========================================
+
+export const fetchProductsPaginated = async (options: { page?: number, limit?: number, search?: string }) => {
+  if (!window.require) return { products: [], total: 0, page: 1, limit: 50 };
+  const { ipcRenderer } = window.require('electron');
+  return ipcRenderer.invoke('get-products-paginated', options);
 };
 
+export const fetchOrdersPaginated = async (options: { page?: number, limit?: number, search?: string, status?: string, storeName?: string, dateStart?: string, dateEnd?: string }) => {
+  if (!window.require) return { orders: [], total: 0, page: 1, limit: 50 };
+  const { ipcRenderer } = window.require('electron');
+  return ipcRenderer.invoke('get-orders-paginated', options);
+};
+
+export const fetchDashboardStats = async (filters: { dateStart?: string, dateEnd?: string, storeName?: string, dateExact?: string }) => {
+  if (!window.require) return { orders: [], returns: [], products: [], validBarcodesSet: [] };
+  const { ipcRenderer } = window.require('electron');
+  return ipcRenderer.invoke('get-dashboard-stats', filters);
+};
