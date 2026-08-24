@@ -1202,7 +1202,7 @@ const App: React.FC = () => {
           o.isSuspended &&
           (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING)
       ).length,
-      returned: db.returns.filter(r => new Date(r.returnDate) >= thresholdDate).length,
+      returned: (db.returns || []).filter(r => new Date(r.returnDate) >= thresholdDate).length,
       newQuestions: (db.questions || []).filter(q => q.status === QuestionStatus.WAITING_FOR_ANSWER).length,
       returnClaims: (db.returnClaims || []).length
     };

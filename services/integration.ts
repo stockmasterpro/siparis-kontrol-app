@@ -228,7 +228,7 @@ export const syncBarcodeStock = async (
  * Sends a batch of barcodes and their quantities to Trendyol.
  * Supports up to 1000 items per request as per Trendyol API.
  */
-export const syncBarcodeStockBatchTrendyol = async (
+export const syncBarcodeStockBatch = async (
   config: ApiConfig,
   items: { barcode: string, quantity: number }[],
   settings?: any
@@ -281,28 +281,6 @@ export const syncBarcodeStockBatchTrendyol = async (
     }
   }
   return true;
-};
-
-/**
- * Universal dispatcher for batch stock sync based on marketplace type.
- */
-export const syncBarcodeStockBatch = async (
-  config: ApiConfig,
-  items: { barcode: string, quantity: number }[],
-  settings?: any
-): Promise<boolean> => {
-  if (config.type === 'HEPSIBURADA') {
-    return syncBarcodeStockBatchHepsiburada(config, items, settings);
-  } else if (config.type === 'N11') {
-    return syncBarcodeStockBatchN11(config, items, settings);
-  } else if (config.type === 'AMAZON') {
-    return syncBarcodeStockBatchAmazon(config, items, settings);
-  } else if (config.type === 'PAZARAMA') {
-    return syncBarcodeStockBatchPazarama(config, items, settings);
-  } else {
-    // Default to Trendyol for backwards compatibility
-    return syncBarcodeStockBatchTrendyol(config, items, settings);
-  }
 };
 
 /**
@@ -819,16 +797,16 @@ export const syncMarketplaceOrders = async (
   db: Database,
   isManual = false
 ): Promise<{
-  updatedProducts: Product[], // Keep for compatibility but return []
-  updatedOrders: Order[],     // Keep for compatibility but return []
+  updatedProducts: Product[],
+  updatedOrders: Order[],
   newOrdersAddedCount: number,
   barcodesToSync: { [key: string]: number },
   actualNewOrders?: Order[]
 }> => {
   if (db.apiConfigs.length === 0) {
     return {
-      updatedProducts: [],
-      updatedOrders: [],
+      updatedProducts: (db as any).products || [],
+      updatedOrders: (db as any).orders || [],
       newOrdersAddedCount: 0,
       barcodesToSync: {}
     };
@@ -837,29 +815,18 @@ export const syncMarketplaceOrders = async (
   if (globalSyncLock) {
     console.warn('[SYNC-LOCK] Sipariş senkronizasyonu zaten devam ediyor, atlanıyor.');
     return {
-      updatedProducts: [],
-      updatedOrders: [],
+      updatedProducts: (db as any).products || [],
+      updatedOrders: (db as any).orders || [],
       newOrdersAddedCount: 0,
       barcodesToSync: {}
     };
   }
   globalSyncLock = true;
   try {
-    
+
   let newOrdersAddedCount = 0;
-  
-  // FETCH FROM SQLITE
-  let currentDbProducts: Product[] = [];
-  let currentDbOrders: Order[] = [];
-  if (window.require) {
-    const { ipcRenderer } = window.require('electron');
-    const sqlData = await ipcRenderer.invoke('db-get-all');
-    currentDbProducts = sqlData?.products || [];
-    currentDbOrders = sqlData?.orders || [];
-  }
-  
-  const originalProductsCount = currentDbProducts.length;
-  const originalOrdersCount = currentDbOrders.length;
+  let currentDbProducts = [...((db as any).products || [])];
+  let currentDbOrders = [...((db as any).orders || [])];
   const barcodesToSync: { [key: string]: number } = {};
   const dismissedImport = new Set(db.dismissedOrderImportKeys || []);
 
@@ -1625,50 +1592,11 @@ export const syncMarketplaceOrders = async (
     finalOrders.push(o);
   }
 
-  // Calculate actual new orders
-  const existingOrderKeys = new Set(currentDbOrders.map(o => `${o.storeName}|${o.marketplaceOrderId}`));
-  const actualNewOrders = finalOrders.filter(order => {
-    const orderKey = `${order.storeName}|${order.marketplaceOrderId}`;
-    if (!existingOrderKeys.has(orderKey)) return true;
-    return false;
-  }).filter(order => order.status === 'Yeni Sipariş' || order.status === 'İşleme Alındı');
-
-  // SAVE TO SQLITE DIRECTLY
-  if (window.require) {
-    const { ipcRenderer } = window.require('electron');
-    const ops: any[] = [];
-    
-    // Only save if we actually made changes (to avoid unnecessary disk writes)
-    // If you always want to save, remove this if block, but it's an optimization.
-    ops.push({ query: 'DELETE FROM products', params: [] });
-    currentDbProducts.forEach(p => {
-      ops.push({
-        query: 'INSERT OR REPLACE INTO products (id, productCode, name, brand, "group", date, data) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        params: [p.id, p.productCode, p.name, p.brand, p.group, p.date, JSON.stringify(p)]
-      });
-    });
-
-    ops.push({ query: 'DELETE FROM orders', params: [] });
-    finalOrders.forEach(o => {
-      ops.push({
-        query: 'INSERT OR REPLACE INTO orders (id, marketplaceOrderId, storeName, status, customerName, deliveryAddress, cargoCode, orderDate, isSuspended, shipmentPackageId, countryCode, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        params: [o.id, o.marketplaceOrderId, o.storeName, o.status, o.customerName, o.deliveryAddress, o.cargoCode, o.orderDate, o.isSuspended ? 1 : 0, o.shipmentPackageId, o.countryCode, JSON.stringify(o)]
-      });
-    });
-    
-    try {
-        await ipcRenderer.invoke('sqlite-transaction', ops);
-    } catch(err) {
-        console.error('[SYNC-SAVE] SQLite transaction failed', err);
-    }
-  }
-
   return {
-    updatedProducts: [], // No longer returned to save RAM
-    updatedOrders: [],   // No longer returned to save RAM
+    updatedProducts: currentDbProducts,
+    updatedOrders: finalOrders,
     newOrdersAddedCount,
-    barcodesToSync,
-    actualNewOrders
+    barcodesToSync
   };
   } finally {
     globalSyncLock = false;

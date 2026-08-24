@@ -3732,7 +3732,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                 </button>
                                                             </div>
                                                             <div className="p-1">
-                                                                {Array.from(new Set(db.apiConfigs.map(c => c.storeName)))
+                                                                {Array.from(new Set((db.apiConfigs || []).map(c => c.storeName)))
                                                                     .filter((s): s is string => Boolean(s))
                                                                     .sort()
                                                                     .map(storeName => (
@@ -4004,9 +4004,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                     <td>{ret.customerName}</td>
                                     <td>{ret.cargoCode || '-'}</td>
                                     <td className="text-xs">{ret.itemsCount || 0} Kalem</td>
-                                    <td className="text-[10px] truncate max-w-0" title={ret.groupedItems.map((gi: any) => gi.productName).join(', ')}>
+                                    <td className="text-[10px] truncate max-w-0" title={(ret.groupedItems || []).map((gi: any) => gi.productName).join(', ')}>
                                         <div className="flex flex-col">
-                                            <span>{ret.groupedItems[0]?.productName || '-'}</span>
+                                            <span>{(ret.groupedItems && ret.groupedItems[0]) ? ret.groupedItems[0].productName : '-'}</span>
                                             {ret.groupedItems[0]?.sizes && ret.groupedItems[0].sizes.length > 0 && (
                                                 <span className="text-blue-600 font-bold">Beden: {ret.groupedItems[0].sizes.join(', ')}</span>
                                             )}

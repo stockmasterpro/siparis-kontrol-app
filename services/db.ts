@@ -532,50 +532,9 @@ export const importBackup = (file: File, options: {
           if (window.require) {
             const { ipcRenderer } = window.require('electron');
             await ipcRenderer.invoke('sqlite-wipe');
-            
-            // Re-insert Products and Orders which are ignored by saveDB
-            const ops: { query: string; params?: unknown[] }[] = [];
-            
-            if (migratedData.products) {
-              migratedData.products.forEach((p: any) => {
-                ops.push({
-                  query: 'INSERT OR REPLACE INTO products (id, productCode, name, brand, "group", date, data) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                  params: [p.id, p.productCode, p.name, p.brand, p.group, p.date, JSON.stringify(p)]
-                });
-                if (p.variants) {
-                  p.variants.forEach((v: any) => {
-                    ops.push({
-                      query: 'INSERT OR REPLACE INTO variants (id, productId, barcode, color, size, costPrice, salePrice, stocks, images, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                      params: [v.id, p.id, v.barcode, v.color, v.size, v.costPrice || 0, v.salePrice || 0, JSON.stringify(v.stocks), JSON.stringify(v.images), JSON.stringify(v)]
-                    });
-                  });
-                }
-              });
-            }
-
-            if (migratedData.orders) {
-              migratedData.orders.forEach((o: any) => {
-                ops.push({
-                  query: 'INSERT OR REPLACE INTO orders (id, marketplaceOrderId, storeName, status, customerName, deliveryAddress, cargoCode, orderDate, isSuspended, shipmentPackageId, countryCode, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                  params: [o.id, o.marketplaceOrderId, o.storeName, o.status, o.customerName, o.deliveryAddress, o.cargoCode, o.orderDate, o.isSuspended ? 1 : 0, o.shipmentPackageId, o.countryCode, JSON.stringify(o)]
-                });
-                if (o.items) {
-                  o.items.forEach((item: any) => {
-                    ops.push({
-                      query: 'INSERT OR REPLACE INTO order_items (id, orderId, orderItemId, barcode, productName, sku, color, size, quantity, unitPrice, costPrice, totalPrice) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                      params: [item.id || Math.random().toString(36).substr(2, 9), o.id, item.orderItemId, item.barcode, item.productName, item.sku, item.color, item.size, item.quantity, item.unitPrice, item.costPrice, item.totalPrice]
-                    });
-                  });
-                }
-              });
-            }
-
-            if (ops.length > 0) {
-              await ipcRenderer.invoke('sqlite-transaction', ops);
-            }
           }
 
-          // 2. Save the rest of the database (settings, warehouses, etc.)
+          // 2. Save the database
           await saveDB(migratedData);
 
           if (options.onSuccess) options.onSuccess('Yedek başarıyla yüklendi. Uygulama yenileniyor...');

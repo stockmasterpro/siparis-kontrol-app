@@ -67,7 +67,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     }));
   };
 
-  // isLoading moved to bottom
+
   const PRIORITY_COUNTRIES = [
     { name: 'Türkiye', code: 'TR' },
     { name: 'Suudi Arabistan', code: 'SA' },
@@ -364,7 +364,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     yesterdayNode.setDate(yesterdayNode.getDate() - 1);
     const yesterdayStr = `${yesterdayNode.getFullYear()}-${String(yesterdayNode.getMonth() + 1).padStart(2, '0')}-${String(yesterdayNode.getDate()).padStart(2, '0')}`;
 
-    return db.apiConfigs.map(config => {
+    return (db.apiConfigs || []).map(config => {
       const storeOrders = filteredOrders.filter(o => o.storeName === config.storeName);
       const storeTotalOrdersList = storeOrders.filter(o => !(o.status === OrderStatus.CANCELLED && !dashboardReturns.some(r => r.orderId === o.id)));
       
@@ -1492,7 +1492,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
                 }}
               />
               <Legend />
-              {db.apiConfigs.map((config, index) => {
+              {(db.apiConfigs || []).map((config, index) => {
                 const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
                 const color = config.color || colors[index % colors.length];
                 return (
@@ -1534,7 +1534,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
               <YAxis />
               <Tooltip formatter={(value) => `${isPrivacyMode ? '***' : Number(value).toLocaleString('tr-TR')} ₺`} />
               <Legend />
-              {db.apiConfigs.map((config, index) => {
+              {(db.apiConfigs || []).map((config, index) => {
                 const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
                 const color = config.color || colors[index % colors.length];
                 return (
