@@ -67,6 +67,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     }));
   };
 
+  if (isLoading) {
+    return <div className="p-8 flex justify-center items-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div></div>;
+  }
 
   const PRIORITY_COUNTRIES = [
     { name: 'Türkiye', code: 'TR' },
@@ -1020,10 +1023,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
     return Object.values(stats).sort((a, b) => b.revenue - a.revenue);
   }, [filteredOrders, dashboardProducts, dashboardReturns]);
-
-  if (isLoading) {
-    return <div className="p-8 flex justify-center items-center h-full"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div></div>;
-  }
 
   return (
     <div className="space-y-6">

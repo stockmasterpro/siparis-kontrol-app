@@ -105,13 +105,22 @@ function setupAutoUpdater() {
       }
     );
 
-    if (mainWindow) {
-      mainWindow.webContents.send('update-message', {
-        type: 'downloaded',
-        version: info.version,
-        message: 'Güncelleme başarıyla indirildi. Yüklemek için uygulamayı yeniden başlatın.'
-      });
-    }
+    const dialogOpts = {
+      type: 'info',
+      buttons: ['Şimdi Yeniden Başlat ve Yükle', 'Daha Sonra'],
+      title: 'Güncelleme Hazır',
+      message: 'Sipariş Kontrol yeni sürümü (' + info.version + ') indirildi.',
+      detail: 'Uygulamayı yeniden başlatıp güncellemeyi yüklemek ister misiniz?\n\n(Eğer beyaz bir hata ekranındaysanız doğrudan yüklemeyi başlatın.)',
+      noLink: true
+    };
+
+    dialog.showMessageBox(mainWindow, dialogOpts).then((returnValue) => {
+      if (returnValue.response === 0) {
+        setImmediate(() => {
+          autoUpdater.quitAndInstall();
+        });
+      }
+    });
   });
 
   if (!app.isPackaged) {

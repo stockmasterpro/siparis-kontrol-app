@@ -1762,6 +1762,63 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
   }
   globalSyncLock = true;
   try {
+    if (config.type === 'N11') {
+      const qStatus = status === QuestionStatus.WAITING_FOR_ANSWER ? 'OPEN' : (status === QuestionStatus.ANSWERED ? 'CLOSED' : 'OPEN');
+      const bodyContent = `
+        <sch:GetProductQuestionListRequest>
+          <auth>
+            <appKey>${config.apiKey}</appKey>
+            <appSecret>${config.apiSecret}</appSecret>
+          </auth>
+          <productQuestionSearch>
+            <status>${qStatus}</status>
+          </productQuestionSearch>
+          <pagingData>
+            <currentPage>0</currentPage>
+            <pageSize>50</pageSize>
+          </pagingData>
+        </sch:GetProductQuestionListRequest>
+      `;
+      const xmlDoc = await callN11Soap('https://api.n11.com/ws/ProductService.wsdl', '', bodyContent);
+      if (!xmlDoc) return [];
+      
+      const questionNodes = xmlDoc.querySelectorAll('productQuestion');
+      const questions: Question[] = [];
+      questionNodes.forEach(node => {
+         const id = node.querySelector('id')?.textContent || '';
+         const text = node.querySelector('question')?.textContent || '';
+         const answer = node.querySelector('answer')?.textContent || '';
+         const nStatus = node.querySelector('status')?.textContent === 'CLOSED' ? QuestionStatus.ANSWERED : QuestionStatus.WAITING_FOR_ANSWER;
+         const userName = node.querySelector('fullName')?.textContent || node.querySelector('email')?.textContent || 'Müşteri';
+         
+         let dateStr = node.querySelector('questionDate')?.textContent || '';
+         if (dateStr && dateStr.includes('/')) {
+            const parts = dateStr.split('/');
+            if (parts.length >= 3) {
+               dateStr = `${parts[2].substring(0,4)}-${parts[1]}-${parts[0]}T00:00:00.000Z`;
+            }
+         } else if (!dateStr) {
+            dateStr = new Date().toISOString();
+         }
+         
+         questions.push({
+            id: `${config.storeName}_${id}`,
+            marketplaceQuestionId: id,
+            text: text,
+            answer: answer,
+            status: nStatus,
+            userName: userName,
+            createdDate: dateStr,
+            productName: node.querySelector('productTitle')?.textContent || 'Bilinmeyen Ürün',
+            productImageUrl: '',
+            storeName: config.storeName,
+            isPublic: false,
+            productContentId: node.querySelector('productId')?.textContent || undefined
+         });
+      });
+      return questions;
+    }
+
     // Note: Official Q&A endpoints use /integration/qna/sellers/{sellerId}/
     const baseUrl = `https://apigw.trendyol.com/integration/qna/sellers/${config.supplierId}/questions/filter`;
 
@@ -1841,6 +1898,23 @@ export const syncMarketplaceQuestions = async (config: ApiConfig, status?: Quest
  */
 export const answerMarketplaceQuestion = async (config: ApiConfig, questionId: string, answerText: string): Promise<boolean> => {
   try {
+    if (config.type === 'N11') {
+      const bodyContent = `
+        <sch:SaveProductAnswerRequest>
+          <auth>
+            <appKey>${config.apiKey}</appKey>
+            <appSecret>${config.apiSecret}</appSecret>
+          </auth>
+          <productQuestionId>${questionId}</productQuestionId>
+          <productAnswer><![CDATA[${answerText}]]></productAnswer>
+        </sch:SaveProductAnswerRequest>
+      `;
+      const xmlDoc = await callN11Soap('https://api.n11.com/ws/ProductService.wsdl', '', bodyContent);
+      if (!xmlDoc) throw new Error('N11 soru cevaplama başarısız.');
+      console.log(`[ANSWER-SUCCESS] Soru ${questionId} başarıyla cevaplandı.`);
+      return true;
+    }
+
     const url = `https://apigw.trendyol.com/integration/qna/sellers/${config.supplierId}/questions/${questionId}/answers`;
 
     const response = await fetch(url, {
@@ -1877,6 +1951,121 @@ export const syncMarketplaceClaims = async (config: ApiConfig): Promise<ReturnCl
   }
   globalSyncLock = true;
   try {
+    if (config.type === 'N11') {
+      const startDate = new Date();
+      startDate.setMonth(startDate.getMonth() - 1);
+      const startStr = `${String(startDate.getDate()).padStart(2,'0')}/${String(startDate.getMonth()+1).padStart(2,'0')}/${startDate.getFullYear()}`;
+      const endDate = new Date();
+      const endStr = `${String(endDate.getDate()).padStart(2,'0')}/${String(endDate.getMonth()+1).padStart(2,'0')}/${endDate.getFullYear()}`;
+
+      const bodyContent = `
+        <sch:ClaimReturnListRequest>
+          <auth>
+            <appKey>${config.apiKey}</appKey>
+            <appSecret>${config.apiSecret}</appSecret>
+          </auth>
+          <searchData>
+            <status>ALL</status>
+            <period>
+              <startDate>${startStr}</startDate>
+              <endDate>${endStr}</endDate>
+            </period>
+          </searchData>
+          <pagingData>
+            <currentPage>0</currentPage>
+            <pageSize>100</pageSize>
+          </pagingData>
+        </sch:ClaimReturnListRequest>
+      `;
+      const xmlDoc = await callN11Soap('https://api.n11.com/ws/ReturnService.wsdl', '', bodyContent);
+      if (!xmlDoc) return [];
+      
+      const claimNodes = xmlDoc.querySelectorAll('claimReturn');
+      const claims: ReturnClaim[] = [];
+      claimNodes.forEach(node => {
+          const claimId = node.querySelector('claimReturnId')?.textContent || '';
+          const orderNumber = node.querySelector('orderNumber')?.textContent || '';
+          const statusStr = node.querySelector('status')?.textContent || 'UNKNOWN';
+          const reason = node.querySelector('returnReasonDescription')?.textContent || node.querySelector('returnReasonType')?.textContent || 'Belirtilmedi';
+          
+          claims.push({
+             id: `${config.storeName}_${claimId}`,
+             claimId: claimId,
+             customerName: node.querySelector('buyerName')?.textContent || 'Müşteri',
+             orderNumber: orderNumber,
+             barcode: node.querySelector('skuId')?.textContent || node.querySelector('productId')?.textContent || 'NO-BARCODE',
+             productName: node.querySelector('productName')?.textContent || 'Ürün',
+             productImageUrl: '',
+             reason: reason,
+             description: '',
+             status: statusStr.toUpperCase(),
+             claimItemStatus: statusStr.toUpperCase(),
+             returnQuantity: Number(node.querySelector('quantity')?.textContent) || 1,
+             claimDate: node.querySelector('requestDate')?.textContent || new Date().toISOString(),
+             storeName: config.storeName
+          });
+      });
+      return claims;
+    }
+
+    if (config.type === 'PAZARAMA') {
+      const accessToken = await getPazaramaAccessToken(config);
+      const url = `https://isortagimapi.pazarama.com/order/getRefund`;
+      
+      const startDate = new Date();
+      startDate.setMonth(startDate.getMonth() - 1);
+      const startStr = `${startDate.getFullYear()}-${String(startDate.getMonth()+1).padStart(2,'0')}-${String(startDate.getDate()).padStart(2,'0')}`;
+      const endDate = new Date();
+      const endStr = `${endDate.getFullYear()}-${String(endDate.getMonth()+1).padStart(2,'0')}-${String(endDate.getDate()).padStart(2,'0')}`;
+
+      const payload = {
+        pageSize: 100,
+        pageNumber: 1,
+        refundStatus: 1, // İade Onayı Bekliyor according to PDF
+        requestStartDate: startStr,
+        requestEndDate: endStr
+      };
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        console.warn(`[PAZARAMA-CLAIM-SYNC] Hata: ${response.status}`);
+        return [];
+      }
+
+      const data = await response.json();
+      const refundList = data?.data?.refundList || data?.Data?.refundList || [];
+      const claims: ReturnClaim[] = [];
+
+      for (const refund of refundList) {
+         claims.push({
+             id: `${config.storeName}_${refund.id || refund.refundId}`,
+             claimId: refund.refundId || String(refund.id),
+             customerName: refund.customerName || 'Müşteri',
+             orderNumber: String(refund.orderNumber || ''),
+             barcode: refund.productCode || refund.productStockCode || 'NO-BARCODE',
+             productName: refund.productName || 'Ürün',
+             productImageUrl: '',
+             reason: refund.refundType || 'Belirtilmedi',
+             description: refund.description || '',
+             status: refund.refundStatusName || 'İADE ONAYI BEKLİYOR',
+             claimItemStatus: refund.refundStatusName || 'İADE ONAYI BEKLİYOR',
+             returnQuantity: 1,
+             claimDate: refund.refundDate || new Date().toISOString(),
+             storeName: config.storeName
+         });
+      }
+      return claims;
+    }
+
     const url = `https://apigw.trendyol.com/integration/order/sellers/${config.supplierId}/claims`;
     let page = 0;
     const size = 100;
@@ -2149,6 +2338,47 @@ const handleN11Error = async (response: Response): Promise<string> => {
   return `Hata (${response.status}): ${errorText}`;
 };
 
+const callN11Soap = async (url: string, action: string, bodyContent: string): Promise<Document | null> => {
+  const envelope = `
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:sch="http://www.n11.com/ws/schemas">
+  <soapenv:Header/>
+  <soapenv:Body>
+    ${bodyContent}
+  </soapenv:Body>
+</soapenv:Envelope>`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml;charset=UTF-8',
+        'SOAPAction': action
+      },
+      body: envelope.trim()
+    });
+
+    if (!response.ok) {
+      console.warn(`[N11-SOAP-ERROR] ${url} HTTP ${response.status}`);
+      return null;
+    }
+
+    const xmlText = await response.text();
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+    
+    // Check for standard N11 SOAP error result
+    const statusNode = xmlDoc.querySelector('result > status');
+    if (statusNode && statusNode.textContent !== 'success') {
+       console.warn(`[N11-SOAP-FAIL] ${xmlText}`);
+       return null;
+    }
+    return xmlDoc;
+  } catch (err) {
+    console.error('[N11-SOAP-EXCEPTION]', err);
+    return null;
+  }
+};
+
 export const fetchOrdersFromN11 = async (
   config: ApiConfig,
   filters: {
@@ -2172,6 +2402,14 @@ export const fetchOrdersFromN11 = async (
       } else {
          url += `&status=${filters.status}`;
       }
+  }
+
+  if (filters.startDate) {
+      url += `&startDate=${filters.startDate}`;
+  }
+  
+  if (filters.endDate) {
+      url += `&endDate=${filters.endDate}`;
   }
 
   const response = await fetch(url, {
@@ -2199,7 +2437,7 @@ export const syncBarcodeStockBatchN11 = async (
    const chunkSize = 1000;
    for (let i = 0; i < items.length; i += chunkSize) {
       const chunk = items.slice(i, i + chunkSize);
-      const payload = chunk.map(item => {
+      const skus = chunk.map(item => {
          let finalQuantity = Math.max(0, Math.floor(item.quantity));
          if (settings && settings.stockSyncSettings?.enabled) {
             const threshold = settings.stockSyncSettings.minStockThreshold || 10;
@@ -2212,9 +2450,16 @@ export const syncBarcodeStockBatchN11 = async (
          };
       });
 
+      const requestBody = {
+         payload: {
+            integrator: "StockMasterPro",
+            skus: skus
+         }
+      };
+
       try {
          if (config.mode === 'TEST') {
-            console.log(`[TEST-N11-SYNC] ${payload.length} items`);
+            console.log(`[TEST-N11-SYNC] ${skus.length} items`);
             continue;
          }
          await rateLimitDelay();
@@ -2222,7 +2467,7 @@ export const syncBarcodeStockBatchN11 = async (
          const response = await fetch(url, {
             method: 'POST',
             headers: getN11Headers(config),
-            body: JSON.stringify({ items: payload })
+            body: JSON.stringify(requestBody)
          });
          if (!response.ok) {
             console.error(await handleN11Error(response));
@@ -2461,31 +2706,22 @@ export const fetchOrdersFromPazarama = async (
   
   try {
     const accessToken = await getPazaramaAccessToken(config);
-    const url = `https://isortagimapi.pazarama.com/api/Order/GetOrders`;
+    const url = `https://isortagimapi.pazarama.com/order/getOrdersForApi`;
     
-    // Pazarama expects POST body for filtering
-    const payload: any = {
-      PageNumber: filters.page ? filters.page + 1 : 1, // 1-based index usually
-      PageSize: filters.size || 50
+    let startD = filters.startDate ? new Date(filters.startDate) : new Date(Date.now() - (30 * 24 * 60 * 60 * 1000));
+    let endD = filters.endDate ? new Date(filters.endDate) : new Date();
+
+    const formatDateStr = (d: Date) => {
+       const pad = (n: number) => n.toString().padStart(2, '0');
+       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
     };
 
-    if (filters.status) {
-      if (Array.isArray(filters.status)) {
-        payload.OrderStatusList = filters.status;
-      } else {
-        payload.OrderStatusList = [filters.status];
-      }
-    } else {
-      payload.OrderStatusList = ['New', 'WaitingForShipment']; // Varsayılan durumlar
-    }
-
-    if (filters.startDate && filters.endDate) {
-      payload.StartDate = new Date(filters.startDate).toISOString();
-      payload.EndDate = new Date(filters.endDate).toISOString();
-    } else {
-      payload.StartDate = new Date(Date.now() - (30 * 24 * 60 * 60 * 1000)).toISOString();
-      payload.EndDate = new Date().toISOString();
-    }
+    const payload: any = {
+      pageSize: filters.size || 50,
+      pageNumber: filters.page ? filters.page + 1 : 1,
+      startDate: formatDateStr(startD),
+      endDate: formatDateStr(endD)
+    };
 
     const response = await fetch(url, {
       method: 'POST',
@@ -2499,7 +2735,7 @@ export const fetchOrdersFromPazarama = async (
 
     if (response.ok) {
       const data = await response.json();
-      return data?.Data?.Orders || data?.Data || [];
+      return data?.data || data?.Data?.Orders || data?.Data || [];
     }
     
     const errorMsg = await handlePazaramaError(response);
