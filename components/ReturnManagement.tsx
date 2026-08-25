@@ -37,7 +37,7 @@ export const ReturnManagement: React.FC<Props> = ({ db, updateDB, userRole, setN
 
     const getClaimProductImage = (claim: ReturnClaim) => {
         if (claim.productImageUrl) return claim.productImageUrl;
-        const matchedProduct = null;
+        const matchedProduct = db.products.find(p => p.variants.some(v => v.barcode === claim.barcode));
         if (!matchedProduct) return '';
 
         const matchedVariant = matchedProduct.variants.find(v => v.barcode === claim.barcode);
@@ -205,103 +205,101 @@ Mağaza: ${claim.storeName}
     };
 
     const processLocalReturn = async (claim: ReturnClaim): Promise<{ success: boolean, stockUpdated: boolean, reason?: string }> => {
-        let returnReason = '';
-        let stockUpdated = false;
+        const order = db.orders.find(o => o.marketplaceOrderId === claim.orderNumber && o.storeName === claim.storeName);
+        if (!order) {
+            if (db.settings.enableReturnExceptionReport) {
+                downloadMissingReport(claim, "Sipariş sistemde (yerel veritabanında) bulunamadı.");
+            }
+            updateDB(prev => ({
+                ...prev,
+                returnClaims: prev.returnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId)
+            }));
+            return { success: true, stockUpdated: false, reason: 'Sipariş yerelde bulunamadı' };
+        }
+
+        const item = order.items.find(i =>
+            (claim.orderLineItemId && i.orderItemId && String(i.orderItemId) === String(claim.orderLineItemId)) ||
+            i.barcode === claim.barcode
+        );
+        if (!item) {
+            if (db.settings.enableReturnExceptionReport) {
+                downloadMissingReport(claim, "Barkod bu siparişin kalemleri arasında bulunamadı.");
+            }
+            updateDB(prev => ({
+                ...prev,
+                returnClaims: prev.returnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId)
+            }));
+            return { success: true, stockUpdated: false, reason: 'Barkod sipariş kalemlerinde bulunamadı' };
+        }
+
+        let currentProducts = [...db.products];
         const barcodesToSync: { [key: string]: number } = {};
 
-        updateDB(prev => {
-            const order = prev.orders.find(o => o.marketplaceOrderId === claim.orderNumber && o.storeName === claim.storeName);
-            if (!order) {
-                if (prev.settings.enableReturnExceptionReport) {
-                    setTimeout(() => downloadMissingReport(claim, "Sipariş sistemde (yerel veritabanında) bulunamadı."), 0);
-                }
-                returnReason = 'Sipariş yerelde bulunamadı';
-                return {
-                    ...prev,
-                    returnClaims: prev.returnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId)
-                };
+        const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
+        const newReturnRecord: ReturnRecord = {
+            id: uuidv4(),
+            orderId: order.id,
+            marketplaceOrderId: order.marketplaceOrderId,
+            customerName: order.customerName,
+            item: item,
+            returnQuantity: returnQty,
+            returnDate: new Date().toISOString()
+        };
+
+        const product = currentProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
+        const variant = product?.variants.find(v => v.barcode === item.barcode);
+        if (!product || !variant) {
+            if (db.settings.enableReturnExceptionReport) {
+                downloadMissingReport(claim, "Barkod ürün kartında kayıtlı değil. Stok iadesi yapılamadı.");
             }
-
-            const item = order.items.find(i =>
-                (claim.orderLineItemId && i.orderItemId && String(i.orderItemId) === String(claim.orderLineItemId)) ||
-                i.barcode === claim.barcode
-            );
-            if (!item) {
-                if (prev.settings.enableReturnExceptionReport) {
-                    setTimeout(() => downloadMissingReport(claim, "Barkod bu siparişin kalemleri arasında bulunamadı."), 0);
-                }
-                returnReason = 'Barkod sipariş kalemlerinde bulunamadı';
-                return {
-                    ...prev,
-                    returnClaims: prev.returnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId)
-                };
-            }
-
-            let currentProducts = [...prev.products];
-            const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
-            const newReturnRecord: ReturnRecord = {
-                id: uuidv4(),
-                orderId: order.id,
-                marketplaceOrderId: order.marketplaceOrderId,
-                customerName: order.customerName,
-                item: item,
-                returnQuantity: returnQty,
-                returnDate: new Date().toISOString()
-            };
-
-            const product = currentProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
-            const variant = product?.variants.find(v => v.barcode === item.barcode);
-            if (!product || !variant) {
-                if (prev.settings.enableReturnExceptionReport) {
-                    setTimeout(() => downloadMissingReport(claim, "Barkod ürün kartında kayıtlı değil. Stok iadesi yapılamadı."), 0);
-                }
-                returnReason = 'Barkod ürün kartında bulunamadı';
-                return {
-                    ...prev,
-                    returnClaims: prev.returnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId)
-                };
-            }
-
-            const apiConfig = prev.apiConfigs.find(c => c.storeName === claim.storeName);
-            const defaultWh = prev.warehouses?.find(w => w.isDefault || w.isCenter) || prev.warehouses?.[0];
-            const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
-            const currentStock = (variant.stocks && variant.stocks[whId]) || 0;
-            const newStock = currentStock + returnQty;
-
-            const result = updateLocalStockWithConsistency(
-                currentProducts,
-                product.id,
-                variant.color,
-                variant.size,
-                whId,
-                newStock
-            );
-            currentProducts = result.updatedProducts;
-
-            const up = currentProducts.find(p => p.id === product.id);
-            if (up) {
-                up.variants.forEach(pv => {
-                    if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                        barcodesToSync[pv.barcode] = getSyncableStock(pv, prev.warehouses || []);
-                    }
-                });
-            }
-
-            stockUpdated = true;
-            return {
+            updateDB(prev => ({
                 ...prev,
-                products: currentProducts,
-                returns: [...prev.returns, newReturnRecord],
                 returnClaims: prev.returnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId)
-            };
-        });
+            }));
+            return { success: true, stockUpdated: false, reason: 'Barkod ürün kartında bulunamadı' };
+        }
+
+        const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
+        const defaultWh = db.warehouses?.find(w => w.isDefault || w.isCenter) || db.warehouses?.[0];
+        const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
+        const currentStock = (variant.stocks && variant.stocks[whId]) || 0;
+        const newStock = currentStock + returnQty;
+
+        const result = updateLocalStockWithConsistency(
+            currentProducts,
+            product.id,
+            variant.color,
+            variant.size,
+            whId,
+            newStock
+        );
+        currentProducts = result.updatedProducts;
+
+        const up = currentProducts.find(p => p.id === product.id);
+        if (up) {
+            up.variants.forEach(pv => {
+                if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
+                    barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
+                }
+            });
+        }
+
+        const allReturns = [...db.returns, newReturnRecord];
+
+        updateDB(prev => ({
+            ...prev,
+            products: currentProducts,
+            returns: allReturns,
+            orders: prev.orders,
+            returnClaims: prev.returnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId)
+        }));
 
         if (db.settings.enableAutoStockSync && Object.keys(barcodesToSync).length > 0) {
             const itemsToSync = Object.entries(barcodesToSync).map(([barcode, qty]) => ({ barcode, quantity: qty }));
             await syncBarcodeStockBatchMultiple(db.apiConfigs, itemsToSync, db.settings);
         }
 
-        return { success: true, stockUpdated, reason: returnReason };
+        return { success: true, stockUpdated: true };
     };
 
     const handleCopy = (text: string, label: string) => {
@@ -358,7 +356,12 @@ Mağaza: ${claim.storeName}
 
             const idsArray = Array.from(selectedClaimIds);
             const claimsToApprove = claims.filter(c => idsArray.includes(c.id));
-            const approvedClaims: ReturnClaim[] = [];
+
+            let currentProducts = [...db.products];
+            let currentOrders = [...db.orders];
+            let currentReturns = [...db.returns];
+            let currentReturnClaims = [...db.returnClaims];
+            const barcodesToSync: { [key: string]: number } = {};
 
             for (const claim of claimsToApprove) {
                 const config = db.apiConfigs.find(c => c.storeName === claim.storeName);
@@ -374,7 +377,86 @@ Mağaza: ${claim.storeName}
                     }
                     const success = await approveMarketplaceClaim(config, claim.claimId, [claim.claimLineItemId]);
                     if (success) {
-                        approvedClaims.push(claim);
+                        // Process the return details atomically
+                        const order = currentOrders.find(o => o.marketplaceOrderId === claim.orderNumber && o.storeName === claim.storeName);
+                        if (!order) {
+                            if (db.settings.enableReturnExceptionReport) {
+                                downloadMissingReport(claim, "Sipariş sistemde (yerel veritabanında) bulunamadı.");
+                            }
+                            currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
+                            successCount++;
+                            continue;
+                        }
+
+                        const item = order.items.find(i =>
+                            (claim.orderLineItemId && i.orderItemId && String(i.orderItemId) === String(claim.orderLineItemId)) ||
+                            i.barcode === claim.barcode
+                        );
+                        if (!item) {
+                            if (db.settings.enableReturnExceptionReport) {
+                                downloadMissingReport(claim, "Barkod bu siparişin kalemleri arasında bulunamadı.");
+                            }
+                            currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
+                            successCount++;
+                            continue;
+                        }
+
+                        const product = currentProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
+                        const variant = product?.variants.find(v => v.barcode === item.barcode);
+                        if (!product || !variant) {
+                            if (db.settings.enableReturnExceptionReport) {
+                                downloadMissingReport(claim, "Barkod ürün kartında kayıtlı değil. Stok iadesi yapılamadı.");
+                            }
+                            currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
+                            successCount++;
+                            continue;
+                        }
+
+                        // Update stocks
+                        const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
+                        const defaultWh = db.warehouses?.find(w => w.isDefault || w.isCenter) || db.warehouses?.[0];
+                        const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
+                        const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
+                        const currentStock = (variant.stocks && variant.stocks[whId]) || 0;
+                        const newStock = currentStock + returnQty;
+
+                        const result = updateLocalStockWithConsistency(
+                            currentProducts,
+                            product.id,
+                            variant.color,
+                            variant.size,
+                            whId,
+                            newStock
+                        );
+                        currentProducts = result.updatedProducts;
+
+                        // Add barcode to sync
+                        const up = currentProducts.find(p => p.id === product.id);
+                        if (up) {
+                            up.variants.forEach(pv => {
+                                if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
+                                    barcodesToSync[pv.barcode] = getSyncableStock(pv, db.warehouses || []);
+                                }
+                            });
+                        }
+
+                        // Add new return record
+                        const newReturnRecord: ReturnRecord = {
+                            id: uuidv4(),
+                            orderId: order.id,
+                            marketplaceOrderId: order.marketplaceOrderId,
+                            customerName: order.customerName,
+                            item: item,
+                            returnQuantity: returnQty,
+                            returnDate: new Date().toISOString()
+                        };
+                        currentReturns.push(newReturnRecord);
+
+                        // Remove from claim list
+                        currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
+
+                        successCount++;
+                        stockUpdatedCount++;
                     } else {
                         failCount++;
                     }
@@ -384,102 +466,13 @@ Mağaza: ${claim.storeName}
                 }
             }
 
-            const barcodesToSync: { [key: string]: number } = {};
-
-            updateDB(prev => {
-                let currentProducts = [...prev.products];
-                let currentReturns = [...prev.returns];
-                let currentReturnClaims = [...prev.returnClaims];
-
-                for (const claim of approvedClaims) {
-                    const order = prev.orders.find(o => o.marketplaceOrderId === claim.orderNumber && o.storeName === claim.storeName);
-                    if (!order) {
-                        if (prev.settings.enableReturnExceptionReport) {
-                            setTimeout(() => downloadMissingReport(claim, "Sipariş sistemde (yerel veritabanında) bulunamadı."), 0);
-                        }
-                        currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
-                        successCount++;
-                        continue;
-                    }
-
-                    const item = order.items.find(i =>
-                        (claim.orderLineItemId && i.orderItemId && String(i.orderItemId) === String(claim.orderLineItemId)) ||
-                        i.barcode === claim.barcode
-                    );
-                    if (!item) {
-                        if (prev.settings.enableReturnExceptionReport) {
-                            setTimeout(() => downloadMissingReport(claim, "Barkod bu siparişin kalemleri arasında bulunamadı."), 0);
-                        }
-                        currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
-                        successCount++;
-                        continue;
-                    }
-
-                    const product = currentProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
-                    const variant = product?.variants.find(v => v.barcode === item.barcode);
-                    if (!product || !variant) {
-                        if (prev.settings.enableReturnExceptionReport) {
-                            setTimeout(() => downloadMissingReport(claim, "Barkod ürün kartında kayıtlı değil. Stok iadesi yapılamadı."), 0);
-                        }
-                        currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
-                        successCount++;
-                        continue;
-                    }
-
-                    // Update stocks
-                    const apiConfig = prev.apiConfigs.find(c => c.storeName === claim.storeName);
-                    const defaultWh = prev.warehouses?.find(w => w.isDefault || w.isCenter) || prev.warehouses?.[0];
-                    const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
-                    const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
-                    const currentStock = (variant.stocks && variant.stocks[whId]) || 0;
-                    const newStock = currentStock + returnQty;
-
-                    const result = updateLocalStockWithConsistency(
-                        currentProducts,
-                        product.id,
-                        variant.color,
-                        variant.size,
-                        whId,
-                        newStock
-                    );
-                    currentProducts = result.updatedProducts;
-
-                    // Add barcode to sync
-                    const up = currentProducts.find(p => p.id === product.id);
-                    if (up) {
-                        up.variants.forEach(pv => {
-                            if (pv.color === variant.color && pv.size === variant.size && pv.barcode) {
-                                barcodesToSync[pv.barcode] = getSyncableStock(pv, prev.warehouses || []);
-                            }
-                        });
-                    }
-
-                    // Add new return record
-                    const newReturnRecord: ReturnRecord = {
-                        id: uuidv4(),
-                        orderId: order.id,
-                        marketplaceOrderId: order.marketplaceOrderId,
-                        customerName: order.customerName,
-                        item: item,
-                        returnQuantity: returnQty,
-                        returnDate: new Date().toISOString()
-                    };
-                    currentReturns.push(newReturnRecord);
-
-                    // Remove from claim list
-                    currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
-
-                    successCount++;
-                    stockUpdatedCount++;
-                }
-
-                return {
-                    ...prev,
-                    products: currentProducts,
-                    returns: currentReturns,
-                    returnClaims: currentReturnClaims
-                };
-            });
+            updateDB(prev => ({
+                ...prev,
+                products: currentProducts,
+                orders: prev.orders,
+                returns: currentReturns,
+                returnClaims: currentReturnClaims
+            }));
 
             // Batch sync stocks
             if (db.settings.enableAutoStockSync && Object.keys(barcodesToSync).length > 0) {

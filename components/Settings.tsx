@@ -280,7 +280,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
 
                 const itemsToSync: { barcode: string, quantity: number }[] = [];
 
-                (db.products || []).forEach(p => {
+                db.products.forEach(p => {
                     p.variants.forEach(v => {
                         if (v.barcode) {
                             const stock = getSyncableStockForApi(v, config, db.warehouses || []);

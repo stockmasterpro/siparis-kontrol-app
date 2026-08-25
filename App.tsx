@@ -624,7 +624,24 @@ const App: React.FC = () => {
       try {
         const result = await syncMarketplaceOrders(currentDb, false);
 
-        const actualNewOrders = result.actualNewOrders || [];
+        // Check for actual new orders (comparison with previous DB state)
+        const currentOrders = dbRef.current?.orders || [];
+        // Use composite key (StoreName + OrderId) to prevent collisions across multiple stores
+        const existingOrderKeys = new Set(currentOrders.map(o => `${o.storeName}|${o.marketplaceOrderId}`));
+
+        // Filter for truly new orders that weren't in the DB before
+        // OR orders that were ARCHIVED (id includes _OLD_) but now replaced with an active one
+        const actualNewOrders = result.updatedOrders.filter(order => {
+          const orderKey = `${order.storeName}|${order.marketplaceOrderId}`;
+          // If the marketplace order ID is completely new, it's definitely new
+          if (!existingOrderKeys.has(orderKey)) return true;
+
+          // Special case: If it was in the DB before but it was NOT active (no matching non-OLD record)
+          // this is a bit complex since existingOrderIds is a flat set.
+          // For now, let's keep it simple: only notify for truly brand new marketplace IDs 
+          // to avoid notification spam on every status update.
+          return false;
+        }).filter(order => order.status === OrderStatus.NEW || order.status === OrderStatus.PROCESSING);
 
         if (actualNewOrders.length > 0) {
           console.log(`[NOTIFY] ${actualNewOrders.length} yeni sipariş bulundu:`, actualNewOrders.map(o => o.marketplaceOrderId));
@@ -675,8 +692,37 @@ const App: React.FC = () => {
           }
         }
 
-        // Fire a global event to notify components (like Dashboard, OrderManagement) to refresh their data
-        window.dispatchEvent(new Event('sync-completed'));
+        // Sadece ürünleri ve siparişleri güncelle, ayarları ve kullanıcıları koru
+        handleUpdateDB(prev => {
+          const prevOrderIds = new Set(prev.orders.map(o => o.id));
+          const deletedOrderIds = new Set(currentDb.orders.filter(o => !prevOrderIds.has(o.id)).map(o => o.id));
+          const manualOrdersAddedDuringSync = prev.orders.filter(o => !currentDb.orders.some(co => co.id === o.id));
+
+          const finalOrders = result.updatedOrders
+            .filter(o => !deletedOrderIds.has(o.id))
+            .map(o => {
+                const userVersion = prev.orders.find(po => po.id === o.id);
+                if (userVersion) {
+                    return { ...o, isPrinted: userVersion.isPrinted, isDeleted: userVersion.isDeleted };
+                }
+                return o;
+            })
+            .concat(manualOrdersAddedDuringSync);
+
+          const prevProductIds = new Set(prev.products.map(p => p.id));
+          const deletedProductIds = new Set(currentDb.products.filter(p => !prevProductIds.has(p.id)).map(p => p.id));
+          const manualProductsAddedDuringSync = prev.products.filter(p => !currentDb.products.some(cp => cp.id === p.id));
+
+          const finalProducts = result.updatedProducts
+            .filter(p => !deletedProductIds.has(p.id))
+            .concat(manualProductsAddedDuringSync);
+
+          return {
+            ...prev,
+            products: finalProducts,
+            orders: finalOrders
+          };
+        });
 
         if (Object.keys(result.barcodesToSync).length > 0) {
           console.log(`[STOCK-SYNC] ${Object.keys(result.barcodesToSync).length} barkod için toplu stok senkronizasyonu başlatılıyor...`);
@@ -1187,7 +1233,7 @@ const App: React.FC = () => {
     if (overrideOrderCounts.active !== null) {
       activeCount = overrideOrderCounts.active;
     } else {
-      activeCount = (db.orders || []).filter(o =>
+      activeCount = db.orders.filter(o =>
         !o.isSuspended &&
         o.status !== OrderStatus.CANCELLED &&
         (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING) // Sadece işlem bekleyenler
@@ -1196,13 +1242,13 @@ const App: React.FC = () => {
 
     return {
       active: activeCount,
-      cancelled: (db.orders || []).filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_') && new Date(o.orderDate) >= thresholdDate).length,
-      suspended: (db.orders || []).filter(
+      cancelled: db.orders.filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_') && new Date(o.orderDate) >= thresholdDate).length,
+      suspended: db.orders.filter(
         o =>
           o.isSuspended &&
           (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING)
       ).length,
-      returned: (db.returns || []).filter(r => new Date(r.returnDate) >= thresholdDate).length,
+      returned: db.returns.filter(r => new Date(r.returnDate) >= thresholdDate).length,
       newQuestions: (db.questions || []).filter(q => q.status === QuestionStatus.WAITING_FOR_ANSWER).length,
       returnClaims: (db.returnClaims || []).length
     };
