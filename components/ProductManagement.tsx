@@ -425,10 +425,12 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
 
     const handleExport = () => {
         const data: any[] = [];
+        const warehouses = db.warehouses || [{ id: 'wh1', name: 'Depo 1' }];
+
         db.products.forEach(p => {
             p.variants.forEach(v => {
                 const totalStock = getTotalStock(v);
-                data.push({
+                const rowData: any = {
                     'Ürün Kodu': p.productCode,
                     'Ürün adı': p.name,
                     'Marka': p.brand,
@@ -439,7 +441,14 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                     'Maliyet Fiyat': v.costPrice || 0,
                     'PSF Fiyat': v.salePrice || 0,
                     'Stok': totalStock
+                };
+
+                // Add individual warehouse stocks
+                warehouses.forEach(wh => {
+                    rowData[`Depo: ${wh.name}`] = v.stocks?.[wh.id] || 0;
                 });
+
+                data.push(rowData);
             });
         });
 
@@ -561,8 +570,23 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                 barcode: barcode,
                 costPrice: Number(row['Maliyet Fiyat'] || row['maliyet'] || 0),
                 salePrice: Number(row['PSF Fiyat'] || row['psf'] || 0),
-                stocks: { 'wh1': Number(row['Stok'] || row['stok'] || 0) }
+                stocks: {}
             };
+
+            const warehouses = db.warehouses || [{ id: 'wh1', name: 'Depo 1' }];
+            let foundSpecificStock = false;
+            warehouses.forEach(wh => {
+                const whColName = `Depo: ${wh.name}`;
+                if (row[whColName] !== undefined) {
+                    newVar.stocks[wh.id] = Number(row[whColName] || 0);
+                    foundSpecificStock = true;
+                }
+            });
+
+            if (!foundSpecificStock) {
+                newVar.stocks['wh1'] = Number(row['Stok'] || row['stok'] || 0);
+            }
+
             product.variants.push(newVar);
             addedBarcodeCount++;
         }
