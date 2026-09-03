@@ -2051,7 +2051,9 @@ export const fetchOrdersFromHepsiburada = async (
   const offset = (filters.page || 0); // HB usually uses page offset
   const limit = filters.size || 50; // max limit
   
-  let url = `https://oms-external.hepsiburada.com/packages/merchantid/${config.supplierId}?offset=${offset}&limit=${limit}`;
+  const isTest = config.mode === 'TEST';
+  const baseUrl = isTest ? 'https://oms-external-sit.hepsiburada.com' : 'https://oms-external.hepsiburada.com';
+  let url = `${baseUrl}/packages/merchantid/${config.supplierId}?offset=${offset}&limit=${limit}`;
   
   if (filters.status) {
       if (Array.isArray(filters.status)) {
@@ -2101,12 +2103,10 @@ export const syncBarcodeStockBatchHepsiburada = async (
       });
 
       try {
-         if (config.mode === 'TEST') {
-            console.log(`[TEST-HB-SYNC] ${payload.length} items`);
-            continue;
-         }
          await rateLimitDelay();
-         const url = `https://inventory.hepsiburada.com/api/inventory/inventory-items/`;
+         const isTest = config.mode === 'TEST';
+         const baseUrl = isTest ? 'https://inventory-sit.hepsiburada.com' : 'https://inventory.hepsiburada.com';
+         const url = `${baseUrl}/api/inventory/inventory-items/`;
          const response = await fetch(url, {
             method: 'POST',
             headers: getHepsiburadaHeaders(config),
