@@ -127,14 +127,22 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       });
     } else if (filterType === 'range') {
       if (!startDate && !endDate) return baseOrders;
+      
+      let startLocal: Date | null = null;
+      let endLocal: Date | null = null;
+      if (startDate) {
+          const p = startDate.split('-');
+          startLocal = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 0, 0, 0, 0);
+      }
+      if (endDate) {
+          const p = endDate.split('-');
+          endLocal = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 23, 59, 59, 999);
+      }
+
       return baseOrders.filter(o => {
         const d = new Date(o.orderDate);
-        if (startDate && d < new Date(startDate)) return false;
-        if (endDate) {
-          const endLimit = new Date(endDate);
-          endLimit.setHours(23, 59, 59, 999);
-          if (d > endLimit) return false;
-        }
+        if (startLocal && d < startLocal) return false;
+        if (endLocal && d > endLocal) return false;
         return true;
       });
     }
@@ -177,14 +185,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       });
     } else if (filterType === 'range') {
       if (!startDate && !endDate) return baseReturns;
+      let startLocal: Date | null = null;
+      let endLocal: Date | null = null;
+      if (startDate) {
+          const p = startDate.split('-');
+          startLocal = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 0, 0, 0, 0);
+      }
+      if (endDate) {
+          const p = endDate.split('-');
+          endLocal = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 23, 59, 59, 999);
+      }
       return baseReturns.filter(r => {
         const d = new Date(r.returnDate);
-        if (startDate && d < new Date(startDate)) return false;
-        if (endDate) {
-          const endLimit = new Date(endDate);
-          endLimit.setHours(23, 59, 59, 999);
-          if (d > endLimit) return false;
-        }
+        if (startLocal && d < startLocal) return false;
+        if (endLocal && d > endLocal) return false;
         return true;
       });
     }
@@ -233,14 +247,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       }).length;
     } else if (filterType === 'range') {
       if (!startDate && !endDate) return baseOrders.length;
+      let startLocal: Date | null = null;
+      let endLocal: Date | null = null;
+      if (startDate) {
+          const p = startDate.split('-');
+          startLocal = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 0, 0, 0, 0);
+      }
+      if (endDate) {
+          const p = endDate.split('-');
+          endLocal = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 23, 59, 59, 999);
+      }
       return baseOrders.filter(o => {
         const d = new Date(o.orderDate);
-        if (startDate && d < new Date(startDate)) return false;
-        if (endDate) {
-          const endLimit = new Date(endDate);
-          endLimit.setHours(23, 59, 59, 999);
-          if (d > endLimit) return false;
-        }
+        if (startLocal && d < startLocal) return false;
+        if (endLocal && d > endLocal) return false;
         return true;
       }).length;
     }
@@ -403,14 +423,20 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
           });
         }
       } else if (filterType === 'range') {
+        let startLocal: Date | null = null;
+        let endLocal: Date | null = null;
+        if (startDate) {
+            const p = startDate.split('-');
+            startLocal = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 0, 0, 0, 0);
+        }
+        if (endDate) {
+            const p = endDate.split('-');
+            endLocal = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 23, 59, 59, 999);
+        }
         filteredCancelledOrders = storeCancelledOrdersBase.filter(o => {
           const d = new Date(o.orderDate);
-          if (startDate && d < new Date(startDate)) return false;
-          if (endDate) {
-            const endLimit = new Date(endDate);
-            endLimit.setHours(23, 59, 59, 999);
-            if (d > endLimit) return false;
-          }
+          if (startLocal && d < startLocal) return false;
+          if (endLocal && d > endLocal) return false;
           return true;
         });
       }
@@ -799,10 +825,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       return;
     }
 
-    const start = new Date(reportStartDate);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(reportEndDate);
-    end.setHours(23, 59, 59, 999);
+    const pStart = reportStartDate.split('-');
+    const start = new Date(Number(pStart[0]), Number(pStart[1]) - 1, Number(pStart[2]), 0, 0, 0, 0);
+    const pEnd = reportEndDate.split('-');
+    const end = new Date(Number(pEnd[0]), Number(pEnd[1]) - 1, Number(pEnd[2]), 23, 59, 59, 999);
 
     if (start > end) {
       alert("Başlangıç tarihi bitiş tarihinden büyük olamaz.");

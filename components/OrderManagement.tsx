@@ -826,14 +826,22 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
         // Apply date filter (start-end range)
         if (dateFilterStart || dateFilterEnd) {
+            let startLocal: Date | null = null;
+            let endLocal: Date | null = null;
+            
+            if (dateFilterStart) {
+                const parts = dateFilterStart.split('-');
+                startLocal = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 0, 0, 0, 0);
+            }
+            if (dateFilterEnd) {
+                const parts = dateFilterEnd.split('-');
+                endLocal = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 23, 59, 59, 999);
+            }
+
             list = list.filter(o => {
                 const orderDate = new Date(o.orderDate);
-                if (dateFilterStart && orderDate < new Date(dateFilterStart)) return false;
-                if (dateFilterEnd) {
-                    const endDate = new Date(dateFilterEnd);
-                    endDate.setHours(23, 59, 59, 999); // End of day
-                    if (orderDate > endDate) return false;
-                }
+                if (startLocal && orderDate < startLocal) return false;
+                if (endLocal && orderDate > endLocal) return false;
                 return true;
             });
         }
@@ -1157,14 +1165,22 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
         // Tarih filtresi (İade Tarihi filter)
         if (dateFilterStart || dateFilterEnd) {
+            let startLocal: Date | null = null;
+            let endLocal: Date | null = null;
+            
+            if (dateFilterStart) {
+                const parts = dateFilterStart.split('-');
+                startLocal = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 0, 0, 0, 0);
+            }
+            if (dateFilterEnd) {
+                const parts = dateFilterEnd.split('-');
+                endLocal = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 23, 59, 59, 999);
+            }
+
             list = list.filter(r => {
                 const retDate = new Date(r.returnDate);
-                if (dateFilterStart && retDate < new Date(dateFilterStart)) return false;
-                if (dateFilterEnd) {
-                    const endDate = new Date(dateFilterEnd);
-                    endDate.setHours(23, 59, 59, 999);
-                    if (retDate > endDate) return false;
-                }
+                if (startLocal && retDate < startLocal) return false;
+                if (endLocal && retDate > endLocal) return false;
                 return true;
             });
         }
