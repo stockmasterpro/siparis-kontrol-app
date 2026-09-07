@@ -268,7 +268,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         }
 
         // Benzersiz ürün kodu kontrolü
-        const isDuplicateCode = db.products.some(p =>
+        const isDuplicateCode = (db.products || []).some(p =>
             p.productCode.trim().toLowerCase() === formData.productCode.trim().toLowerCase() &&
             p.id !== formData.id
         );
@@ -281,7 +281,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         // Barkod tekilliği kontrolü - Final Check
         for (const variant of formData.variants) {
             if (variant.barcode && variant.barcode !== '') {
-                const isDuplicateBarcode = db.products.some(p =>
+                const isDuplicateBarcode = (db.products || []).some(p =>
                     p.id !== formData.id && p.variants.some(v => v.barcode === variant.barcode)
                 );
                 if (isDuplicateBarcode) {
@@ -358,7 +358,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
 
     const handleManualStockSync = async () => {
         const productsToProcess = selectedProductIds.length > 0
-            ? db.products.filter(p => selectedProductIds.includes(p.id))
+            ? (db.products || []).filter(p => selectedProductIds.includes(p.id))
             : db.products;
 
         const confirmMessage = selectedProductIds.length > 0
@@ -427,7 +427,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         const data: any[] = [];
         const warehouses = db.warehouses || [{ id: 'wh1', name: 'Depo 1' }];
 
-        db.products.forEach(p => {
+        (db.products || []).forEach(p => {
             p.variants.forEach(v => {
                 const totalStock = getTotalStock(v);
                 const rowData: any = {
@@ -595,7 +595,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         setIsUploading(false);
 
         // Yeni ürün sayısını hesapla (currentProducts içindeki IDs'leri db.products içindekilerle karşılaştır)
-        const existingIds = new Set(db.products.map(p => p.id));
+        const existingIds = new Set((db.products || []).map(p => p.id));
         const newProductCount = currentProducts.filter(p => !existingIds.has(p.id)).length;
 
         let messageText = `İşlem Tamamlandı:\n${addedBarcodeCount} yeni barkod sisteme eklendi.`;
@@ -666,7 +666,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
     const handleAddVariant = (color: string, size: string, barcode: string) => {
         // Barkod tekilliği kontrolü - programın tamamında
         if (barcode !== '') {
-            const exists = db.products.some(p => p.variants.some(v => v.barcode === barcode && v.barcode !== ''));
+            const exists = (db.products || []).some(p => p.variants.some(v => v.barcode === barcode && v.barcode !== ''));
             if (exists) {
                 setNotification({ type: 'error', message: "Bu barkod programın tamamında zaten kullanılıyor! Aynı barkod başka bir ürüne veya varyanta eklenemez." });
                 return;
@@ -699,7 +699,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         const currentVariant = formData.variants.find(v => v.id === variantId);
 
         // Programın genelinde (diğer ürünlerde) kontrol et
-        const existsInOtherProducts = db.products.some(p =>
+        const existsInOtherProducts = (db.products || []).some(p =>
             p.id !== formData.id && p.variants.some(v => v.barcode === barcode && v.barcode !== '')
         );
 
@@ -790,7 +790,7 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
 
         const updatedWarehouses = existingWarehouses.filter(w => w.id !== id);
         
-        const updatedProducts = db.products.map(p => ({
+        const updatedProducts = (db.products || []).map(p => ({
             ...p,
             variants: p.variants.map(v => {
                 const newStocks = { ...v.stocks };

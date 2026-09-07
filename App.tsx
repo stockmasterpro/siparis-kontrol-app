@@ -797,7 +797,7 @@ const App: React.FC = () => {
         if (backgroundInterval) clearInterval(backgroundInterval);
       };
     }
-  }, [db?.settings.enableAutoOrderFetch, db?.settings.autoFetchIntervalMinutes, db?.apiConfigs.length]); // interval NaN/0 iken 5 dk varsayılır
+  }, [db?.settings.enableAutoOrderFetch, db?.settings.autoFetchIntervalMinutes, db?.apiConfigs?.length]); // interval NaN/0 iken 5 dk varsayılır
 
   // Question Sync Background Service
   useEffect(() => {
@@ -821,7 +821,7 @@ const App: React.FC = () => {
         if (questionInterval) clearInterval(questionInterval);
       };
     }
-  }, [db?.settings.enableAutoQuestionFetch, db?.settings.questionFetchIntervalMinutes, db?.apiConfigs.length]);
+  }, [db?.settings.enableAutoQuestionFetch, db?.settings.questionFetchIntervalMinutes, db?.apiConfigs?.length]);
 
   useEffect(() => {
     let returnInterval: NodeJS.Timeout | null = null;
@@ -844,7 +844,7 @@ const App: React.FC = () => {
         if (returnInterval) clearInterval(returnInterval);
       };
     }
-  }, [db?.settings.enableAutoReturnFetch, db?.settings.returnFetchIntervalMinutes, db?.apiConfigs.length]);
+  }, [db?.settings.enableAutoReturnFetch, db?.settings.returnFetchIntervalMinutes, db?.apiConfigs?.length]);
 
   useEffect(() => {
     // Kullanıcı yoksa veya oturum zaman aşımı kapalıysa çalışma
@@ -1233,7 +1233,7 @@ const App: React.FC = () => {
     if (overrideOrderCounts.active !== null) {
       activeCount = overrideOrderCounts.active;
     } else {
-      activeCount = db.orders.filter(o =>
+      activeCount = (db.orders || []).filter(o =>
         !o.isSuspended &&
         o.status !== OrderStatus.CANCELLED &&
         (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING) // Sadece işlem bekleyenler
@@ -1242,13 +1242,13 @@ const App: React.FC = () => {
 
     return {
       active: activeCount,
-      cancelled: db.orders.filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_') && new Date(o.orderDate) >= thresholdDate).length,
-      suspended: db.orders.filter(
+      cancelled: (db.orders || []).filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_') && new Date(o.orderDate) >= thresholdDate).length,
+      suspended: (db.orders || []).filter(
         o =>
           o.isSuspended &&
           (o.status === OrderStatus.NEW || o.status === OrderStatus.PROCESSING)
       ).length,
-      returned: db.returns.filter(r => new Date(r.returnDate) >= thresholdDate).length,
+      returned: (db.returns || []).filter(r => new Date(r.returnDate) >= thresholdDate).length,
       newQuestions: (db.questions || []).filter(q => q.status === QuestionStatus.WAITING_FOR_ANSWER).length,
       returnClaims: (db.returnClaims || []).length
     };

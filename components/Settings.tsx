@@ -114,7 +114,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
         if (isEditingApi && newApi.id) {
             updateDB(prev => ({
                 ...prev,
-                apiConfigs: prev.apiConfigs.map(a => a.id === newApi.id ? { ...newApi } : a)
+                apiConfigs: (prev.apiConfigs || []).map(a => a.id === newApi.id ? { ...newApi } : a)
             }));
             resetApiForm();
             setNotification({ type: 'success', message: "API güncellendi." });
@@ -122,7 +122,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
         }
 
         // Kısıtlama olmadan ekle (v1.2.0 sınırsız API)
-        updateDB(prev => ({ ...prev, apiConfigs: [...prev.apiConfigs, { ...newApi, id: uuidv4() }] }));
+        updateDB(prev => ({ ...prev, apiConfigs: [...(prev.apiConfigs || []), { ...newApi, id: uuidv4() }] }));
 
         resetApiForm();
         setNotification({ type: 'success', message: "API konfigürasyonu başarıyla eklendi." });
@@ -162,13 +162,13 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                 if (mode === 'TEST') {
                     return {
                         ...prev,
-                        apiConfigs: prev.apiConfigs.filter(a => a.id !== id),
+                        apiConfigs: (prev.apiConfigs || []).filter(a => a.id !== id),
                         orders: prev.orders.filter(o => o.storeName !== storeName)
                     };
                 }
                 return {
                     ...prev,
-                    apiConfigs: prev.apiConfigs.filter(a => a.id !== id)
+                    apiConfigs: (prev.apiConfigs || []).filter(a => a.id !== id)
                 };
             });
         });
@@ -262,7 +262,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
 
 
     const handleBulkStockUpdate = async () => {
-        if (db.apiConfigs.length === 0) {
+        if ((db.apiConfigs || []).length === 0) {
             setNotification({ type: 'error', message: "Pazaryeri entegrasyonu tanımlı değil." });
             return;
         }
@@ -280,7 +280,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
 
                 const itemsToSync: { barcode: string, quantity: number }[] = [];
 
-                db.products.forEach(p => {
+                (db.products || []).forEach(p => {
                     p.variants.forEach(v => {
                         if (v.barcode) {
                             const stock = getSyncableStockForApi(v, config, db.warehouses || []);
@@ -564,7 +564,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                         </div>
 
                         <div className="space-y-2">
-                            {db.apiConfigs.map(api => (
+                            {(db.apiConfigs || []).map(api => (
                                 <div key={api.id} className="flex justify-between items-center p-4 border rounded bg-white">
                                     <div className="flex items-center gap-4">
                                         {api.storeLogo ? (

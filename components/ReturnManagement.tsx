@@ -37,7 +37,7 @@ export const ReturnManagement: React.FC<Props> = ({ db, updateDB, userRole, setN
 
     const getClaimProductImage = (claim: ReturnClaim) => {
         if (claim.productImageUrl) return claim.productImageUrl;
-        const matchedProduct = db.products.find(p => p.variants.some(v => v.barcode === claim.barcode));
+        const matchedProduct = (db.products || []).find(p => p.variants.some(v => v.barcode === claim.barcode));
         if (!matchedProduct) return '';
 
         const matchedVariant = matchedProduct.variants.find(v => v.barcode === claim.barcode);
@@ -205,7 +205,7 @@ Mağaza: ${claim.storeName}
     };
 
     const processLocalReturn = async (claim: ReturnClaim): Promise<{ success: boolean, stockUpdated: boolean, reason?: string }> => {
-        const order = db.orders.find(o => o.marketplaceOrderId === claim.orderNumber && o.storeName === claim.storeName);
+        const order = (db.orders || []).find(o => o.marketplaceOrderId === claim.orderNumber && o.storeName === claim.storeName);
         if (!order) {
             if (db.settings.enableReturnExceptionReport) {
                 downloadMissingReport(claim, "Sipariş sistemde (yerel veritabanında) bulunamadı.");
@@ -259,7 +259,7 @@ Mağaza: ${claim.storeName}
             return { success: true, stockUpdated: false, reason: 'Barkod ürün kartında bulunamadı' };
         }
 
-        const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
+        const apiConfig = (db.apiConfigs || []).find(c => c.storeName === claim.storeName);
         const defaultWh = db.warehouses?.find(w => w.isDefault || w.isCenter) || db.warehouses?.[0];
         const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
         const currentStock = (variant.stocks && variant.stocks[whId]) || 0;
@@ -322,7 +322,7 @@ Mağaza: ${claim.storeName}
     const handleApprove = async (claim: ReturnClaim) => {
         setIsApproving(claim.claimId);
         try {
-            const config = db.apiConfigs.find(c => c.storeName === claim.storeName);
+            const config = (db.apiConfigs || []).find(c => c.storeName === claim.storeName);
             if (!config) throw new Error('Mağaza yapılandırması bulunamadı.');
 
             if (!claim.claimLineItemId) throw new Error('Claim line item id bulunamadı.');
@@ -364,7 +364,7 @@ Mağaza: ${claim.storeName}
             const barcodesToSync: { [key: string]: number } = {};
 
             for (const claim of claimsToApprove) {
-                const config = db.apiConfigs.find(c => c.storeName === claim.storeName);
+                const config = (db.apiConfigs || []).find(c => c.storeName === claim.storeName);
                 if (!config) {
                     failCount++;
                     continue;
@@ -413,7 +413,7 @@ Mağaza: ${claim.storeName}
                         }
 
                         // Update stocks
-                        const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
+                        const apiConfig = (db.apiConfigs || []).find(c => c.storeName === claim.storeName);
                         const defaultWh = db.warehouses?.find(w => w.isDefault || w.isCenter) || db.warehouses?.[0];
                         const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
                         const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
@@ -515,7 +515,7 @@ Mağaza: ${claim.storeName}
     };
 
     const availableStores = useMemo(() => {
-        return Array.from(new Set(db.apiConfigs.map(c => c.storeName)));
+        return Array.from(new Set((db.apiConfigs || []).map(c => c.storeName)));
     }, [db.apiConfigs]);
 
     return (

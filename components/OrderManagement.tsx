@@ -474,7 +474,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const handleCheckSuspendedOrderEvent = async (event: CustomEvent<{ orderId: string }>) => {
             // Kısa bir gecikme ile db'nin güncellenmesini bekle
             setTimeout(() => {
-                const order = db.orders.find(o => o.id === event.detail.orderId);
+                const order = (db.orders || []).find(o => o.id === event.detail.orderId);
                 if (order && order.isSuspended && !order.wasSuspended) {
                     // handleCheckSuspended'i çağır
                     handleCheckSuspended(order).catch(err => console.error('Auto-check suspended order error:', err));
@@ -667,8 +667,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             await updateDB(prev => {
                 const prevOrderIds = new Set(prev.orders.map(o => o.id));
-                const deletedOrderIds = new Set(db.orders.filter(o => !prevOrderIds.has(o.id)).map(o => o.id));
-                const manualOrdersAddedDuringSync = prev.orders.filter(o => !db.orders.some(co => co.id === o.id));
+                const deletedOrderIds = new Set((db.orders || []).filter(o => !prevOrderIds.has(o.id)).map(o => o.id));
+                const manualOrdersAddedDuringSync = prev.orders.filter(o => !(db.orders || []).some(co => co.id === o.id));
 
                 const finalOrders = result.updatedOrders
                     .filter(o => !deletedOrderIds.has(o.id))
@@ -682,8 +682,8 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                     .concat(manualOrdersAddedDuringSync);
 
                 const prevProductIds = new Set(prev.products.map(p => p.id));
-                const deletedProductIds = new Set(db.products.filter(p => !prevProductIds.has(p.id)).map(p => p.id));
-                const manualProductsAddedDuringSync = prev.products.filter(p => !db.products.some(cp => cp.id === p.id));
+                const deletedProductIds = new Set((db.products || []).filter(p => !prevProductIds.has(p.id)).map(p => p.id));
+                const manualProductsAddedDuringSync = prev.products.filter(p => !(db.products || []).some(cp => cp.id === p.id));
 
                 const finalProducts = result.updatedProducts
                     .filter(p => !deletedProductIds.has(p.id))
@@ -781,11 +781,11 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
 
     const getFilteredOrders = () => {
-        let list = db.orders.filter(o => !o.isDeleted);
+        let list = (db.orders || []).filter(o => !o.isDeleted);
 
         if (activeTab === 'cancelled') {
             // İade alınanları ve eski sürüm arşiv kayıtlarını İptal Edilenler sayfasında gösterme
-            list = list.filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_') && !db.returns.some(r => r.orderId === o.id));
+            list = list.filter(o => o.status === OrderStatus.CANCELLED && !o.id.includes('_OLD_') && !(db.returns || []).some(r => r.orderId === o.id));
         } else if (activeTab === 'suspended') {
             list = list.filter(
                 o =>
@@ -978,7 +978,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             }
             const groups = new Set();
             retList.forEach(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = (db.orders || []).find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 const storeName = associatedOrder ? associatedOrder.storeName : '-';
                 groups.add(`${r.marketplaceOrderId}::${storeName}`);
             });
@@ -1119,7 +1119,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         // Mağaza (çoklu seçim)
         if (selectedStores.length > 0) {
             list = list.filter(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = (db.orders || []).find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 const storeName = associatedOrder ? associatedOrder.storeName : '-';
                 return selectedStores.includes(storeName);
             });
@@ -1129,7 +1129,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (cargoSearch) {
             const lower = cargoSearch.toLowerCase();
             list = list.filter(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = (db.orders || []).find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 const cargoCode = associatedOrder ? String(associatedOrder.cargoCode || '') : '';
                 return cargoCode.toLowerCase().includes(lower);
             });
@@ -1151,7 +1151,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (customerSearch) {
             const lower = customerSearch.toLowerCase();
             list = list.filter(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = (db.orders || []).find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 const name = r.customerName || (associatedOrder ? associatedOrder.customerName : '');
                 return name.toLowerCase().includes(lower);
             });
@@ -1188,7 +1188,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         // Ülke Filtresi
         if (selectedCountries.length > 0) {
             list = list.filter(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = (db.orders || []).find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 if (!associatedOrder) return false;
                 const codeUpper = getEffectiveOrderCountryCode(associatedOrder).toUpperCase();
                 return selectedCountries.some(code => codeUpper === code.toUpperCase());
@@ -1199,7 +1199,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (searchTerm) {
             const lower = searchTerm.toLowerCase();
             list = list.filter(r => {
-                const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+                const associatedOrder = (db.orders || []).find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
                 const customerMatch = (r.customerName || (associatedOrder ? associatedOrder.customerName : '')).toLowerCase().includes(lower);
                 const orderMatch = (r.marketplaceOrderId || '').toLowerCase().includes(lower);
                 const storeMatch = (associatedOrder ? associatedOrder.storeName : '').toLowerCase().includes(lower);
@@ -1219,7 +1219,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const groups: { [key: string]: any } = {};
 
         list.forEach(r => {
-            const associatedOrder = db.orders.find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
+            const associatedOrder = (db.orders || []).find(o => o.id === r.orderId || o.marketplaceOrderId === r.marketplaceOrderId);
             const storeName = associatedOrder ? associatedOrder.storeName : '-';
             const key = `${r.marketplaceOrderId}::${storeName}`;
             
@@ -1310,7 +1310,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     // Stok kontrolü fonksiyonu
     const getStockStatus = (barcode: string): number => {
         if (!barcode) return 0;
-        const product = db.products.find(p => p.variants.some(v => v.barcode === barcode));
+        const product = (db.products || []).find(p => p.variants.some(v => v.barcode === barcode));
         if (!product) return 0;
         const variant = product.variants.find(v => v.barcode === barcode);
         if (!variant || !variant.stocks) return 0;
@@ -1340,7 +1340,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const stockTracker = new Map<string, number>();
 
         order.items.forEach((item, index) => {
-            const product = db.products.find(p => p.variants.some(v => v.barcode === item.barcode));
+            const product = (db.products || []).find(p => p.variants.some(v => v.barcode === item.barcode));
             if (!product) return;
             const variant = product.variants.find(v => v.barcode === item.barcode);
             if (!variant || !variant.stocks) return;
@@ -1393,7 +1393,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     };
 
     const handleSaveSplitFulfillment = (orderId: string, barcode: string, idx: number, splits: {whId: string, qty: number}[]) => {
-        const orderForCheck = db.orders.find(o => o.id === orderId);
+        const orderForCheck = (db.orders || []).find(o => o.id === orderId);
         if (orderForCheck) {
             const itemForCheck = orderForCheck.items[idx];
             if (itemForCheck) {
@@ -1406,7 +1406,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 let hasError = false;
                 splits.forEach(s => {
                     if (s.qty > 0) {
-                        const product = db.products.find(p => p.variants.some(v => v.barcode === barcode));
+                        const product = (db.products || []).find(p => p.variants.some(v => v.barcode === barcode));
                         const variant = product?.variants.find(v => v.barcode === barcode);
                         const stockInNewWh = variant?.stocks[s.whId] || 0;
                         if (stockInNewWh < s.qty) {
@@ -1551,9 +1551,9 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     // Fetch order details from Trendyol API - Tüm bilgileri çek
     const fetchOrderDetailsFromTrendyol = async (order: Order): Promise<Order | null> => {
-        if (!db.apiConfigs.length) return null;
+        if (!(db.apiConfigs || []).length) return null;
 
-        const config = db.apiConfigs.find(c => c.storeName === order.storeName);
+        const config = (db.apiConfigs || []).find(c => c.storeName === order.storeName);
         if (!config) return null;
 
         try {
@@ -1695,7 +1695,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     const handleProcessOrders = async () => {
         const orderIdsToProcess = selectedOrders.filter(id => {
-            const o = db.orders.find(ord => ord.id === id);
+            const o = (db.orders || []).find(ord => ord.id === id);
             return o && (o.status === OrderStatus.NEW || o.isSuspended);
         });
 
@@ -1712,7 +1712,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             // Her siparişi önce Trendyol'dan güncelle ki ID'ler kesin doğru olsun
             for (const id of orderIdsToProcess) {
-                const localOrder = db.orders.find(o => o.id === id);
+                const localOrder = (db.orders || []).find(o => o.id === id);
                 if (!localOrder) continue;
 
                 const freshOrder = await fetchOrderDetailsFromTrendyol(localOrder);
@@ -1760,7 +1760,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             return;
         }
 
-        const order = db.orders.find(o => o.id === orderId);
+        const order = (db.orders || []).find(o => o.id === orderId);
         if (!order) return;
 
         const isSuspended = order.isSuspended === true;
@@ -1876,7 +1876,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         }
 
         // Count suspended, cancelled vs regular orders for messaging
-        const selectedOrderObjects = selectedOrders.map(id => db.orders.find(o => o.id === id)).filter(Boolean);
+        const selectedOrderObjects = selectedOrders.map(id => (db.orders || []).find(o => o.id === id)).filter(Boolean);
         const stockAffectingOrders = selectedOrderObjects.filter(o => o && !o.isSuspended && o.status !== OrderStatus.CANCELLED);
         const regularCount = stockAffectingOrders.length;
 
@@ -1889,7 +1889,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
             const barcodesToSync: { [key: string]: number } = {};
 
             selectedOrders.forEach(orderId => {
-                const order = db.orders.find(o => o.id === orderId);
+                const order = (db.orders || []).find(o => o.id === orderId);
                 if (!order) return;
 
                 // Sadece aktif (askıda ve iptal DEĞİL) ise stok iadesi yap
@@ -2000,7 +2000,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         'Barkod': gi.barcodes.join(', '),
                         'Renk': gi.color,
                         'Beden': gi.sizes.join(', '),
-                        'Maliyet Fiyatı': (db.products.find(p => p.variants.some(v => v.barcode === gi.barcodes[0]))?.variants.find(v => v.barcode === gi.barcodes[0])?.costPrice ?? db.products.find(p => p.variants.some(v => v.barcode === gi.barcodes[0]))?.costPrice ?? 0).toFixed(2),
+                        'Maliyet Fiyatı': ((db.products || []).find(p => p.variants.some(v => v.barcode === gi.barcodes[0]))?.variants.find(v => v.barcode === gi.barcodes[0])?.costPrice ?? (db.products || []).find(p => p.variants.some(v => v.barcode === gi.barcodes[0]))?.costPrice ?? 0).toFixed(2),
                         'İade Adet': qty,
                         'Birim Fiyat': price,
                         'Toplam Fiyat': price * qty,
@@ -2017,12 +2017,12 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
             filteredForExport.forEach(o => {
                 o.items.forEach((item, index) => {
-                    const config = db.apiConfigs.find(c => c.storeName === o.storeName);
+                    const config = (db.apiConfigs || []).find(c => c.storeName === o.storeName);
                     const countryCode = getEffectiveOrderCountryCode(o);
                     const countryName = PRIORITY_COUNTRIES.find(c => c.code === countryCode)?.name || countryCode;
 
-                    const variant = db.products.find(p => p.variants.some(v => v.barcode === item.barcode))?.variants.find(v => v.barcode === item.barcode);
-                    const product = db.products.find(p => p.variants.some(v => v.barcode === item.barcode));
+                    const variant = (db.products || []).find(p => p.variants.some(v => v.barcode === item.barcode))?.variants.find(v => v.barcode === item.barcode);
+                    const product = (db.products || []).find(p => p.variants.some(v => v.barcode === item.barcode));
                     const costPrice = variant?.costPrice ?? product?.costPrice ?? 0;
                     
                     const fulfillmentInfo = o.fulfillmentInfo || getOrderFulfillmentInfo(o);
@@ -2425,7 +2425,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         detectPrinters();
 
         // Preview için Trendyol'dan güncel verileri çek
-        const ordersToPreview = db.orders.filter(o => finalSelectedOrders.includes(o.id));
+        const ordersToPreview = (db.orders || []).filter(o => finalSelectedOrders.includes(o.id));
         const updatedPreviewOrders = await Promise.all(
             ordersToPreview.map(async (order) => {
                 const trendyolOrder = await fetchOrderDetailsFromTrendyol(order);
@@ -3687,7 +3687,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => {
-                                                                        const stores = Array.from(new Set(db.orders.map(o => o.storeName)))
+                                                                        const stores = Array.from(new Set((db.orders || []).map(o => o.storeName)))
                                                                             .filter((s): s is string => Boolean(s))
                                                                             .sort();
                                                                         setSelectedStores(stores);
@@ -3705,7 +3705,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                 </button>
                                                             </div>
                                                             <div className="p-1">
-                                                                {Array.from(new Set(db.apiConfigs.map(c => c.storeName)))
+                                                                {Array.from(new Set((db.apiConfigs || []).map(c => c.storeName)))
                                                                     .filter((s): s is string => Boolean(s))
                                                                     .sort()
                                                                     .map(storeName => (
@@ -3751,7 +3751,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                     onClick={() => {
                                                                         const allCodes = Array.from(new Set([
                                                                             ...PRIORITY_COUNTRIES.map(c => c.code),
-                                                                            ...db.orders.map(o => getEffectiveOrderCountryCode(o))
+                                                                            ...(db.orders || []).map(o => getEffectiveOrderCountryCode(o))
                                                                         ]));
                                                                         setSelectedCountries(allCodes);
                                                                     }}
@@ -3917,7 +3917,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                         {activeTab === 'active' && (order.status === OrderStatus.SHIPPING || order.status === OrderStatus.DELIVERED) && (
                                             (() => {
                                                 const totalOrderQty = order.items.reduce((sum, item) => sum + (item.quantity || 1), 0);
-                                                const totalReturnedQty = db.returns.filter(r => r.orderId === order.id).reduce((sum, r) => sum + (r.returnQuantity || 0), 0);
+                                                const totalReturnedQty = (db.returns || []).filter(r => r.orderId === order.id).reduce((sum, r) => sum + (r.returnQuantity || 0), 0);
                                                 if (totalReturnedQty >= totalOrderQty && totalOrderQty > 0) return null;
                                                 return (
                                                     <button
@@ -3947,7 +3947,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
                         {/* Returned Items List */}
                         {activeTab === 'returned' && getPaginatedOrders().map((ret: any) => {
-                            const associatedOrder = db.orders.find(o => o.id === ret.originalRecords[0]?.orderId || o.marketplaceOrderId === ret.marketplaceOrderId);
+                            const associatedOrder = (db.orders || []).find(o => o.id === ret.originalRecords[0]?.orderId || o.marketplaceOrderId === ret.marketplaceOrderId);
                             return (
                                 <tr
                                     key={ret.id}
@@ -4980,7 +4980,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                             onChange={e => setManualOrderForm({ ...manualOrderForm, storeName: e.target.value })}
                                         >
                                             <option value="">Mağaza Seçiniz...</option>
-                                            {db.apiConfigs.map(config => (
+                                            {(db.apiConfigs || []).map(config => (
                                                 <option key={config.id} value={config.storeName}>{config.storeName}</option>
                                             ))}
                                         </select>

@@ -1,0 +1,1 @@
+const fs = require('fs'); const files = ['services/integration.ts']; files.forEach(f => { if(fs.existsSync(f)) { let content = fs.readFileSync(f, 'utf8'); content = content.replace(/db\.apiConfigs\./g, '(db.apiConfigs || []).'); fs.writeFileSync(f, content); } });

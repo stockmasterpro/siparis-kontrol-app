@@ -144,7 +144,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
 
         setIsAnswering(true);
         try {
-            const config = db.apiConfigs.find(c => c.storeName === selectedQuestion.storeName);
+            const config = (db.apiConfigs || []).find(c => c.storeName === selectedQuestion.storeName);
             if (!config) throw new Error('Mağaza yapılandırması bulunamadı.');
 
             const success = await answerMarketplaceQuestion(config, selectedQuestion.marketplaceQuestionId, answerText);
@@ -249,10 +249,10 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
             const idsArray = Array.from(selectedQuestionIds);
 
             for (const id of idsArray) {
-                const question = db.questions.find(q => q.id === id);
+                const question = (db.questions || []).find(q => q.id === id);
                 if (!question) continue;
 
-                const config = db.apiConfigs.find(c => c.storeName === question.storeName);
+                const config = (db.apiConfigs || []).find(c => c.storeName === question.storeName);
                 if (!config) {
                     failCount++;
                     continue;
@@ -287,7 +287,7 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
     };
 
     const availableStores = useMemo(() => {
-        return Array.from(new Set(db.apiConfigs.map(c => c.storeName))).filter(Boolean).sort();
+        return Array.from(new Set((db.apiConfigs || []).map(c => c.storeName))).filter(Boolean).sort();
     }, [db.apiConfigs]);
 
     return (

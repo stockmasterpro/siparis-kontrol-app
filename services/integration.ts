@@ -802,7 +802,7 @@ export const syncMarketplaceOrders = async (
   newOrdersAddedCount: number,
   barcodesToSync: { [key: string]: number }
 }> => {
-  if (db.apiConfigs.length === 0) {
+  if ((db.apiConfigs || []).length === 0) {
     return {
       updatedProducts: db.products,
       updatedOrders: db.orders,

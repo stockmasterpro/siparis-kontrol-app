@@ -1,0 +1,1 @@
+const fs = require('fs'); const files = ['components/OrderManagement.tsx', 'components/Dashboard.tsx', 'App.tsx']; files.forEach(f => { let content = fs.readFileSync(f, 'utf8'); content = content.replace(/db\.returns\./g, '(db.returns || []).'); content = content.replace(/db\.apiConfigs\./g, '(db.apiConfigs || []).'); fs.writeFileSync(f, content); });
