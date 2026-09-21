@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Database, OrderStatus } from '../types';
 import { getEffectiveOrderCountryCode } from '../utils/orderUtils';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { Download, X, Check, Filter, ChevronDown, Eye, EyeOff } from 'lucide-react';
+import { Download, X, Check, Filter, ChevronDown, ChevronRight, Eye, EyeOff, Store } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { getTotalStock } from '../utils/stockUtils';
 
@@ -41,6 +41,28 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       [storeName]: !prev[storeName]
     }));
   };
+
+  const [selectedCountryStore, setSelectedCountryStore] = useState<string>('ALL');
+  const [expandedCountryStores, setExpandedCountryStores] = useState<Record<string, boolean>>({});
+  const [showAllCountryStoreBreakdowns, setShowAllCountryStoreBreakdowns] = useState<boolean>(false);
+
+  const toggleCountryStoreBreakdown = (code: string) => {
+    setExpandedCountryStores(prev => ({
+      ...prev,
+      [code]: !prev[code]
+    }));
+  };
+
+  const availableStores = useMemo(() => {
+    const storeSet = new Set<string>();
+    (db.apiConfigs || []).forEach(c => {
+      if (c.storeName) storeSet.add(c.storeName);
+    });
+    (db.orders || []).forEach(o => {
+      if (o.storeName) storeSet.add(o.storeName);
+    });
+    return Array.from(storeSet).sort();
+  }, [db.apiConfigs, db.orders]);
 
 
 
@@ -762,25 +784,61 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
     let gross = 0;
     let returned = 0;
 
-    const costMap = new Map<string, number>();
+    const barcodeCostMap = new Map<string, number>();
+    const nameCostMap = new Map<string, number>();
+    const skuCostMap = new Map<string, number>();
+
     db.products.forEach(p => {
       p.variants.forEach(v => {
+        const cost = v.costPrice || p.costPrice || 0;
+        if (v.barcode) {
+          barcodeCostMap.set(v.barcode.trim().toLowerCase(), cost);
+        }
+        if ((v as any).sku) {
+          skuCostMap.set(String((v as any).sku).trim().toLowerCase(), cost);
+        }
+        if ((v as any).arma) {
+          skuCostMap.set(String((v as any).arma).trim().toLowerCase(), cost);
+        }
         const key = `${(p.name || '').trim().toLowerCase()}-${(v.color || '').trim().toLowerCase()}-${(v.size || '').trim().toLowerCase()}`;
-        costMap.set(key, v.costPrice || p.costPrice || 0);
+        nameCostMap.set(key, cost);
       });
+      if (p.productCode) {
+        skuCostMap.set(p.productCode.trim().toLowerCase(), p.costPrice || 0);
+      }
     });
+
+    const resolveItemCost = (item: any): number => {
+      if (item.costPrice !== undefined && item.costPrice !== null && Number(item.costPrice) > 0) {
+        return Number(item.costPrice);
+      }
+      const b = (item.barcode || '').trim().toLowerCase();
+      if (b && b !== 'no-barcode' && barcodeCostMap.has(b)) {
+        return barcodeCostMap.get(b)!;
+      }
+      const extraSku = (item.hbSku || item.merchantSku || item.sku || '').toString().trim().toLowerCase();
+      if (extraSku && barcodeCostMap.has(extraSku)) {
+        return barcodeCostMap.get(extraSku)!;
+      }
+      if (extraSku && skuCostMap.has(extraSku)) {
+        return skuCostMap.get(extraSku)!;
+      }
+      const key = `${(item.productName || '').trim().toLowerCase()}-${(item.color || '').trim().toLowerCase()}-${(item.size || item.productSize || '').trim().toLowerCase()}`;
+      if (nameCostMap.has(key)) {
+        return nameCostMap.get(key)!;
+      }
+      return 0;
+    };
 
     filteredOrders.forEach(order => {
       order.items.forEach(item => {
-        const key = `${(item.productName || '').trim().toLowerCase()}-${(item.color || '').trim().toLowerCase()}-${(item.size || item.productSize || '').trim().toLowerCase()}`;
-        const costPrice = item.costPrice !== undefined ? item.costPrice : (costMap.get(key) || 0);
+        const costPrice = resolveItemCost(item);
         gross += costPrice * item.quantity;
       });
 
       const linkedReturns = db.returns.filter(r => r.orderId === order.id);
       linkedReturns.forEach(r => {
-        const key = `${(r.item.productName || '').trim().toLowerCase()}-${(r.item.color || '').trim().toLowerCase()}-${(r.item.size || r.item.productSize || '').trim().toLowerCase()}`;
-        const costPrice = r.item.costPrice !== undefined ? r.item.costPrice : (costMap.get(key) || 0);
+        const costPrice = resolveItemCost(r.item);
         returned += costPrice * r.returnQuantity;
       });
     });
@@ -932,7 +990,26 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
   };
 
   const countryAnalytics = useMemo(() => {
-    const stats: Record<string, { code: string, name: string, count: number, quantity: number, netQuantity: number, revenue: number, netRevenue: number, netCost: number }> = {};
+    const stats: Record<string, { 
+      code: string; 
+      name: string; 
+      count: number; 
+      quantity: number; 
+      netQuantity: number; 
+      revenue: number; 
+      netRevenue: number; 
+      netCost: number;
+      stores: Record<string, {
+        storeName: string;
+        count: number;
+        quantity: number;
+        netQuantity: number;
+        revenue: number;
+        netRevenue: number;
+        netCost: number;
+      }>;
+    }> = {};
+
     const cList = [
       { name: 'Almanya', code: 'DE' },
       { name: 'Suudi Arabistan', code: 'SA' },
@@ -950,19 +1027,71 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       { name: 'Türkiye', code: 'TR' }
     ];
 
-    const costMap = new Map<string, number>();
+    const barcodeCostMap = new Map<string, number>();
+    const nameCostMap = new Map<string, number>();
+    const skuCostMap = new Map<string, number>();
+
     db.products.forEach(p => {
       p.variants.forEach(v => {
+        const cost = v.costPrice || p.costPrice || 0;
+        if (v.barcode) {
+          barcodeCostMap.set(v.barcode.trim().toLowerCase(), cost);
+        }
+        if ((v as any).sku) {
+          skuCostMap.set(String((v as any).sku).trim().toLowerCase(), cost);
+        }
+        if ((v as any).arma) {
+          skuCostMap.set(String((v as any).arma).trim().toLowerCase(), cost);
+        }
         const key = `${(p.name || '').trim().toLowerCase()}-${(v.color || '').trim().toLowerCase()}-${(v.size || '').trim().toLowerCase()}`;
-        costMap.set(key, v.costPrice || p.costPrice || 0);
+        nameCostMap.set(key, cost);
       });
+      if (p.productCode) {
+        skuCostMap.set(p.productCode.trim().toLowerCase(), p.costPrice || 0);
+      }
     });
 
-    filteredOrders.forEach(order => {
+    const resolveItemCost = (item: any): number => {
+      if (item.costPrice !== undefined && item.costPrice !== null && Number(item.costPrice) > 0) {
+        return Number(item.costPrice);
+      }
+      const b = (item.barcode || '').trim().toLowerCase();
+      if (b && b !== 'no-barcode' && barcodeCostMap.has(b)) {
+        return barcodeCostMap.get(b)!;
+      }
+      const extraSku = (item.hbSku || item.merchantSku || item.sku || '').toString().trim().toLowerCase();
+      if (extraSku && barcodeCostMap.has(extraSku)) {
+        return barcodeCostMap.get(extraSku)!;
+      }
+      if (extraSku && skuCostMap.has(extraSku)) {
+        return skuCostMap.get(extraSku)!;
+      }
+      const key = `${(item.productName || '').trim().toLowerCase()}-${(item.color || '').trim().toLowerCase()}-${(item.size || item.productSize || '').trim().toLowerCase()}`;
+      if (nameCostMap.has(key)) {
+        return nameCostMap.get(key)!;
+      }
+      return 0;
+    };
+
+    const targetOrders = selectedCountryStore === 'ALL'
+      ? filteredOrders
+      : filteredOrders.filter(o => o.storeName === selectedCountryStore);
+
+    targetOrders.forEach(order => {
       const code = getEffectiveOrderCountryCode(order);
       if (!stats[code]) {
         const countryName = cList.find(c => c.code === code)?.name || code;
-        stats[code] = { code, name: countryName, count: 0, quantity: 0, netQuantity: 0, revenue: 0, netRevenue: 0, netCost: 0 };
+        stats[code] = { 
+          code, 
+          name: countryName, 
+          count: 0, 
+          quantity: 0, 
+          netQuantity: 0, 
+          revenue: 0, 
+          netRevenue: 0, 
+          netCost: 0,
+          stores: {}
+        };
       }
       stats[code].count += 1;
       const orderQuantity = order.items.reduce((sum, item) => sum + item.quantity, 0);
@@ -972,8 +1101,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       let orderGrossCost = 0;
       order.items.forEach(item => {
-        const key = `${(item.productName || '').trim().toLowerCase()}-${(item.color || '').trim().toLowerCase()}-${(item.size || item.productSize || '').trim().toLowerCase()}`;
-        const costPrice = item.costPrice !== undefined ? item.costPrice : (costMap.get(key) || 0);
+        const costPrice = resolveItemCost(item);
         orderGrossCost += costPrice * item.quantity;
       });
 
@@ -982,20 +1110,44 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
       let orderReturnedRevenue = 0;
       const linkedReturns = db.returns.filter(r => r.orderId === order.id);
       linkedReturns.forEach(r => {
-        const key = `${(r.item.productName || '').trim().toLowerCase()}-${(r.item.color || '').trim().toLowerCase()}-${(r.item.size || r.item.productSize || '').trim().toLowerCase()}`;
-        const costPrice = r.item.costPrice !== undefined ? r.item.costPrice : (costMap.get(key) || 0);
+        const costPrice = resolveItemCost(r.item);
         orderReturnedCost += costPrice * r.returnQuantity;
         orderReturnedQty += r.returnQuantity;
         orderReturnedRevenue += (r.item.unitPrice || 0) * r.returnQuantity;
       });
 
-      stats[code].netCost += (orderGrossCost - orderReturnedCost);
-      stats[code].netQuantity += (orderQuantity - orderReturnedQty);
-      stats[code].netRevenue += (orderGrossRevenue - orderReturnedRevenue);
+      const netOrderCost = orderGrossCost - orderReturnedCost;
+      const netOrderQty = orderQuantity - orderReturnedQty;
+      const netOrderRev = orderGrossRevenue - orderReturnedRevenue;
+
+      stats[code].netCost += netOrderCost;
+      stats[code].netQuantity += netOrderQty;
+      stats[code].netRevenue += netOrderRev;
+
+      // Mağaza Bazlı Kırılım
+      const stName = order.storeName || 'Belirtilmemiş';
+      if (!stats[code].stores[stName]) {
+        stats[code].stores[stName] = {
+          storeName: stName,
+          count: 0,
+          quantity: 0,
+          netQuantity: 0,
+          revenue: 0,
+          netRevenue: 0,
+          netCost: 0
+        };
+      }
+      const st = stats[code].stores[stName];
+      st.count += 1;
+      st.quantity += orderQuantity;
+      st.netQuantity += netOrderQty;
+      st.revenue += orderGrossRevenue;
+      st.netRevenue += netOrderRev;
+      st.netCost += netOrderCost;
     });
 
     return Object.values(stats).sort((a, b) => b.revenue - a.revenue);
-  }, [filteredOrders, db.products, db.returns]);
+  }, [filteredOrders, selectedCountryStore, db.products, db.returns]);
 
   return (
     <div className="space-y-6">
@@ -1527,9 +1679,85 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
 
       {/* Ülke Bazlı Satış Dağılımı */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
-          <h3 className="text-lg font-bold text-gray-800">Ülke Bazlı Satış Dağılımı</h3>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <h3 className="text-lg font-bold text-gray-800">Ülke Bazlı Satış Dağılımı</h3>
+            {selectedCountryStore !== 'ALL' && (
+              <span className="text-xs bg-blue-100 text-blue-700 font-semibold px-2.5 py-1 rounded-full border border-blue-200 flex items-center gap-1">
+                <Store size={12} />
+                {selectedCountryStore}
+              </span>
+            )}
+          </div>
+
+          {/* Mağaza Filtresi */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-gray-500 font-semibold flex items-center gap-1">
+              <Store size={14} className="text-gray-400" />
+              Mağaza:
+            </span>
+
+            {/* Hızlı Seçim Butonları (Pills) */}
+            <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 flex-wrap gap-1">
+              <button
+                type="button"
+                onClick={() => setSelectedCountryStore('ALL')}
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                  selectedCountryStore === 'ALL'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                Tümü (Tüm Mağazalar)
+              </button>
+
+              {availableStores.map(storeName => (
+                <button
+                  key={storeName}
+                  type="button"
+                  onClick={() => setSelectedCountryStore(storeName)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                    selectedCountryStore === storeName
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                  }`}
+                >
+                  {storeName}
+                </button>
+              ))}
+            </div>
+
+            {/* Mağaza sayısı fazlaysa dropdown desteği */}
+            {availableStores.length > 4 && (
+              <select
+                value={selectedCountryStore}
+                onChange={(e) => setSelectedCountryStore(e.target.value)}
+                className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-gray-700 shadow-sm cursor-pointer"
+              >
+                <option value="ALL">🌐 Tümü</option>
+                {availableStores.map(s => (
+                  <option key={s} value={s}>🏪 {s}</option>
+                ))}
+              </select>
+            )}
+
+            {selectedCountryStore === 'ALL' && countryAnalytics.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowAllCountryStoreBreakdowns(!showAllCountryStoreBreakdowns)}
+                className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-all ml-1 ${
+                  showAllCountryStoreBreakdowns
+                    ? 'bg-indigo-50 border-indigo-200 text-indigo-700 font-semibold'
+                    : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+                title="Tüm ülkelerin alt mağaza kırılımını aç veya kapat"
+              >
+                {showAllCountryStoreBreakdowns ? 'Kırılımları Kapat' : 'Mağaza Kırılımlarını Göster'}
+              </button>
+            )}
+          </div>
         </div>
+
         {countryAnalytics.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-left">
@@ -1545,24 +1773,65 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
                 </tr>
               </thead>
               <tbody className="text-sm">
-                {countryAnalytics.map((c, i) => (
-                  <tr key={i} className="border-b last:border-0 hover:bg-gray-50">
-                    <td className="py-3 font-medium text-gray-900 flex items-center gap-2">
-                      <span className="w-6 text-center text-lg">{getFlagEmoji(c.code)}</span>
-                      {c.name} <span className="text-gray-400 text-xs">({c.code})</span>
-                    </td>
-                    <td className="py-3 text-gray-700">{c.count}</td>
-                    <td className="py-3 text-gray-700">{c.quantity}</td>
-                    <td className="py-3 text-gray-700 font-semibold">{c.netQuantity}</td>
-                    <td className="py-3 font-bold text-gray-900">{isPrivacyMode ? '***' : c.revenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
-                    <td className="py-3 font-bold text-green-700">{isPrivacyMode ? '***' : c.netRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
-                    <td className="py-3 font-bold text-gray-900">{isPrivacyMode ? '***' : c.netCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
-                  </tr>
-                ))}
+                {countryAnalytics.map((c, i) => {
+                  const hasStoreBreakdown = selectedCountryStore === 'ALL' && Object.keys(c.stores).length > 0;
+                  const isExpanded = showAllCountryStoreBreakdowns || expandedCountryStores[c.code];
+
+                  return (
+                    <React.Fragment key={c.code || i}>
+                      <tr 
+                        onClick={() => hasStoreBreakdown && toggleCountryStoreBreakdown(c.code)}
+                        className={`border-b last:border-0 hover:bg-gray-50 transition-colors ${hasStoreBreakdown ? 'cursor-pointer' : ''}`}
+                        title={hasStoreBreakdown ? "Mağaza kırılımını açıp kapatmak için tıklayın" : undefined}
+                      >
+                        <td className="py-3 font-medium text-gray-900 flex items-center gap-2">
+                          {hasStoreBreakdown ? (
+                            <span className="text-gray-400 hover:text-gray-600 w-4 inline-flex items-center">
+                              {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                            </span>
+                          ) : (
+                            <span className="w-4"></span>
+                          )}
+                          <span className="w-6 text-center text-lg">{getFlagEmoji(c.code)}</span>
+                          {c.name} <span className="text-gray-400 text-xs">({c.code})</span>
+                          {selectedCountryStore !== 'ALL' && (
+                            <span className="ml-1 text-[11px] font-normal text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                              {selectedCountryStore}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 text-gray-700">{c.count}</td>
+                        <td className="py-3 text-gray-700">{c.quantity}</td>
+                        <td className="py-3 text-gray-700 font-semibold">{c.netQuantity}</td>
+                        <td className="py-3 font-bold text-gray-900">{isPrivacyMode ? '***' : c.revenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                        <td className="py-3 font-bold text-green-700">{isPrivacyMode ? '***' : c.netRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                        <td className="py-3 font-bold text-gray-900">{isPrivacyMode ? '***' : c.netCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                      </tr>
+
+                      {/* Mağaza Kırılım Alt Satırları */}
+                      {hasStoreBreakdown && isExpanded && (
+                        Object.values(c.stores).map((storeStat: any) => (
+                          <tr key={`${c.code}_${storeStat.storeName}`} className="bg-slate-50/85 border-b border-gray-100 text-xs text-gray-600">
+                            <td className="py-2 pl-12 font-medium flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+                              <span className="font-semibold text-gray-800">{storeStat.storeName}</span>
+                            </td>
+                            <td className="py-2 text-gray-600">{storeStat.count}</td>
+                            <td className="py-2 text-gray-600">{storeStat.quantity}</td>
+                            <td className="py-2 font-medium text-gray-700">{storeStat.netQuantity}</td>
+                            <td className="py-2 text-gray-700">{isPrivacyMode ? '***' : storeStat.revenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                            <td className="py-2 font-semibold text-green-600">{isPrivacyMode ? '***' : storeStat.netRevenue.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                            <td className="py-2 text-gray-700">{isPrivacyMode ? '***' : storeStat.netCost.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₺</td>
+                          </tr>
+                        ))
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
               <tfoot className="bg-gray-50 font-bold text-sm">
                 <tr>
-                  <td className="py-3 px-2">TOPLAM</td>
+                  <td className="py-3 px-2">TOPLAM {selectedCountryStore !== 'ALL' ? `(${selectedCountryStore})` : ''}</td>
                   <td className="py-3">{countryAnalytics.reduce((acc, c) => acc + c.count, 0)}</td>
                   <td className="py-3">{countryAnalytics.reduce((acc, c) => acc + c.quantity, 0)}</td>
                   <td className="py-3 text-blue-700">{countryAnalytics.reduce((acc, c) => acc + c.netQuantity, 0)}</td>
@@ -1575,7 +1844,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ db }) => {
           </div>
         ) : (
           <div className="text-center py-8 text-gray-400">
-            Veri bulunamadı.
+            {selectedCountryStore === 'ALL' 
+              ? 'Veri bulunamadı.' 
+              : `"${selectedCountryStore}" mağazası için bu dönemde satış verisi bulunamadı.`}
           </div>
         )}
       </div>

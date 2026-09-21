@@ -1292,11 +1292,20 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
     // --- ACTIONS ---
 
     // Stok kontrolü fonksiyonu
-    const getStockStatus = (barcode: string): number => {
-        if (!barcode) return 0;
-        const product = db.products.find(p => p.variants.some(v => v.barcode === barcode));
-        if (!product) return 0;
-        const variant = product.variants.find(v => v.barcode === barcode);
+    const getStockStatus = (barcode: string, sku?: string): number => {
+        if (!barcode && !sku) return 0;
+        let product = (barcode && barcode !== 'NO-BARCODE') ? db.products.find(p => p.variants.some(v => v.barcode === barcode)) : undefined;
+        let variant = product?.variants.find(v => v.barcode === barcode);
+        if (!variant && sku) {
+            const skuParts = sku.split('-');
+            const tail = skuParts[skuParts.length - 1].trim();
+            product = db.products.find(p => 
+                p.variants.some(v => v.barcode === sku || (tail && v.barcode === tail) || (v as any).arma === sku) || 
+                p.productCode === sku || 
+                (p.productCode && sku.toLowerCase().startsWith(p.productCode.toLowerCase()))
+            );
+            variant = product?.variants.find(v => v.barcode === sku || (tail && v.barcode === tail) || (v as any).arma === sku) || product?.variants[0];
+        }
         if (!variant || !variant.stocks) return 0;
 
         return getTotalStock(variant);
@@ -1304,7 +1313,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
 
     const isOrderOutOfStock = (order: Order): boolean => {
         return order.items.some(item => {
-            const stock = getStockStatus(item.barcode);
+            const stock = getStockStatus(item.barcode, item.sku);
             return item.quantity > stock;
         });
     };
@@ -1324,14 +1333,33 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         const stockTracker = new Map<string, number>();
 
         order.items.forEach((item, index) => {
-            const product = db.products.find(p => p.variants.some(v => v.barcode === item.barcode));
-            if (!product) return;
-            const variant = product.variants.find(v => v.barcode === item.barcode);
-            if (!variant || !variant.stocks) return;
+            let product = (item.barcode && item.barcode !== 'NO-BARCODE') ? db.products.find(p => p.variants.some(v => v.barcode === item.barcode)) : undefined;
+            let variant = product?.variants.find(v => v.barcode === item.barcode);
+            if (!variant && item.sku) {
+                const skuParts = item.sku.split('-');
+                const tail = skuParts[skuParts.length - 1].trim();
+                product = db.products.find(p => 
+                    p.variants.some(v => v.barcode === item.sku || (tail && v.barcode === tail) || (v as any).arma === item.sku) || 
+                    p.productCode === item.sku || 
+                    (p.productCode && item.sku.toLowerCase().startsWith(p.productCode.toLowerCase()))
+                );
+                variant = product?.variants.find(v => v.barcode === item.sku || (tail && v.barcode === tail) || (v as any).arma === item.sku) || product?.variants[0];
+            }
+            if (!product || !variant || !variant.stocks) return;
 
             let remaining = item.quantity;
             const availableWarehouses = db.warehouses.filter(w => (variant.stocks[w.id] || 0) > 0);
-            availableWarehouses.sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
+            
+            const storeConfig = db.apiConfigs?.find(c => c.storeName === order.storeName);
+            const linkedWhId = storeConfig?.linkedWarehouseId;
+
+            availableWarehouses.sort((a, b) => {
+                if (linkedWhId) {
+                    if (a.id === linkedWhId) return -1;
+                    if (b.id === linkedWhId) return 1;
+                }
+                return (a.priority ?? 999) - (b.priority ?? 999);
+            });
 
             const fulfillmentForThisItem: { whName: string, whInitial: string, qty: number }[] = [];
 
@@ -1538,7 +1566,7 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         if (!db.apiConfigs.length) return null;
 
         const config = db.apiConfigs.find(c => c.storeName === order.storeName);
-        if (!config) return null;
+        if (!config || config.type !== 'TRENDYOL') return order;
 
         try {
             const auth = btoa(`${config.apiKey}:${config.apiSecret}`);
@@ -1694,16 +1722,17 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
         try {
             const updatedOrdersToProcess: Order[] = [];
 
-            // Her siparişi önce Trendyol'dan güncelle ki ID'ler kesin doğru olsun
+            // Trendyol siparişlerini API'den tazele; Pazarama ve Hepsiburada için yerel veriyi kullan
             for (const id of orderIdsToProcess) {
                 const localOrder = db.orders.find(o => o.id === id);
                 if (!localOrder) continue;
 
-                const freshOrder = await fetchOrderDetailsFromTrendyol(localOrder);
-                if (freshOrder) {
-                    updatedOrdersToProcess.push(freshOrder);
+                const config = db.apiConfigs.find(c => c.storeName === localOrder.storeName);
+                if (config && config.type === 'TRENDYOL') {
+                    const freshOrder = await fetchOrderDetailsFromTrendyol(localOrder);
+                    updatedOrdersToProcess.push(freshOrder || localOrder);
                 } else {
-                    // API'den çekilemezse yerel veriyi kullan (fallback)
+                    // Pazarama, Hepsiburada vb. doğrudan yerel sipariş verisini kullan
                     updatedOrdersToProcess.push(localOrder);
                 }
             }
@@ -3854,17 +3883,43 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                 <td>{order.storeName}</td>
                                 <td>{order.marketplaceOrderId}</td>
                                 <td>{order.customerName}</td>
-                                <td>{order.cargoCode}</td>
-                                <td className="text-xs">{order.items.length} Kalem</td>
-                                <td className="text-[10px] truncate max-w-0" title={order.items[0]?.productName || '-'}>
+                                <td>
                                     <div className="flex flex-col">
-                                        <span>{order.items[0]?.productName || '-'}</span>
+                                        <span className="font-mono">{order.cargoCode && order.cargoCode !== '-' ? order.cargoCode : (order.cargoCompanyName || '-')}</span>
+                                        {order.cargoCode && order.cargoCode !== '-' && order.cargoCompanyName && (
+                                            <span className="text-[10px] text-gray-500">{order.cargoCompanyName}</span>
+                                        )}
+                                    </div>
+                                </td>
+                                <td className="text-xs">{order.items.length} Kalem</td>
+                                <td className="text-[10px] truncate max-w-0" title={(() => {
+                                    const item = order.items[0];
+                                    if (!item) return '-';
+                                    if (item.productName && item.productName !== 'Ürün' && item.productName !== 'Ürün adı mevcut değil') return item.productName;
+                                    const p = db.products.find(prod => prod.variants.some(v => v.barcode === item.barcode || (item.sku && v.barcode === item.sku)) || (item.sku && prod.productCode === item.sku));
+                                    return p?.name || item.productName || '-';
+                                })()}>
+                                    <div className="flex flex-col">
+                                        <span>{(() => {
+                                            const item = order.items[0];
+                                            if (!item) return '-';
+                                            if (item.productName && item.productName !== 'Ürün' && item.productName !== 'Ürün adı mevcut değil') return item.productName;
+                                            const p = db.products.find(prod => prod.variants.some(v => v.barcode === item.barcode || (item.sku && v.barcode === item.sku)) || (item.sku && prod.productCode === item.sku));
+                                            return p?.name || item.productName || '-';
+                                        })()}</span>
                                         {order.items[0]?.productSize && (
                                             <span className="text-blue-600 font-bold">Beden: {order.items[0].productSize}</span>
                                         )}
                                     </div>
                                 </td>
-                                <td className="text-xs font-mono">{order.items[0]?.sku || '-'}</td>
+                                <td className="text-xs font-mono">{(() => {
+                                    const item = order.items[0];
+                                    if (!item) return '-';
+                                    if (item.sku && item.sku !== 'NO-BARCODE') return item.sku;
+                                    if (item.barcode && item.barcode !== 'NO-BARCODE') return item.barcode;
+                                    const p = db.products.find(prod => prod.variants.some(v => v.barcode === item.barcode) || (item.sku && prod.productCode === item.sku));
+                                    return p?.productCode || '-';
+                                })()}</td>
                                 <td className="text-xs">{safeFormatDate(order.orderDate)}</td>
                                 <td className="text-center">
                                     {(() => {
@@ -4278,15 +4333,19 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                     // Hide fully returned items only when not on returned tab
                                                     if (activeTab !== 'returned' && remainingQty <= 0) return null;
 
-                                                    const currentStock = getStockStatus(item.barcode);
+                                                    const currentStock = getStockStatus(item.barcode, item.sku);
                                                     const qty = activeTab === 'returned' ? item.quantity : remainingQty;
                                                     const isOutOfStock = qty > currentStock;
 
                                                     return (
                                                         <tr key={idx} className={`border-b last:border-0 ${isOutOfStock ? 'bg-red-100' : 'hover:bg-gray-50'}`}>
-                                                            <td className="p-2">{item.productName}</td>
+                                                            <td className="p-2">{(() => {
+                                                                if (item.productName && item.productName !== 'Ürün' && item.productName !== 'Ürün adı mevcut değil') return item.productName;
+                                                                const p = db.products.find(prod => prod.variants.some(v => v.barcode === item.barcode || (item.sku && v.barcode === item.sku)) || (item.sku && prod.productCode === item.sku));
+                                                                return p?.name || item.productName || '-';
+                                                            })()}</td>
                                                             <td className="p-2 text-xs text-gray-600 font-mono select-text">
-                                                                {item.sku} <br /> {item.barcode}
+                                                                {item.sku || '-'} <br /> {item.barcode && item.barcode !== 'NO-BARCODE' ? item.barcode : '-'}
                                                             </td>
                                                             <td className="p-2">
                                                                 {item.color}

@@ -4,6 +4,8 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname, join, sep } from 'path';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, readdirSync, renameSync } from 'fs';
 import { createHash } from 'crypto';
+import https from 'https';
+import http from 'http';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -16,6 +18,10 @@ const UPDATE_GITHUB_REPO = 'siparis-kontrol-app';
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 autoUpdater.logger = console;
+
+// Disable CORS and web security restrictions for marketplace API requests
+app.commandLine.appendSwitch('disable-web-security');
+app.commandLine.appendSwitch('disable-features', 'OutOfBlinkCors');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -456,7 +462,8 @@ function createWindow() {
       contextIsolation: false,
       enableRemoteModule: false,
       preload: join(__dirname, 'preload.js'),
-      webSecurity: true,
+      webSecurity: false,
+      allowRunningInsecureContent: true,
       backgroundThrottling: false, // Critical for background sync
     },
     show: false, // Don't show until ready
@@ -471,6 +478,21 @@ function createWindow() {
   Menu.setApplicationMenu(null);
 
   mainWindow = new BrowserWindow(windowOptions);
+
+  // Bypass CORS completely for external marketplace APIs
+  mainWindow.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+    delete details.requestHeaders['Origin'];
+    delete details.requestHeaders['origin'];
+    callback({ requestHeaders: details.requestHeaders });
+  });
+
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    const responseHeaders = { ...details.responseHeaders };
+    responseHeaders['Access-Control-Allow-Origin'] = ['*'];
+    responseHeaders['Access-Control-Allow-Headers'] = ['*'];
+    responseHeaders['Access-Control-Allow-Methods'] = ['GET, POST, PUT, DELETE, OPTIONS, PATCH'];
+    callback({ responseHeaders });
+  });
 
   // Handle window close - minimize to tray instead of closing
   mainWindow.on('close', (event) => {
@@ -605,6 +627,111 @@ app.on('window-all-closed', () => {
   // if (process.platform !== 'darwin') {
   //   app.quit();
   // }
+});
+
+// Native Marketplace Fetch (Uses Node.js http/https modules to avoid undici/IPv6 connect timeout bugs on Windows)
+function nodeMarketplaceFetch({ url, method, headers, body, redirectCount = 0 }) {
+  return new Promise((resolve) => {
+    try {
+      if (redirectCount > 3) {
+        return resolve({ ok: false, status: 0, statusText: 'Too many redirects', error: 'Too many redirects' });
+      }
+      const parsedUrl = new URL(url);
+      const isHttps = parsedUrl.protocol === 'https:';
+      const transport = isHttps ? https : http;
+
+      const reqHeaders = { ...(headers || {}) };
+      let bodyData = body;
+      if (bodyData && typeof bodyData === 'object' && !Buffer.isBuffer(bodyData)) {
+        bodyData = JSON.stringify(bodyData);
+        if (!reqHeaders['Content-Type'] && !reqHeaders['content-type']) {
+          reqHeaders['Content-Type'] = 'application/json';
+        }
+      }
+      if (bodyData && (typeof bodyData === 'string' || Buffer.isBuffer(bodyData))) {
+        if (!reqHeaders['Content-Length'] && !reqHeaders['content-length']) {
+          reqHeaders['Content-Length'] = Buffer.byteLength(bodyData);
+        }
+      }
+
+      const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || (isHttps ? 443 : 80),
+        path: parsedUrl.pathname + parsedUrl.search,
+        method: method || 'GET',
+        headers: reqHeaders,
+        timeout: 30000
+      };
+
+      const req = transport.request(options, (res) => {
+        if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
+          const redirectUrl = new URL(res.headers.location, url).toString();
+          return resolve(nodeMarketplaceFetch({
+            url: redirectUrl,
+            method: (res.statusCode === 301 || res.statusCode === 302) ? 'GET' : method,
+            headers: reqHeaders,
+            body: (res.statusCode === 301 || res.statusCode === 302) ? undefined : bodyData,
+            redirectCount: redirectCount + 1
+          }));
+        }
+
+        const chunks = [];
+        res.on('data', chunk => chunks.push(chunk));
+        res.on('end', () => {
+          const buffer = Buffer.concat(chunks);
+          const contentType = res.headers['content-type'] || '';
+          let resBody;
+          if (contentType.includes('application/json')) {
+            try {
+              resBody = JSON.parse(buffer.toString('utf8'));
+            } catch {
+              resBody = buffer.toString('utf8');
+            }
+          } else {
+            resBody = buffer.toString('utf8');
+          }
+          resolve({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            statusText: res.statusMessage || '',
+            headers: res.headers,
+            body: resBody
+          });
+        });
+      });
+
+      req.on('timeout', () => {
+        req.destroy(new Error('Request timeout (30s)'));
+      });
+
+      req.on('error', (err) => {
+        console.error('[MARKETPLACE-FETCH-SOCKET-ERROR]', url, err.message);
+        resolve({
+          ok: false,
+          status: 0,
+          statusText: err.message || 'Network Error',
+          error: err.message || String(err)
+        });
+      });
+
+      if (bodyData) {
+        req.write(bodyData);
+      }
+      req.end();
+    } catch (ex) {
+      console.error('[MARKETPLACE-FETCH-EXCEPTION]', url, ex);
+      resolve({
+        ok: false,
+        status: 0,
+        statusText: ex.message || 'Exception',
+        error: ex.message || String(ex)
+      });
+    }
+  });
+}
+
+ipcMain.handle('marketplace-fetch', async (event, params) => {
+  return nodeMarketplaceFetch(params);
 });
 
 // IPC handlers for file operations (if needed)

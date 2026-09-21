@@ -1,8 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
-contextBridge.exposeInMainWorld('electron', {
+const electronAPI = {
   // File operations
   readFile: (filePath) => ipcRenderer.invoke('read-file', filePath),
   writeFile: (filePath, data) => ipcRenderer.invoke('write-file', filePath, data),
@@ -45,4 +43,20 @@ contextBridge.exposeInMainWorld('electron', {
   // Window operations
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
   isFullScreen: () => ipcRenderer.invoke('is-fullscreen'),
-});
+
+  // Native Marketplace Network Fetch (Bypasses Browser CORS)
+  marketplaceFetch: (params) => ipcRenderer.invoke('marketplace-fetch', params),
+};
+
+try {
+  contextBridge.exposeInMainWorld('electron', electronAPI);
+} catch (e) {
+  // Context bridge fails if contextIsolation is false
+}
+
+try {
+  window.electron = electronAPI;
+} catch (e) {
+  // Ignore if window is not directly modifiable
+}
+

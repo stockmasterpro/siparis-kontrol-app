@@ -67,6 +67,45 @@ export const ReturnManagement: React.FC<Props> = ({ db, updateDB, userRole, setN
         }
     };
 
+    const COMPLETED_CLAIM_STATUSES = useMemo(() => new Set([
+        'ACCEPTED', 'APPROVED', 'REFUNDED', 'REJECTED',
+        'CANCELLED', 'CANCELED', 'COMPLETED', 'CLOSED',
+        'RESOLVED', 'FINALIZED'
+    ]), []);
+
+    const handleDismiss = (claim: ReturnClaim) => {
+        requestConfirm(
+            `"${claim.orderNumber}" numaralı siparişe ait iade talebini (${claim.productName}) yerel listeden kaldırmak istediğinize emin misiniz?\n(Pazaryerinde herhangi bir işlem yapılmaz, sadece program ekranından kaldırılır.)`,
+            () => {
+                updateDB(prev => ({
+                    ...prev,
+                    returnClaims: (prev.returnClaims || []).filter(rc => rc.id !== claim.id && !(rc.claimId === claim.claimId && rc.claimLineItemId === claim.claimLineItemId))
+                }));
+                setSelectedClaimIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(claim.id);
+                    return next;
+                });
+                setNotification({ type: 'success', message: 'İade talebi listeden kaldırıldı.' });
+            }
+        );
+    };
+
+    const handleBulkDismiss = () => {
+        if (selectedClaimIds.size === 0) return;
+        requestConfirm(
+            `Seçilen ${selectedClaimIds.size} adet iade talebini yerel listeden kaldırmak istediğinize emin misiniz?`,
+            () => {
+                updateDB(prev => ({
+                    ...prev,
+                    returnClaims: (prev.returnClaims || []).filter(rc => !selectedClaimIds.has(rc.id))
+                }));
+                setSelectedClaimIds(new Set());
+                setNotification({ type: 'success', message: 'Seçilen iade talepleri listeden kaldırıldı.' });
+            }
+        );
+    };
+
     const handleSync = async () => {
         setIsSyncing(true);
         try {
@@ -76,8 +115,14 @@ export const ReturnManagement: React.FC<Props> = ({ db, updateDB, userRole, setN
                 allClaims = [...allClaims, ...storeClaims];
             }
             
+            // Sadece sonuçlanmamış (bekleyen) talepleri kaydet
+            const pendingClaims = allClaims.filter(c => {
+                const s = String(c.status || c.claimItemStatus || '').toUpperCase();
+                return !COMPLETED_CLAIM_STATUSES.has(s);
+            });
+
             const existingClaimKeys = new Set(claims.map(c => `${c.storeName}|${c.claimId}|${c.claimLineItemId}`));
-            const actualNewClaims = allClaims.filter(c => !existingClaimKeys.has(`${c.storeName}|${c.claimId}|${c.claimLineItemId}`));
+            const actualNewClaims = pendingClaims.filter(c => !existingClaimKeys.has(`${c.storeName}|${c.claimId}|${c.claimLineItemId}`));
             const newClaimsInWaitingState = actualNewClaims.filter(c => {
                 const s = String(c.status).toUpperCase();
                 return s === 'WAITING_FOR_APPROVE' ||
@@ -89,7 +134,7 @@ export const ReturnManagement: React.FC<Props> = ({ db, updateDB, userRole, setN
 
             updateDB(prev => ({
                 ...prev,
-                returnClaims: allClaims
+                returnClaims: pendingClaims
             }));
             
             if (newClaimsInWaitingState.length > 0) {
@@ -122,7 +167,7 @@ export const ReturnManagement: React.FC<Props> = ({ db, updateDB, userRole, setN
                 }
             }
             
-            setNotification({ type: 'success', message: `${allClaims.length} iade talebi güncellendi.` });
+            setNotification({ type: 'success', message: `${pendingClaims.length} aksiyonda bekleyen iade talebi güncellendi.` });
         } catch (error: any) {
             setNotification({ type: 'error', message: 'İadeler çekilirken hata oluştu.' });
         } finally {
@@ -144,6 +189,10 @@ export const ReturnManagement: React.FC<Props> = ({ db, updateDB, userRole, setN
 
     const filteredClaims = useMemo(() => {
         return claims
+            .filter(c => {
+                const s = String(c.status || c.claimItemStatus || '').toUpperCase();
+                return !COMPLETED_CLAIM_STATUSES.has(s);
+            })
             .filter(c =>
                 storeFilter === 'all' || c.storeName === storeFilter
             )
@@ -206,51 +255,23 @@ Mağaza: ${claim.storeName}
 
     const processLocalReturn = async (claim: ReturnClaim): Promise<{ success: boolean, stockUpdated: boolean, reason?: string }> => {
         const order = db.orders.find(o => o.marketplaceOrderId === claim.orderNumber && o.storeName === claim.storeName);
-        if (!order) {
-            if (db.settings.enableReturnExceptionReport) {
-                downloadMissingReport(claim, "Sipariş sistemde (yerel veritabanında) bulunamadı.");
-            }
-            updateDB(prev => ({
-                ...prev,
-                returnClaims: prev.returnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId)
-            }));
-            return { success: true, stockUpdated: false, reason: 'Sipariş yerelde bulunamadı' };
-        }
-
-        const item = order.items.find(i =>
+        const item = order?.items?.find(i =>
             (claim.orderLineItemId && i.orderItemId && String(i.orderItemId) === String(claim.orderLineItemId)) ||
             i.barcode === claim.barcode
         );
-        if (!item) {
-            if (db.settings.enableReturnExceptionReport) {
-                downloadMissingReport(claim, "Barkod bu siparişin kalemleri arasında bulunamadı.");
-            }
-            updateDB(prev => ({
-                ...prev,
-                returnClaims: prev.returnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId)
-            }));
-            return { success: true, stockUpdated: false, reason: 'Barkod sipariş kalemlerinde bulunamadı' };
-        }
 
+        const targetBarcode = item?.barcode || claim.barcode;
         let currentProducts = [...db.products];
         const barcodesToSync: { [key: string]: number } = {};
 
         const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
-        const newReturnRecord: ReturnRecord = {
-            id: uuidv4(),
-            orderId: order.id,
-            marketplaceOrderId: order.marketplaceOrderId,
-            customerName: order.customerName,
-            item: item,
-            returnQuantity: returnQty,
-            returnDate: new Date().toISOString()
-        };
 
-        const product = currentProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
-        const variant = product?.variants.find(v => v.barcode === item.barcode);
+        const product = currentProducts.find(p => p.variants.some(v => v.barcode === targetBarcode));
+        const variant = product?.variants.find(v => v.barcode === targetBarcode);
+
         if (!product || !variant) {
             if (db.settings.enableReturnExceptionReport) {
-                downloadMissingReport(claim, "Barkod ürün kartında kayıtlı değil. Stok iadesi yapılamadı.");
+                downloadMissingReport(claim, !order ? "Sipariş ve barkod sistemde bulunamadı." : "Barkod ürün kartında kayıtlı değil. Stok iadesi yapılamadı.");
             }
             updateDB(prev => ({
                 ...prev,
@@ -258,6 +279,31 @@ Mağaza: ${claim.storeName}
             }));
             return { success: true, stockUpdated: false, reason: 'Barkod ürün kartında bulunamadı' };
         }
+
+        const returnItem = item || {
+            id: uuidv4(),
+            orderItemId: claim.orderLineItemId || claim.claimLineItemId || '',
+            barcode: targetBarcode,
+            productName: claim.productName || product.name,
+            sku: variant.barcode,
+            color: variant.color,
+            size: variant.size,
+            quantity: returnQty,
+            unitPrice: variant.salePrice || 0,
+            costPrice: variant.costPrice || 0,
+            totalPrice: (variant.salePrice || 0) * returnQty
+        };
+
+        const newReturnRecord: ReturnRecord = {
+            id: uuidv4(),
+            orderId: order?.id || claim.orderNumber,
+            marketplaceOrderId: claim.orderNumber,
+            customerName: order?.customerName || claim.customerName,
+            item: returnItem,
+            returnQuantity: returnQty,
+            returnDate: new Date().toISOString()
+        };
+
 
         const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
         const defaultWh = db.warehouses?.find(w => w.isDefault || w.isCenter) || db.warehouses?.[0];
@@ -379,33 +425,19 @@ Mağaza: ${claim.storeName}
                     if (success) {
                         // Process the return details atomically
                         const order = currentOrders.find(o => o.marketplaceOrderId === claim.orderNumber && o.storeName === claim.storeName);
-                        if (!order) {
-                            if (db.settings.enableReturnExceptionReport) {
-                                downloadMissingReport(claim, "Sipariş sistemde (yerel veritabanında) bulunamadı.");
-                            }
-                            currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
-                            successCount++;
-                            continue;
-                        }
-
-                        const item = order.items.find(i =>
+                        const item = order?.items?.find(i =>
                             (claim.orderLineItemId && i.orderItemId && String(i.orderItemId) === String(claim.orderLineItemId)) ||
                             i.barcode === claim.barcode
                         );
-                        if (!item) {
-                            if (db.settings.enableReturnExceptionReport) {
-                                downloadMissingReport(claim, "Barkod bu siparişin kalemleri arasında bulunamadı.");
-                            }
-                            currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
-                            successCount++;
-                            continue;
-                        }
 
-                        const product = currentProducts.find(p => p.variants.some(v => v.barcode === item.barcode));
-                        const variant = product?.variants.find(v => v.barcode === item.barcode);
+                        const targetBarcode = item?.barcode || claim.barcode;
+                        const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
+
+                        const product = currentProducts.find(p => p.variants.some(v => v.barcode === targetBarcode));
+                        const variant = product?.variants.find(v => v.barcode === targetBarcode);
                         if (!product || !variant) {
                             if (db.settings.enableReturnExceptionReport) {
-                                downloadMissingReport(claim, "Barkod ürün kartında kayıtlı değil. Stok iadesi yapılamadı.");
+                                downloadMissingReport(claim, !order ? "Sipariş ve barkod sistemde bulunamadı." : "Barkod ürün kartında kayıtlı değil. Stok iadesi yapılamadı.");
                             }
                             currentReturnClaims = currentReturnClaims.filter(rc => rc.claimId !== claim.claimId || rc.claimLineItemId !== claim.claimLineItemId);
                             successCount++;
@@ -416,7 +448,6 @@ Mağaza: ${claim.storeName}
                         const apiConfig = db.apiConfigs.find(c => c.storeName === claim.storeName);
                         const defaultWh = db.warehouses?.find(w => w.isDefault || w.isCenter) || db.warehouses?.[0];
                         const whId = apiConfig?.linkedWarehouseId || (defaultWh ? defaultWh.id : 'wh1');
-                        const returnQty = Math.max(1, Number(claim.returnQuantity || 1));
                         const currentStock = (variant.stocks && variant.stocks[whId]) || 0;
                         const newStock = currentStock + returnQty;
 
@@ -440,13 +471,27 @@ Mağaza: ${claim.storeName}
                             });
                         }
 
+                        const returnItem = item || {
+                            id: uuidv4(),
+                            orderItemId: claim.orderLineItemId || claim.claimLineItemId || '',
+                            barcode: targetBarcode,
+                            productName: claim.productName || product.name,
+                            sku: variant.barcode,
+                            color: variant.color,
+                            size: variant.size,
+                            quantity: returnQty,
+                            unitPrice: variant.salePrice || 0,
+                            costPrice: variant.costPrice || 0,
+                            totalPrice: (variant.salePrice || 0) * returnQty
+                        };
+
                         // Add new return record
                         const newReturnRecord: ReturnRecord = {
                             id: uuidv4(),
-                            orderId: order.id,
-                            marketplaceOrderId: order.marketplaceOrderId,
-                            customerName: order.customerName,
-                            item: item,
+                            orderId: order?.id || claim.orderNumber,
+                            marketplaceOrderId: claim.orderNumber,
+                            customerName: order?.customerName || claim.customerName,
+                            item: returnItem,
                             returnQuantity: returnQty,
                             returnDate: new Date().toISOString()
                         };
@@ -559,14 +604,25 @@ Mağaza: ${claim.storeName}
                     </select>
 
                     {selectedClaimIds.size > 0 && (
-                        <button
-                            onClick={handleBulkApprove}
-                            disabled={isApproving !== null}
-                            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm shadow-sm transition-all active:scale-95"
-                        >
-                            {isApproving === 'bulk' ? <RotateCw size={16} className="animate-spin" /> : <CheckCircle size={16} />}
-                            Seçilenleri Onayla ({selectedClaimIds.size})
-                        </button>
+                        <>
+                            <button
+                                onClick={handleBulkApprove}
+                                disabled={isApproving !== null}
+                                className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm shadow-sm transition-all active:scale-95"
+                            >
+                                {isApproving === 'bulk' ? <RotateCw size={16} className="animate-spin" /> : <CheckCircle size={16} />}
+                                Seçilenleri Onayla ({selectedClaimIds.size})
+                            </button>
+                            <button
+                                onClick={handleBulkDismiss}
+                                disabled={isApproving !== null}
+                                className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg font-bold flex items-center gap-1.5 text-sm shadow-sm transition-all active:scale-95"
+                                title="Seçilen iadeleri program listesinden temizler"
+                            >
+                                <X size={16} />
+                                Listeden Kaldır ({selectedClaimIds.size})
+                            </button>
+                        </>
                     )}
 
                     <button
@@ -697,13 +753,23 @@ Mağaza: ${claim.storeName}
                                     {safeFormatDate(claim.claimDate)}
                                 </td>
                                 <td className="px-4 py-4 text-right">
-                                    <button
-                                        onClick={() => handleApprove(claim)}
-                                        disabled={isApproving !== null}
-                                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-[11px] font-extrabold transition-all shadow-md active:scale-95 disabled:bg-gray-400 disabled:shadow-none uppercase tracking-widest"
-                                    >
-                                        {isApproving === claim.claimId ? <RotateCw size={14} className="animate-spin" /> : 'Onayla'}
-                                    </button>
+                                    <div className="flex items-center justify-end gap-1.5">
+                                        <button
+                                            onClick={() => handleApprove(claim)}
+                                            disabled={isApproving !== null}
+                                            className="bg-blue-600 hover:bg-blue-700 text-white px-3.5 py-1.5 rounded-lg text-[11px] font-extrabold transition-all shadow-md active:scale-95 disabled:bg-gray-400 disabled:shadow-none uppercase tracking-widest"
+                                        >
+                                            {isApproving === claim.claimId ? <RotateCw size={14} className="animate-spin" /> : 'Onayla'}
+                                        </button>
+                                        <button
+                                            onClick={() => handleDismiss(claim)}
+                                            disabled={isApproving !== null}
+                                            title="İadeyi program listesinden kaldır"
+                                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                        >
+                                            <X size={15} />
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         ))}

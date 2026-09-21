@@ -1,11 +1,11 @@
 
 import React, { useState } from 'react';
 import { Database, UserRole, ApiConfig } from '../types';
-import { exportBackup, importBackup, resetToFactoryDefaults } from '../services/db';
+import { exportBackup, importBackup, mergeBackup, resetToFactoryDefaults } from '../services/db';
 import { syncBarcodeStockBatch } from '../services/integration';
 import { getSyncableStockForApi } from '../utils/stockUtils';
 import { compressImage } from '../utils/imageUtils';
-import { Save, UserPlus, Trash, RotateCcw, UploadCloud, Loader2, Edit, X, ShoppingCart, Key, Check, MessageSquare, Plus, Clock, Infinity, Package, BarChart3, LayoutDashboard, Volume2, RefreshCw } from 'lucide-react';
+import { Save, UserPlus, Trash, RotateCcw, UploadCloud, GitMerge, Loader2, Edit, X, ShoppingCart, Key, Check, MessageSquare, Plus, Clock, Infinity, Package, BarChart3, LayoutDashboard, Volume2, RefreshCw } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 
 const AVAILABLE_SOUNDS = [
@@ -71,6 +71,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
         apiKey: '',
         apiSecret: '',
         supplierId: '',
+        userAgent: 'woddijeans_dev',
         mode: 'LIVE',
         enableStockSync: true,
         isOrderSyncEnabled: true,
@@ -88,6 +89,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
             apiKey: '',
             apiSecret: '',
             supplierId: '',
+            userAgent: 'woddijeans_dev',
             mode: 'LIVE',
             enableStockSync: true,
             isOrderSyncEnabled: true,
@@ -107,7 +109,35 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
         }
 
         if (newApi.type === 'TRENDYOL' && (!newApi.apiKey || !newApi.apiSecret || !newApi.supplierId)) {
-            setNotification({ type: 'error', message: "API bilgileri zorunludur." });
+            setNotification({ type: 'error', message: "Trendyol için API Key, API Secret ve Satıcı ID zorunludur." });
+            return;
+        }
+
+        if (newApi.type === 'HEPSIBURADA') {
+            if (!newApi.supplierId || !newApi.apiSecret) {
+                setNotification({ type: 'error', message: "Hepsiburada için Merchant ID ve Secret Key zorunludur." });
+                return;
+            }
+            if (!newApi.apiKey) {
+                newApi.apiKey = newApi.supplierId;
+            }
+            if (!newApi.userAgent) {
+                newApi.userAgent = 'woddijeans_dev';
+            }
+        }
+
+        if (newApi.type === 'PAZARAMA' && (!newApi.apiKey || !newApi.apiSecret)) {
+            setNotification({ type: 'error', message: "Pazarama için Client ID ve Client Secret zorunludur." });
+            return;
+        }
+
+        if (newApi.type === 'N11' && (!newApi.apiKey || !newApi.apiSecret)) {
+            setNotification({ type: 'error', message: "N11 için AppKey ve AppSecret zorunludur." });
+            return;
+        }
+
+        if (newApi.type === 'IDEFIX' && (!newApi.apiKey || !newApi.apiSecret || !newApi.supplierId)) {
+            setNotification({ type: 'error', message: "İdefix için Satıcı ID (Vendor ID), API Key ve API Secret zorunludur." });
             return;
         }
 
@@ -177,6 +207,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
     const handleEditApiClick = (api: ApiConfig) => {
         setNewApi({
             ...api,
+            userAgent: api.userAgent || (api.type === 'HEPSIBURADA' ? 'woddijeans_dev' : undefined),
             enableStockSync: api.enableStockSync !== false,
             isOrderSyncEnabled: api.isOrderSyncEnabled !== false,
             isQuestionSyncEnabled: api.isQuestionSyncEnabled !== false,
@@ -400,6 +431,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <option value="N11">N11 Pazaryeri (API)</option>
                                         <option value="AMAZON">Amazon (SP-API)</option>
                                         <option value="PAZARAMA">Pazarama (API)</option>
+                                        <option value="IDEFIX">İdefix Pazaryeri (API)</option>
                                         <option value="MANUAL">Perakende / Manuel Mağaza</option>
                                     </select>
                                 </div>
@@ -408,13 +440,13 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                     <input className="w-full border p-2 rounded" placeholder="Örn: Güngören Şubesi" value={newApi.storeName} onChange={e => setNewApi({ ...newApi, storeName: e.target.value })} />
                                 </div>
 
-                                {(newApi.type === 'TRENDYOL' || newApi.type === 'HEPSIBURADA' || newApi.type === 'N11' || newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') && (
+                                {(newApi.type === 'TRENDYOL' || newApi.type === 'HEPSIBURADA' || newApi.type === 'N11' || newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA' || newApi.type === 'IDEFIX') && (
                                     <>
                                         <div className="col-span-1">
                                             <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">
-                                                {newApi.type === 'HEPSIBURADA' ? 'Merchant ID' : (newApi.type === 'N11' ? 'Mağaza ID (Opsiyonel)' : (newApi.type === 'AMAZON' ? 'Seller ID / Merchant Token' : (newApi.type === 'PAZARAMA' ? 'Satıcı ID (Pazarama İçin Opsiyonel)' : 'Satıcı ID (Supplier ID)')))}
+                                                {newApi.type === 'HEPSIBURADA' ? 'Merchant ID' : (newApi.type === 'N11' ? 'Mağaza ID (Opsiyonel)' : (newApi.type === 'AMAZON' ? 'Seller ID / Merchant Token' : (newApi.type === 'PAZARAMA' ? 'Satıcı ID' : (newApi.type === 'IDEFIX' ? 'Satıcı ID (Vendor ID)' : 'Satıcı ID (Supplier ID)'))))}
                                             </label>
-                                            <input className="w-full border p-2 rounded" placeholder={newApi.type === 'HEPSIBURADA' ? 'Merchant ID' : (newApi.type === 'AMAZON' ? 'Seller ID' : (newApi.type === 'PAZARAMA' ? 'Pazarama Satıcı ID (Gerekli Değil)' : 'Supplier ID'))} value={newApi.supplierId} onChange={e => setNewApi({ ...newApi, supplierId: e.target.value })} />
+                                            <input className="w-full border p-2 rounded" placeholder={newApi.type === 'HEPSIBURADA' ? 'Merchant ID' : (newApi.type === 'AMAZON' ? 'Seller ID' : (newApi.type === 'PAZARAMA' ? 'Örn: 10b43b57-b2b4-49e3...' : (newApi.type === 'IDEFIX' ? 'Örn: 3' : 'Supplier ID')))} value={newApi.supplierId} onChange={e => setNewApi({ ...newApi, supplierId: e.target.value })} />
                                         </div>
                                         <div className="col-span-1">
                                             <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Çalışma Modu</label>
@@ -423,22 +455,29 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                                 value={newApi.mode || 'TEST'}
                                                 onChange={e => setNewApi({ ...newApi, mode: e.target.value as 'TEST' | 'LIVE' })}
                                             >
-                                                <option value="TEST">Test Ortamı (Sandbox)</option>
+                                                <option value="TEST">{newApi.type === 'HEPSIBURADA' ? 'Test Ortamı (SIT - Sandbox)' : 'Test Ortamı (Sandbox)'}</option>
                                                 <option value="LIVE">Canlı Ortam (Production)</option>
                                             </select>
                                         </div>
                                         <div className="col-span-1">
                                             <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">
-                                                {newApi.type === 'HEPSIBURADA' ? 'Entegratör Adı (API Key)' : (newApi.type === 'N11' ? 'AppKey (API Anahtarı)' : ((newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') ? 'Client ID' : 'API Key'))}
+                                                {newApi.type === 'HEPSIBURADA' ? 'Kullanıcı Adı (Merchant ID)' : (newApi.type === 'N11' ? 'AppKey (API Anahtarı)' : (newApi.type === 'PAZARAMA' ? 'API Key (Client ID)' : (newApi.type === 'IDEFIX' ? 'API Key' : (newApi.type === 'AMAZON' ? 'Client ID' : 'API Key'))))}
                                             </label>
-                                            <input className="w-full border p-2 rounded" placeholder={(newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') ? 'Client ID' : 'API Key'} value={newApi.apiKey} onChange={e => setNewApi({ ...newApi, apiKey: e.target.value })} />
+                                            <input className="w-full border p-2 rounded" placeholder={newApi.type === 'HEPSIBURADA' ? 'Opsiyonel (Boşsa Merchant ID alınır)' : (newApi.type === 'PAZARAMA' ? 'Pazarama Panelindeki API Key' : (newApi.type === 'AMAZON' ? 'Client ID' : (newApi.type === 'IDEFIX' ? 'İdefix API Key' : 'API Key')))} value={newApi.apiKey} onChange={e => setNewApi({ ...newApi, apiKey: e.target.value })} />
                                         </div>
                                         <div className="col-span-1">
                                             <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">
-                                                {newApi.type === 'HEPSIBURADA' ? 'Servis Şifresi (API Secret)' : (newApi.type === 'N11' ? 'AppSecret (API Şifresi)' : ((newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') ? 'Client Secret' : 'API Secret'))}
+                                                {newApi.type === 'HEPSIBURADA' ? 'Servis Şifresi (Secret Key)' : (newApi.type === 'N11' ? 'AppSecret (API Şifresi)' : (newApi.type === 'PAZARAMA' ? 'API Secret (Client Secret)' : (newApi.type === 'IDEFIX' ? 'API Secret Key' : (newApi.type === 'AMAZON' ? 'Client Secret' : 'API Secret'))))}
                                             </label>
-                                            <input className="w-full border p-2 rounded" placeholder={(newApi.type === 'AMAZON' || newApi.type === 'PAZARAMA') ? 'Client Secret' : 'API Secret'} value={newApi.apiSecret} onChange={e => setNewApi({ ...newApi, apiSecret: e.target.value })} />
+                                            <input className="w-full border p-2 rounded" placeholder={newApi.type === 'PAZARAMA' ? 'Pazarama Panelindeki API Secret' : (newApi.type === 'AMAZON' ? 'Client Secret' : (newApi.type === 'IDEFIX' ? 'İdefix API Secret' : 'API Secret'))} value={newApi.apiSecret} onChange={e => setNewApi({ ...newApi, apiSecret: e.target.value })} />
                                         </div>
+                                        {newApi.type === "HEPSIBURADA" && (
+                                            <div className="col-span-1 md:col-span-2">
+                                                <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">User-Agent (Geliştirici Kullanıcı Adı)</label>
+                                                <input className="w-full border p-2 rounded" placeholder="Örn: woddijeans_dev" value={newApi.userAgent || ""} onChange={e => setNewApi({ ...newApi, userAgent: e.target.value })} />
+                                                <p className="text-[10px] text-gray-400 mt-0.5">Hepsiburada tarafından iletilen Developer Username / User-Agent başlığı (Örn: woddijeans_dev)</p>
+                                            </div>
+                                        )}
                                         {newApi.type === "AMAZON" && (
                                             <div className="col-span-1 md:col-span-2">
                                                 <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Refresh Token (LWA)</label>
@@ -507,7 +546,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                     </p>
                                 </div>
 
-                                {(newApi.type === 'TRENDYOL' || newApi.type === 'HEPSIBURADA') && (
+                                {(newApi.type === 'TRENDYOL' || newApi.type === 'HEPSIBURADA' || newApi.type === 'PAZARAMA' || newApi.type === 'N11' || newApi.type === 'AMAZON' || newApi.type === 'IDEFIX') && (
                                     <div className="col-span-2">
                                         <label className="block text-xs font-bold text-gray-500 mb-2 uppercase">Senkronizasyon Ayarları</label>
                                         <div className="grid grid-cols-4 gap-4 bg-white p-3 border rounded">
@@ -580,15 +619,15 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         <div>
                                             <div className="font-bold flex items-center gap-2">
                                                 {api.storeName}
-                                                <span className={`text-[9px] px-2 py-0.5 rounded-full text-white font-black ${api.type === 'MANUAL' ? 'bg-purple-600' : (api.type === 'HEPSIBURADA' ? 'bg-orange-600' : (api.type === 'N11' ? 'bg-red-600' : (api.type === 'AMAZON' ? 'bg-yellow-600' : (api.type === 'PAZARAMA' ? 'bg-purple-600' : 'bg-blue-600'))))}`}>
-                                                    {api.type === 'MANUAL' ? 'PERAKENDE' : api.type === 'HEPSIBURADA' ? 'HEPSİBURADA' : (api.type === 'N11' ? 'N11' : (api.type === 'AMAZON' ? 'AMAZON' : (api.type === 'PAZARAMA' ? 'PAZARAMA' : 'TRENDYOL')))}
+                                                <span className={`text-[9px] px-2 py-0.5 rounded-full text-white font-black ${api.type === 'MANUAL' ? 'bg-purple-600' : (api.type === 'HEPSIBURADA' ? 'bg-orange-600' : (api.type === 'N11' ? 'bg-red-600' : (api.type === 'AMAZON' ? 'bg-yellow-600' : (api.type === 'PAZARAMA' ? 'bg-purple-600' : (api.type === 'IDEFIX' ? 'bg-cyan-600' : 'bg-blue-600')))))}`}>
+                                                    {api.type === 'MANUAL' ? 'PERAKENDE' : api.type === 'HEPSIBURADA' ? 'HEPSİBURADA' : (api.type === 'N11' ? 'N11' : (api.type === 'AMAZON' ? 'AMAZON' : (api.type === 'PAZARAMA' ? 'PAZARAMA' : (api.type === 'IDEFIX' ? 'İDEFİX' : 'TRENDYOL'))))}
                                                 </span>
-                                                {(api.type === 'TRENDYOL' || api.type === 'HEPSIBURADA' || api.type === 'N11' || api.type === 'AMAZON' || api.type === 'PAZARAMA') && (
+                                                {(api.type === 'TRENDYOL' || api.type === 'HEPSIBURADA' || api.type === 'N11' || api.type === 'AMAZON' || api.type === 'PAZARAMA' || api.type === 'IDEFIX') && (
                                                     <span className={`text-[9px] px-2 py-0.5 rounded-full text-white font-black ${api.mode === 'LIVE' ? 'bg-green-600' : 'bg-orange-500'}`}>
                                                         {api.mode === 'LIVE' ? 'CANLI' : 'TEST'}
                                                     </span>
                                                 )}
-                                                {(api.type === 'TRENDYOL' || api.type === 'HEPSIBURADA' || api.type === 'N11' || api.type === 'AMAZON' || api.type === 'PAZARAMA') && (
+                                                {(api.type === 'TRENDYOL' || api.type === 'HEPSIBURADA' || api.type === 'N11' || api.type === 'AMAZON' || api.type === 'PAZARAMA' || api.type === 'IDEFIX') && (
                                                     <div className="flex gap-1">
                                                         <span className={`text-[9px] px-2 py-0.5 rounded-full text-white font-black ${api.enableStockSync !== false ? 'bg-blue-500' : 'bg-gray-400'}`}>
                                                             {api.enableStockSync !== false ? 'STOK AKTİF' : 'STOK KAPALI'}
@@ -606,7 +645,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                                 )}
                                             </div>
                                             <div className="text-xs text-gray-500">
-                                                {api.type === 'TRENDYOL' || api.type === 'HEPSIBURADA' || api.type === 'N11' || api.type === 'AMAZON' || api.type === 'PAZARAMA' ? `API: ${api.apiKey?.substring(0, 8)}...` : 'Manuel Satış Mağazası'}
+                                                {api.type === 'TRENDYOL' || api.type === 'HEPSIBURADA' || api.type === 'N11' || api.type === 'AMAZON' || api.type === 'PAZARAMA' || api.type === 'IDEFIX' ? `API: ${api.apiKey?.substring(0, 8)}...` : 'Manuel Satış Mağazası'}
                                             </div>
                                         </div>
                                     </div>
@@ -1184,18 +1223,44 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                 <h3 className="text-lg font-bold mb-4 mt-8">Veritabanı Yedekleme ve Kurtarma</h3>
                                 <div className="flex flex-col gap-4 border p-4 rounded bg-gray-50">
                                     <p className="text-sm text-gray-600 mb-2">
-                                        Tüm ürün, sipariş ve ayar verilerinizi güvenli bir şekilde bilgisayarınıza yedekleyebilir veya daha önce aldığınız bir yedeği geri yükleyebilirsiniz.
+                                        Tüm ürün, sipariş ve ayar verilerinizi güvenli bir şekilde bilgisayarınıza yedekleyebilir veya daha önce aldığınız bir yedeği geri yükleyebilirsiniz. Başka bir program yedeğindeki sipariş geçmişi ve API ayarlarını mevcut sisteminize birleştirmek için <strong>Yedek Birleştir</strong> butonunu kullanabilirsiniz (ürün ve lisans bilgileriniz korunur).
                                     </p>
-                                    <div className="flex gap-4">
+                                    <div className="flex gap-4 flex-wrap">
                                         <button
                                             onClick={() => exportBackup(
                                                 (msg) => setNotification({ type: 'success', message: msg }),
                                                 (msg) => setNotification({ type: 'error', message: msg })
                                             )}
-                                            className="bg-blue-600 text-white px-6 py-2 rounded flex items-center hover:bg-blue-700 font-bold"
+                                            className="bg-blue-600 text-white px-6 py-2 rounded flex items-center hover:bg-blue-700 font-bold shadow-sm"
                                         >
                                             <UploadCloud size={18} className="mr-2" />
                                             Yedek Al
+                                        </button>
+                                        <input
+                                            type="file"
+                                            accept=".json"
+                                            className="hidden"
+                                            id="merge-backup-upload"
+                                            onChange={(e) => {
+                                                const file = e.target.files?.[0];
+                                                if (file) {
+                                                    mergeBackup(file, {
+                                                        onConfirm: (msg, onProceed) => requestConfirm(msg, onProceed),
+                                                        onSuccess: (msg) => setNotification({ type: 'success', message: msg }),
+                                                        onError: (msg) => setNotification({ type: 'error', message: msg }),
+                                                        onDone: () => window.location.reload()
+                                                    });
+                                                }
+                                                e.target.value = '';
+                                            }}
+                                        />
+                                        <button
+                                            onClick={() => document.getElementById('merge-backup-upload')?.click()}
+                                            className="bg-purple-600 text-white px-6 py-2 rounded flex items-center hover:bg-purple-700 font-bold shadow-sm"
+                                            title="Başka bir yedek dosyasındaki sipariş geçmişini ve API ayarlarını mevcut programa birleştirir (Ürün ve lisans korunur)"
+                                        >
+                                            <GitMerge size={18} className="mr-2" />
+                                            Yedek Birleştir
                                         </button>
                                         <input
                                             type="file"
@@ -1217,7 +1282,7 @@ export const Settings: React.FC<Props> = ({ db, updateDB, setNotification, reque
                                         />
                                         <button
                                             onClick={() => document.getElementById('backup-upload')?.click()}
-                                            className="bg-green-600 text-white px-6 py-2 rounded flex items-center hover:bg-green-700 font-bold"
+                                            className="bg-green-600 text-white px-6 py-2 rounded flex items-center hover:bg-green-700 font-bold shadow-sm"
                                         >
                                             <RotateCcw size={18} className="mr-2" />
                                             Yedekten Dön

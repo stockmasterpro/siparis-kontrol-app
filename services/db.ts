@@ -244,6 +244,64 @@ const migrateAndValidateDB = (data: any): Database => {
     lastSeenDate: data.lastSeenDate,
   };
 
+  // Auto-resolve any suspended orders whose items now match existing products/variants
+  if (Array.isArray(migrated.orders) && Array.isArray(migrated.products)) {
+    migrated.orders.forEach(order => {
+      if (order.isSuspended && Array.isArray(order.items) && order.items.length > 0) {
+        let allResolved = true;
+        order.items.forEach(item => {
+          if (!item.barcode || item.barcode === 'NO-BARCODE') {
+            allResolved = false;
+            return;
+          }
+          const cleanB = String(item.barcode).trim().toLowerCase();
+          const cleanSku = String(item.sku || '').trim().toLowerCase();
+
+          // Check if already matches variant barcode or variant arma
+          let matched = migrated.products.some(p =>
+            p.variants.some(v => {
+              const vb = String(v.barcode || '').trim().toLowerCase();
+              const va = String((v as any).arma || (v as any).data?.arma || '').trim().toLowerCase();
+              return (vb && (vb === cleanB || vb === cleanSku)) ||
+                     (va && (va === cleanB || va === cleanSku));
+            }) || (p.productCode && String(p.productCode).trim().toLowerCase() === cleanB)
+          );
+
+          // If not matched, try matching through productCode or candidate prefix or size/color
+          if (!matched) {
+            for (const p of migrated.products) {
+              const pcode = String(p.productCode || '').trim().toLowerCase();
+              if (pcode && (cleanSku === pcode || cleanSku.startsWith(pcode + ' ') || cleanSku.startsWith(pcode + '-') || (pcode === 'tps' && cleanSku.includes('tp sort')))) {
+                const itemSize = String(item.size || item.productSize || '').trim().toLowerCase();
+                const rawCol = String(item.color || '').trim().toLowerCase();
+                const itemCol = rawCol.split(/\s+/).pop() || rawCol;
+
+                const vMatch = p.variants.find(v => {
+                  const vs = String(v.size || '').trim().toLowerCase();
+                  const vc = String(v.color || '').trim().toLowerCase();
+                  return (!itemSize || vs === itemSize) && (!itemCol || vc === itemCol || vc.includes(itemCol));
+                }) || p.variants.find(v => itemSize && String(v.size || '').trim().toLowerCase() === itemSize);
+
+                if (vMatch) {
+                  item.barcode = vMatch.barcode;
+                  matched = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (!matched) allResolved = false;
+        });
+
+        if (allResolved) {
+          order.isSuspended = false;
+          order.wasSuspended = true;
+        }
+      }
+    });
+  }
+
   return migrated;
 };
 
@@ -642,6 +700,182 @@ export const importBackup = (file: File, options: {
         errorMessage = `Yedek yükleme hatası: ${err.message}`;
       }
 
+      if (options.onError) options.onError(errorMessage);
+    }
+  };
+
+  reader.onerror = () => {
+    if (options.onError) options.onError('Dosya okuma hatası. Lütfen dosyanın bozuk olmadığından emin olun.');
+  };
+
+  reader.readAsText(file, 'utf-8');
+};
+
+/**
+ * Başka bir program yedeğindeki sadece Sipariş Geçmişini ve API Ayarlarını
+ * mevcut programa birleştirir. Lisans ve Ürün Yönetimi bilgilerine KESİNLİKLE dokunmaz.
+ */
+export const mergeBackup = (file: File, options: {
+  onSuccess?: (msg: string) => void,
+  onError?: (msg: string) => void,
+  onConfirm?: (msg: string, onProceed: () => void) => void,
+  onDone: () => void
+}) => {
+  if (file.size > 100 * 1024 * 1024) {
+    if (options.onError) options.onError('Yedek dosyası çok büyük. Maksimum 100MB olmalıdır.');
+    return;
+  }
+
+  if (!file.name.endsWith('.json') && file.type !== 'application/json') {
+    if (options.onError) options.onError('Geçersiz dosya formatı. Lütfen .json uzantılı bir yedek dosyası seçin.');
+    return;
+  }
+
+  const reader = new FileReader();
+
+  reader.onload = async (e) => {
+    try {
+      const fileContent = e.target?.result as string;
+      if (!fileContent || fileContent.trim().length === 0) {
+        throw new Error('Dosya içeriği boş.');
+      }
+
+      const parsed = JSON.parse(fileContent);
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Geçersiz yedek dosyası yapısı.');
+      }
+
+      // Mevcut güncel veritabanını yükle
+      let currentDb: Database;
+      if (window.require) {
+        const { ipcRenderer } = window.require('electron');
+        const sqlData = await ipcRenderer.invoke('db-get-all');
+        currentDb = migrateAndValidateDB(sqlData || loadDB());
+      } else {
+        currentDb = loadDB();
+      }
+
+      // 1. SİPARİŞLER (orders) BİRLEŞTİRME
+      const incomingOrders: any[] = Array.isArray(parsed.orders) ? parsed.orders : [];
+      const existingOrderIds = new Set(currentDb.orders.map(o => String(o.id)));
+      const existingMarketplaceOrderKeys = new Set(
+        currentDb.orders
+          .filter(o => o.marketplaceOrderId && o.storeName)
+          .map(o => `${String(o.storeName).trim().toLowerCase()}:::${String(o.marketplaceOrderId).trim().toLowerCase()}`)
+      );
+
+      const newOrdersToAdd: any[] = [];
+      for (const o of incomingOrders) {
+        if (!o || !o.id) continue;
+        const idStr = String(o.id);
+        const marketKey = o.marketplaceOrderId && o.storeName
+          ? `${String(o.storeName).trim().toLowerCase()}:::${String(o.marketplaceOrderId).trim().toLowerCase()}`
+          : null;
+
+        if (existingOrderIds.has(idStr)) continue;
+        if (marketKey && existingMarketplaceOrderKeys.has(marketKey)) continue;
+
+        existingOrderIds.add(idStr);
+        if (marketKey) existingMarketplaceOrderKeys.add(marketKey);
+        newOrdersToAdd.push(o);
+      }
+
+      // 2. İADE KAYITLARI (returns) BİRLEŞTİRME
+      const incomingReturns: any[] = Array.isArray(parsed.returns) ? parsed.returns : [];
+      const existingReturnIds = new Set(currentDb.returns.map(r => String(r.id)));
+      const newReturnsToAdd: any[] = [];
+      for (const r of incomingReturns) {
+        if (!r || !r.id) continue;
+        const idStr = String(r.id);
+        if (!existingReturnIds.has(idStr)) {
+          existingReturnIds.add(idStr);
+          newReturnsToAdd.push(r);
+        }
+      }
+
+      // 3. API BİLGİLERİ (apiConfigs) BİRLEŞTİRME
+      const incomingApiConfigs: any[] = Array.isArray(parsed.apiConfigs) ? parsed.apiConfigs : [];
+      const existingStoreNames = new Set(currentDb.apiConfigs.map(c => String(c.storeName || '').trim().toLowerCase()));
+      const existingApiIds = new Set(currentDb.apiConfigs.map(c => String(c.id || '')));
+
+      const newApiConfigsToAdd: any[] = [];
+      for (const c of incomingApiConfigs) {
+        if (!c || !c.storeName) continue;
+        const stName = String(c.storeName).trim().toLowerCase();
+        const apiId = String(c.id || '');
+
+        // Mevcut mağaza adı veya ID varsa mevcut ayarı ezmiyoruz
+        if (existingStoreNames.has(stName) || (apiId && existingApiIds.has(apiId))) {
+          continue;
+        }
+
+        existingStoreNames.add(stName);
+        if (apiId) existingApiIds.add(apiId);
+        newApiConfigsToAdd.push(c);
+      }
+
+      const totalNewItems = newOrdersToAdd.length + newApiConfigsToAdd.length + newReturnsToAdd.length;
+      if (totalNewItems === 0) {
+        if (options.onError) {
+          options.onError('Yedek dosyasında eklenecek yeni bir sipariş veya API mağaza ayarı bulunamadı (Tüm kayıtlar mevcut sisteminizde zaten mevcut).');
+        }
+        return;
+      }
+
+      const confirmMessage =
+        `Yedek Verisi Birleştirme Özeti:\n\n` +
+        `• Eklenecek Yeni Sipariş: ${newOrdersToAdd.length} adet\n` +
+        (newReturnsToAdd.length > 0 ? `• Eklenecek İade Kaydı: ${newReturnsToAdd.length} adet\n` : '') +
+        `• Eklenecek Yeni API/Mağaza Ayarı: ${newApiConfigsToAdd.length} adet\n\n` +
+        `GÜVENLİK BİLGİSİ:\n` +
+        `• Mevcut Lisans bilgileriniz ve Ürün Yönetimi (ürünler, stoklar, depolar) KESİNLİKLE KORUNACAK ve değiştirilmeyecektir.\n` +
+        `• Yalnızca sipariş geçmişi ve API ayarları mevcut programa eklenecektir.\n\n` +
+        `Birleştirme işlemini onaylıyor musunuz?`;
+
+      const processMerge = async () => {
+        try {
+          const mergedDb: Database = {
+            ...currentDb,
+            orders: [...currentDb.orders, ...newOrdersToAdd],
+            returns: [...currentDb.returns, ...newReturnsToAdd],
+            apiConfigs: [...currentDb.apiConfigs, ...newApiConfigsToAdd],
+            // Ürünler, stoklar, depolar, lisans ve kullanıcılar mevcut programdan KESİNLİKLE KORUNUR:
+            products: currentDb.products,
+            warehouses: currentDb.warehouses,
+            settings: currentDb.settings,
+            users: currentDb.users,
+            currentUser: currentDb.currentUser,
+          };
+
+          await saveDB(mergedDb);
+
+          if (options.onSuccess) {
+            options.onSuccess(
+              `Birleştirme başarıyla tamamlandı! (${newOrdersToAdd.length} sipariş, ${newApiConfigsToAdd.length} API ayarı eklendi). Uygulama yenileniyor...`
+            );
+          }
+
+          setTimeout(() => options.onDone(), 1500);
+        } catch (err: any) {
+          console.error('Merge processing error:', err);
+          if (options.onError) options.onError(`Birleştirme kaydedilirken hata oluştu: ${err?.message || err}`);
+        }
+      };
+
+      if (options.onConfirm) {
+        options.onConfirm(confirmMessage, processMerge);
+      } else if (confirm(confirmMessage)) {
+        processMerge();
+      }
+
+    } catch (err: any) {
+      console.error('Yedek birleştirme hatası:', err);
+      let errorMessage = 'Yedek dosyası hatalı veya okunamadı.';
+      if (err instanceof SyntaxError) {
+        errorMessage = 'Seçilen dosya geçerli bir JSON yedek formatında değil.';
+      } else if (err instanceof Error) {
+        errorMessage = `Hata: ${err.message}`;
+      }
       if (options.onError) options.onError(errorMessage);
     }
   };

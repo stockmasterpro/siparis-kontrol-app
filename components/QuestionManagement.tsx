@@ -88,7 +88,40 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
         const direct = (q.webUrl || q.productUrl || '').trim();
         if (direct) return direct;
         const id = (q.productContentId || '').trim();
-        return id ? trendyolFallbackProductUrl(id) : '';
+        if (id) return trendyolFallbackProductUrl(id);
+        const barcode = (q.barcode || '').trim();
+        const store = (q.storeName || '').toLowerCase();
+        if (barcode) {
+            if (store.includes('pazarama') || store.includes('paz')) {
+                return `https://www.pazarama.com/arama?q=${encodeURIComponent(barcode)}`;
+            }
+            if (store.includes('hepsi') || store.includes('hb')) {
+                return `https://www.hepsiburada.com/ara?q=${encodeURIComponent(barcode)}`;
+            }
+            if (store.includes('n11')) {
+                return `https://www.n11.com/arama?q=${encodeURIComponent(barcode)}`;
+            }
+            if (store.includes('idefix')) {
+                return `https://www.idefix.com/arama?q=${encodeURIComponent(barcode)}`;
+            }
+            return `https://www.trendyol.com/sr?q=${encodeURIComponent(barcode)}`;
+        }
+        const name = (q.productName || '').trim();
+        if (name && name !== 'Ürün' && name !== 'Pazarama Ürünü' && name !== 'Hepsiburada Ürünü' && name !== 'N11 Ürünü' && name !== 'İdefix Ürünü') {
+            if (store.includes('pazarama') || store.includes('paz')) {
+                return `https://www.pazarama.com/arama?q=${encodeURIComponent(name)}`;
+            }
+            if (store.includes('hepsi') || store.includes('hb')) {
+                return `https://www.hepsiburada.com/ara?q=${encodeURIComponent(name)}`;
+            }
+            if (store.includes('n11')) {
+                return `https://www.n11.com/arama?q=${encodeURIComponent(name)}`;
+            }
+            if (store.includes('idefix')) {
+                return `https://www.idefix.com/arama?q=${encodeURIComponent(name)}`;
+            }
+        }
+        return '';
     };
 
     const itemsPerPage = 25;
@@ -98,7 +131,9 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
         return (db.questions || [])
             .filter(q => q.status === QuestionStatus.WAITING_FOR_ANSWER)
             .filter(q =>
-                (q.text || '').toLowerCase().includes(searchTerm.toLowerCase())
+                (q.text || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (q.productName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (q.barcode || '').toLowerCase().includes(searchTerm.toLowerCase())
             )
             .filter(q => storeFilter === 'all' || q.storeName === storeFilter)
             .sort((a, b) => {
@@ -173,7 +208,8 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
         } catch (error: any) {
             const msg = String(error?.message || '');
             const alreadyAnswered =
-                /\b400\b|daha önce\s+cevaplandı|zaten\s+cevaplanmış|already\s+answered/i.test(msg);
+                /\b400\b|\b5000\b|daha önce\s+cevaplandı|zaten\s+cevaplanmış|already\s+answered|işleminiz yapılamadı/i.test(msg);
+
 
             if (alreadyAnswered && selectedQuestion) {
                 const qid = selectedQuestion.id;
@@ -591,6 +627,11 @@ export const QuestionManagement: React.FC<QuestionManagementProps> = ({ db, onUp
                                                         {selectedQuestion.storeName}
                                                     </span>
                                                     <span className="text-[10px] text-gray-400 font-mono">#{selectedQuestion.marketplaceQuestionId}</span>
+                                                    {selectedQuestion.barcode && (
+                                                        <span className="bg-gray-100 text-gray-700 text-[10px] font-medium px-2 py-0.5 rounded font-mono">
+                                                            Barkod: {selectedQuestion.barcode}
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="mb-1 flex flex-wrap items-start justify-between gap-2">
                                                     <h4 className="text-base font-extrabold text-gray-900 leading-tight flex-1 min-w-0">{selectedQuestion.productName}</h4>

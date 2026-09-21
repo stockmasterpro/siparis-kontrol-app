@@ -53,5 +53,8 @@ async function buildElectron() {
   console.log('Build complete!');
 }
 
-buildElectron().catch(console.error);
+buildElectron().catch(err => {
+  console.error(err);
+  process.exit(1);
+});
 

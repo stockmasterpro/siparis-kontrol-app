@@ -539,12 +539,14 @@ const App: React.FC = () => {
 
     console.log('[SYNC] Müşteri soruları güncel olarak çekiliyor...');
     let allLatestQuestions: Question[] = [];
+    const successfulStoreNames = new Set<string>();
 
     for (const config of currentDb.apiConfigs) {
       try {
-        // Sadece cevap bekleyenleri çekip listeyi tamamen yeniliyoruz.
+        // Sadece cevap bekleyenleri çekip listeyi yeniliyoruz.
         const fetched = await syncMarketplaceQuestions(config, QuestionStatus.WAITING_FOR_ANSWER);
         allLatestQuestions = [...allLatestQuestions, ...fetched];
+        successfulStoreNames.add(config.storeName);
       } catch (err) {
         console.error(`[SYNC-ERROR] ${config.storeName} soruları çekilemedi:`, err);
       }
@@ -552,22 +554,34 @@ const App: React.FC = () => {
 
     handleUpdateDB(prev => {
       const prevQuestions = prev.questions || [];
+
+      // Senkronizasyonu BAŞARISIZ olan mağazaların sorularını listede KORU (kaybolup tekrar gelmesin)
+      const keptQuestionsFromFailedStores = prevQuestions.filter(pq => !successfulStoreNames.has(pq.storeName));
+
       const updatedQuestions = allLatestQuestions.map(newQ => {
-        // If we have THIS specific question answered locally, keep it as answered
+        // If we have THIS specific question answered locally, keep it as answered unless customer sent a new message
         const localMatched = prevQuestions.find(pq =>
           pq.marketplaceQuestionId === newQ.marketplaceQuestionId &&
           pq.status === QuestionStatus.ANSWERED
         );
-        if (localMatched) return localMatched;
+        if (localMatched) {
+          // Eğer müşteriden yeni bir takip mesajı gelmişse soru tekrar cevap bekliyor
+          if (newQ.status === QuestionStatus.WAITING_FOR_ANSWER && newQ.text !== localMatched.text) {
+            return { ...newQ, status: QuestionStatus.WAITING_FOR_ANSWER };
+          }
+          return localMatched;
+        }
 
         const prevSame = prevQuestions.find(pq => pq.marketplaceQuestionId === newQ.marketplaceQuestionId);
+        // Önceki kayıtlı tarihi koru
         const mergedDate =
-          (newQ.createdDate && String(newQ.createdDate).trim()) ||
           (prevSame?.createdDate && String(prevSame.createdDate).trim()) ||
-          '';
+          (newQ.createdDate && String(newQ.createdDate).trim()) ||
+          new Date().toISOString();
         return { ...newQ, createdDate: mergedDate };
       });
-      return { ...prev, questions: updatedQuestions };
+
+      return { ...prev, questions: [...keptQuestionsFromFailedStores, ...updatedQuestions] };
     });
 
     // Find TRULY new questions (that weren't in the DB before)

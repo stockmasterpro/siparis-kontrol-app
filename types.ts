@@ -148,6 +148,7 @@ export interface Question {
   questionImageUrl?: string; // Müşterinin eklediği görsel
   /** Pazaryeri ürün içerik kimliği (URL yoksa yedek link için) */
   productContentId?: string;
+  barcode?: string;
 }
 
 export interface ReturnClaim {
@@ -155,6 +156,7 @@ export interface ReturnClaim {
   claimId: string; // Marketplace Claim ID
   claimLineItemId?: string; // Marketplace Claim Line Item ID
   customerName: string;
+  customerPhoneNumber?: string;
   orderNumber: string;
   barcode: string;
   productName: string;
@@ -182,7 +184,7 @@ export interface QuickAnswer {
 export interface ApiConfig {
   id: string;
   storeName: string; // Acts as identifier
-  type: 'TRENDYOL' | 'HEPSIBURADA' | 'N11' | 'AMAZON' | 'PAZARAMA' | 'MANUAL';
+  type: 'TRENDYOL' | 'HEPSIBURADA' | 'N11' | 'AMAZON' | 'PAZARAMA' | 'IDEFIX' | 'MANUAL';
   apiKey?: string;
   apiSecret?: string;
   supplierId?: string;
@@ -195,6 +197,7 @@ export interface ApiConfig {
   refreshToken?: string; // Amazon SP-API için gereklidir
   storeLogo?: string; // Mağaza profil fotoğrafı (Base64)
   linkedWarehouseId?: string; // Depo bağlama (Sipariş/stok izole etmek için)
+  userAgent?: string; // Hepsiburada Developer Username / User-Agent
 }
 
 export interface AppSettings {

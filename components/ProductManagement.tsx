@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Database, Product, Variant, Warehouse, UserRole } from '../types';
-import { Plus, Trash2, Edit, Save, Copy, Download, Upload, Search, Archive, FileSpreadsheet, Check, X, FileMinus, HardDrive, Globe, Image as ImageIcon, FolderOpen, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, Edit, Save, Copy, Download, Upload, Search, Archive, FileSpreadsheet, Check, X, FileMinus, HardDrive, Globe, Image as ImageIcon, FolderOpen, ChevronLeft, ChevronRight, Store } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from 'xlsx';
 import { syncBarcodeStock, autoAllocatePendingOrders } from '../services/integration';
@@ -24,6 +24,9 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
     const [dismissedExactMatch, setDismissedExactMatch] = useState('');
     const [activeSubPanel, setActiveSubPanel] = useState<'none' | 'barcode' | 'stock' | 'images'>('none');
     const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+    const [isStockSyncModalOpen, setIsStockSyncModalOpen] = useState(false);
+    const [selectedSyncStoreId, setSelectedSyncStoreId] = useState<string>('ALL');
+    const [isSyncingStock, setIsSyncingStock] = useState(false);
     const [tableZoom, setTableZoom] = useState(1); // Tablo ölçeklendirme
     const [previewImage, setPreviewImage] = useState<string | null>(null);
     const [previewImageColor, setPreviewImageColor] = useState<string | null>(null);
@@ -326,7 +329,9 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                         })
                         .map(v => ({
                             barcode: v.barcode,
-                            quantity: getSyncableStockForApi(v, config, db.warehouses || [])
+                            quantity: getSyncableStockForApi(v, config, db.warehouses || []),
+                            salePrice: v.salePrice || formData.salePrice || 100,
+                            listPrice: v.salePrice || formData.salePrice || 100
                         }));
 
                     if (itemsToSync.length > 0) {
@@ -356,51 +361,83 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
         setIsModalOpen(false);
     };
 
-    const handleManualStockSync = async () => {
+    const handleManualStockSync = () => {
+        const availableConfigs = (db.apiConfigs || []).filter(c => c.type !== 'MANUAL');
+        if (availableConfigs.length === 0) {
+            setNotification({ type: 'error', message: "Tanımlı pazaryeri mağazası bulunamadı. Lütfen önce Ayarlar'dan mağaza ekleyin." });
+            return;
+        }
+        setSelectedSyncStoreId('ALL');
+        setIsStockSyncModalOpen(true);
+    };
+
+    const executeStockSync = async () => {
         const productsToProcess = selectedProductIds.length > 0
             ? db.products.filter(p => selectedProductIds.includes(p.id))
             : db.products;
 
-        const confirmMessage = selectedProductIds.length > 0
-            ? `${productsToProcess.length} seçili ürünün stokları gönderilecek. Devam edilsin mi?`
-            : `Sistemdeki TÜM ürünlerin (${productsToProcess.length} adet) stokları gönderilecek. Bu işlem zaman alabilir. Devam edilsin mi?`;
+        if (productsToProcess.length === 0) {
+            setNotification({ type: 'error', message: "Gönderilecek ürün bulunamadı." });
+            return;
+        }
 
-        requestConfirm(confirmMessage, async () => {
-            const barcodesToSync: { barcode: string, quantity: number }[] = [];
+        const targetConfigs = selectedSyncStoreId === 'ALL'
+            ? (db.apiConfigs || []).filter(c => c.type !== 'MANUAL')
+            : (db.apiConfigs || []).filter(c => c.id === selectedSyncStoreId);
 
-            productsToProcess.forEach(product => {
-                product.variants.forEach(v => {
-                    if (v.barcode) {
-                        const totalStock = getSyncableStock(v, db.warehouses || []);
-                        barcodesToSync.push({ barcode: v.barcode, quantity: totalStock as number });
-                    }
+        if (targetConfigs.length === 0) {
+            setNotification({ type: 'error', message: "Seçilen mağaza bulunamadı." });
+            return;
+        }
+
+        setIsSyncingStock(true);
+        try {
+            const { syncBarcodeStockBatch } = await import('../services/integration');
+            let totalBarcodesSynced = 0;
+
+            for (const config of targetConfigs) {
+                const barcodesToSync: { barcode: string, quantity: number, salePrice?: number, listPrice?: number }[] = [];
+                productsToProcess.forEach(product => {
+                    product.variants.forEach(v => {
+                        if (v.barcode) {
+                            const qty = getSyncableStockForApi(v, config, db.warehouses || []);
+                            const price = v.salePrice || product.salePrice || 100;
+                            barcodesToSync.push({ 
+                                barcode: v.barcode, 
+                                quantity: qty,
+                                salePrice: price,
+                                listPrice: price
+                            });
+                        }
+                    });
                 });
-            });
 
-            if (barcodesToSync.length === 0) {
-                setNotification({ type: 'error', message: "Gönderilecek barkod bulunamadı." });
-                return;
+                if (barcodesToSync.length > 0) {
+                    await syncBarcodeStockBatch({ ...config, enableStockSync: true }, barcodesToSync, db.settings);
+                    totalBarcodesSynced += barcodesToSync.length;
+                }
             }
 
-            try {
-                setIsUploading(true);
-                const { syncBarcodeStockBatchMultiple } = await import('../services/integration');
-
-                await syncBarcodeStockBatchMultiple(
-                    db.apiConfigs,
-                    barcodesToSync,
-                    db.settings,
-                    (count) => setNotification({ type: 'success', message: `${count} barkod için stok güncelleme başladı...` }),
-                    () => setNotification({ type: 'success', message: 'Stoklar başarıyla güncellendi.' })
-                );
-
-            } catch (error) {
-                console.error('Stock sync error:', error);
-                setNotification({ type: 'error', message: "Stok gönderimi sırasında hata oluştu." });
-            } finally {
-                setIsUploading(false);
+            if (selectedSyncStoreId === 'ALL') {
+                setNotification({
+                    type: 'success',
+                    message: `Tüm mağazalara (${targetConfigs.length} mağaza) stoklar başarıyla gönderildi.`
+                });
+            } else {
+                const targetStoreName = targetConfigs[0]?.storeName || 'Mağaza';
+                setNotification({
+                    type: 'success',
+                    message: `${targetStoreName} mağazasına ${totalBarcodesSynced} adet barkod stoğu başarıyla gönderildi.`
+                });
             }
-        });
+            setIsStockSyncModalOpen(false);
+        } catch (error) {
+            console.error('[MANUAL-STOCK-SYNC-ERROR]', error);
+            const errMessage = error instanceof Error ? error.message : "Stok gönderimi sırasında hata oluştu.";
+            setNotification({ type: 'error', message: errMessage });
+        } finally {
+            setIsSyncingStock(false);
+        }
     };
 
     // --- TEMPLATE OPERATIONS ---
@@ -1076,8 +1113,14 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                     <button onClick={handleExport} className="desktop-btn">
                         <FileSpreadsheet className="w-3 h-3 mr-1 text-green-700" /> Excel Rapor (.xlsx)
                     </button>
-                    <button onClick={handleManualStockSync} disabled={selectedProductIds.length === 0} className="desktop-btn disabled:text-gray-400">
-                        <HardDrive className="w-3 h-3 mr-1 text-blue-600" /> Stok Gönder
+                    <button
+                        onClick={handleManualStockSync}
+                        disabled={db.products.length === 0}
+                        className="desktop-btn disabled:text-gray-400"
+                        title={selectedProductIds.length > 0 ? `${selectedProductIds.length} seçili ürünün stoklarını gönder` : "Ürünlerin stoklarını pazaryerine gönder"}
+                    >
+                        <HardDrive className="w-3 h-3 mr-1 text-blue-600" />
+                        Stok Gönder {selectedProductIds.length > 0 ? `(${selectedProductIds.length})` : ''}
                     </button>
                     <button onClick={handleBulkUploadClick} disabled={isUploading} className="desktop-btn">
                         <Upload className="w-3 h-3 mr-1 text-blue-700" /> Toplu Yükle
@@ -2093,6 +2136,185 @@ export const ProductManagement: React.FC<Props> = ({ db, updateDB, userRole, set
                                 <img src={img.url} className="w-full h-full object-cover" />
                             </button>
                         ))}
+                    </div>
+                </div>
+            )}
+
+            {/* STOK GÖNDERİMİ MAĞAZA SEÇİM MODALI */}
+            {isStockSyncModalOpen && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-lg shadow-2xl w-full max-w-md overflow-hidden border border-gray-200 animate-in fade-in zoom-in duration-150">
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-blue-600 to-indigo-700 text-white">
+                            <div className="flex items-center gap-2.5">
+                                <div className="p-2 bg-white/10 rounded-lg">
+                                    <HardDrive className="w-5 h-5 text-white" />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-base text-white">Pazaryerine Stok Gönder</h3>
+                                    <p className="text-xs text-blue-100">Stokların aktarılacağı mağazayı seçin</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => !isSyncingStock && setIsStockSyncModalOpen(false)}
+                                disabled={isSyncingStock}
+                                className="text-white/80 hover:text-white p-1 rounded-md hover:bg-white/10 transition"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Content */}
+                        <div className="p-5 space-y-4">
+                            {/* Ürün & Barkod Bilgi Kartı */}
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3.5 flex items-center justify-between">
+                                <div>
+                                    <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Kapsam</span>
+                                    <p className="text-sm font-bold text-blue-900 mt-0.5">
+                                        {selectedProductIds.length > 0 
+                                            ? `${selectedProductIds.length} Seçili Ürün` 
+                                            : `Tüm Ürünler (${db.products.length} Adet)`}
+                                    </p>
+                                </div>
+                                <div className="text-right">
+                                    <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Toplam Barkod</span>
+                                    <p className="text-sm font-bold text-blue-900 mt-0.5">
+                                        {(() => {
+                                            const prods = selectedProductIds.length > 0
+                                                ? db.products.filter(p => selectedProductIds.includes(p.id))
+                                                : db.products;
+                                            return prods.reduce((acc, p) => acc + p.variants.filter(v => v.barcode).length, 0);
+                                        })()} Barkod
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Mağaza Seçimi */}
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 uppercase mb-2">
+                                    Hedef Mağaza Seçimi:
+                                </label>
+                                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                    {/* TÜMÜ SEÇENEĞİ */}
+                                    <label
+                                        className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition ${
+                                            selectedSyncStoreId === 'ALL'
+                                                ? 'border-blue-600 bg-blue-50/50 shadow-sm'
+                                                : 'border-gray-200 hover:border-gray-300 bg-white'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <input
+                                                type="radio"
+                                                name="syncStore"
+                                                value="ALL"
+                                                checked={selectedSyncStoreId === 'ALL'}
+                                                onChange={() => setSelectedSyncStoreId('ALL')}
+                                                className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                                            />
+                                            <div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-bold text-sm text-gray-900">🌐 Tümü (Tüm Mağazalar)</span>
+                                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-bold">
+                                                        {(db.apiConfigs || []).filter(c => c.type !== 'MANUAL').length} Mağaza
+                                                    </span>
+                                                </div>
+                                                <p className="text-xs text-gray-500 mt-0.5">
+                                                    Tanımlı tüm pazaryeri entegrasyonlarına eş zamanlı stok gönderir.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </label>
+
+                                    {/* TEKİL MAĞAZALAR */}
+                                    {(db.apiConfigs || []).filter(c => c.type !== 'MANUAL').map(config => {
+                                        const badgeColor = config.type === 'HEPSIBURADA' ? 'bg-orange-600'
+                                            : config.type === 'PAZARAMA' ? 'bg-purple-600'
+                                            : config.type === 'N11' ? 'bg-red-600'
+                                            : config.type === 'AMAZON' ? 'bg-yellow-600'
+                                            : config.type === 'IDEFIX' ? 'bg-cyan-600'
+                                            : 'bg-blue-600';
+
+                                        const linkedWh = config.linkedWarehouseId 
+                                            ? db.warehouses?.find(w => w.id === config.linkedWarehouseId) 
+                                            : null;
+
+                                        return (
+                                            <label
+                                                key={config.id}
+                                                className={`flex items-center justify-between p-3 rounded-lg border-2 cursor-pointer transition ${
+                                                    selectedSyncStoreId === config.id
+                                                        ? 'border-blue-600 bg-blue-50/50 shadow-sm'
+                                                        : 'border-gray-200 hover:border-gray-300 bg-white'
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    <input
+                                                        type="radio"
+                                                        name="syncStore"
+                                                        value={config.id}
+                                                        checked={selectedSyncStoreId === config.id}
+                                                        onChange={() => setSelectedSyncStoreId(config.id)}
+                                                        className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                                                    />
+                                                    <div>
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-bold text-sm text-gray-900">{config.storeName}</span>
+                                                            <span className={`text-[9px] px-2 py-0.5 rounded-full text-white font-bold ${badgeColor}`}>
+                                                                {config.type}
+                                                            </span>
+                                                            {config.mode === 'TEST' && (
+                                                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-bold">
+                                                                    TEST
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-xs text-gray-500 mt-0.5">
+                                                            {linkedWh 
+                                                                ? `Depo: ${linkedWh.name}`
+                                                                : 'Tüm Açık Depolar'}
+                                                            {config.enableStockSync === false && (
+                                                                <span className="text-amber-600 ml-1.5">(Oto-stok kapalı)</span>
+                                                            )}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="px-5 py-3.5 bg-gray-50 border-t border-gray-200 flex items-center justify-end gap-2.5">
+                            <button
+                                type="button"
+                                onClick={() => setIsStockSyncModalOpen(false)}
+                                disabled={isSyncingStock}
+                                className="desktop-btn text-gray-700 bg-white hover:bg-gray-100 border-gray-300"
+                            >
+                                İptal
+                            </button>
+                            <button
+                                type="button"
+                                onClick={executeStockSync}
+                                disabled={isSyncingStock}
+                                className="desktop-btn desktop-btn-primary flex items-center gap-1.5"
+                            >
+                                {isSyncingStock ? (
+                                    <>
+                                        <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                                        <span>Gönderiliyor...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <HardDrive className="w-3.5 h-3.5 text-white" />
+                                        <span>Stokları Gönder</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
