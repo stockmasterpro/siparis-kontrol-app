@@ -8,6 +8,7 @@ export default defineConfig(({ mode }) => {
     const isElectron = process.env.ELECTRON === 'true';
     
     return {
+      root: path.resolve(__dirname),
       base: './', // Important for Electron - use relative paths
       server: {
         port: 3000,
