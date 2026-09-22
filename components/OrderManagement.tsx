@@ -8,7 +8,25 @@ import { syncBarcodeStock, syncBarcodeStockBatch, updateLocalStockWithConsistenc
 import { getSyncableStock, getTotalStock, getSyncableStockForApi } from '../utils/stockUtils';
 // @ts-ignore
 import JsBarcode from 'jsbarcode';
+import QRCode from 'qrcode';
 import { compressImage } from '../utils/imageUtils';
+
+const generateQrSvgString = (text: string): string => {
+    if (!text || text === '-') return '';
+    let svgResult = '';
+    try {
+        QRCode.toString(text, { type: 'svg', margin: 0 }, (_err, svg) => {
+            if (svg) {
+                svgResult = svg
+                    .replace(/width="[^"]*"/i, 'width="100%"')
+                    .replace(/height="[^"]*"/i, 'height="100%"');
+            }
+        });
+    } catch (err) {
+        console.error('QR generation error:', err);
+    }
+    return svgResult;
+};
 
 const uuid = () => Math.random().toString(36).substr(2, 9);
 
@@ -33,11 +51,13 @@ interface PrintElement {
     fontSize: number;
     fontFamily?: string;
     content?: string; // For notes or custom text
-    width?: number; // For container width
-    height?: number; // For container height (e.g. images)
+    width?: number; // For container width (veya karekod genişliği mm)
+    height?: number; // For container height (veya karekod yüksekliği mm)
     visible: boolean;
     isBarcode?: boolean;
     barcodeHeight?: number;
+    isQrCode?: boolean; // Karekod olarak çiz
+    qrSize?: number; // Karekod boyutu (mm)
     forceUppercase?: boolean;
     tableColumns?: { key: string; label: string; visible: boolean }[]; // For items table customization
     isImage?: boolean; // For image elements
@@ -69,6 +89,7 @@ const DEFAULT_PRINT_CONFIG: PrintConfig = {
         { id: '6', label: 'Tarih', key: 'orderDate', x: 20, y: 30, fontSize: 12, visible: true },
         { id: '2', label: 'Müşteri Adı', key: 'customerName', x: 20, y: 40, fontSize: 14, visible: true },
         { id: '4', label: 'Kargo Kodu', key: 'cargoCode', x: 130, y: 50, fontSize: 14, visible: true, isBarcode: true },
+        { id: '4_qr', label: 'Kargo Kodu (Karekod)', key: 'cargoCode', x: 130, y: 80, fontSize: 14, width: 25, height: 25, qrSize: 25, visible: false, isQrCode: true },
         { id: '4b', label: 'Kargo Firması', key: 'cargoCompanyName', x: 20, y: 52, fontSize: 10, visible: true },
         { id: '4c', label: 'Ülke', key: 'countryName', x: 20, y: 56, fontSize: 10, visible: true },
         { id: '7', label: 'Adres', key: 'deliveryAddress', x: 20, y: 64, fontSize: 10, width: 100, visible: true },
@@ -410,6 +431,12 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                 return { ...el, tableColumns: mergedCols };
                             }
                             return el;
+                        });
+
+                        DEFAULT_PRINT_CONFIG.elements.forEach((defEl: any) => {
+                            if (!t.config.elements.find((e: any) => e.id === defEl.id)) {
+                                t.config.elements.push({ ...defEl });
+                            }
                         });
                     }
                     return t;
@@ -2643,6 +2670,29 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                         content = orderToPrint[el.key] || '';
                     }
 
+                    if (el.isQrCode) {
+                        const qrWidth = el.width || el.qrSize || 25;
+                        const qrHeight = el.height || el.qrSize || 25;
+                        const qrVal = typeof content === 'string' && content.trim() ? content.trim() : (orderToPrint.cargoCode || '123456789');
+                        const svgStr = generateQrSvgString(qrVal);
+                        const qrStyle: React.CSSProperties = {
+                            ...elStyle,
+                            width: `${qrWidth}mm`,
+                            height: `${qrHeight}mm`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            overflow: 'hidden'
+                        };
+                        return (
+                            <div
+                                style={qrStyle}
+                                key={el.id}
+                                dangerouslySetInnerHTML={{ __html: svgStr || '<div style="font-size:9px;color:#888;">Karekod</div>' }}
+                            />
+                        );
+                    }
+
                     if (el.isBarcode) {
                         const barcodeId = `bc-${orderToPrint.id}-${el.id}`;
                         return (
@@ -2858,7 +2908,13 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                 content = value ? String(value) : '';
             }
 
-            if (el.isBarcode && content) {
+            if (el.isQrCode && content) {
+                const qrWidth = el.width || el.qrSize || 25;
+                const qrHeight = el.height || el.qrSize || 25;
+                const svgStr = generateQrSvgString(String(content));
+                const qrStyleStr = `position: absolute; left: ${el.x}mm; top: ${el.y}mm; width: ${qrWidth}mm; height: ${qrHeight}mm; z-index: 10;`;
+                elementsHTML += `<div style="${qrStyleStr}">${svgStr}</div>`;
+            } else if (el.isBarcode && content) {
                 const barcodeId = `bc-${orderToPrint.id}-${el.id}`;
                 elementsHTML += `<div style="${elStyleStr}" id="${barcodeId}"><svg class="barcode-render" data-value="${String(content)}" data-format="CODE128" data-height="${el.barcodeHeight || Math.max(20, el.fontSize * 2.5)}" data-width="${Math.max(1, el.fontSize / 8)}" data-displayvalue="true" data-fontoptions="bold"></svg></div>`;
             } else {
@@ -4799,7 +4855,13 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                         id={`is-barcode-${el.id}`}
                                                                         className="w-3 h-3 cursor-pointer"
                                                                         checked={el.isBarcode || false}
-                                                                        onChange={e => handleElementChange(el.id, 'isBarcode', e.target.checked)}
+                                                                        onChange={e => {
+                                                                            const checked = e.target.checked;
+                                                                            handleElementChange(el.id, 'isBarcode', checked);
+                                                                            if (checked) {
+                                                                                handleElementChange(el.id, 'isQrCode', false);
+                                                                            }
+                                                                        }}
                                                                     />
                                                                     <label htmlFor={`is-barcode-${el.id}`} className="text-[9px] text-blue-700 font-bold cursor-pointer uppercase">Barkod Olarak Yazdır</label>
                                                                 </div>
@@ -4814,6 +4876,55 @@ export const OrderManagement: React.FC<Props> = ({ db, updateDB, userRole, activ
                                                                         />
                                                                     </div>
                                                                 )}
+
+                                                                <div className="flex items-center gap-2">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        id={`is-qrcode-${el.id}`}
+                                                                        className="w-3 h-3 cursor-pointer"
+                                                                        checked={el.isQrCode || false}
+                                                                        onChange={e => {
+                                                                            const checked = e.target.checked;
+                                                                            handleElementChange(el.id, 'isQrCode', checked);
+                                                                            if (checked) {
+                                                                                handleElementChange(el.id, 'isBarcode', false);
+                                                                                if (!el.width) handleElementChange(el.id, 'width', 25);
+                                                                                if (!el.height) handleElementChange(el.id, 'height', 25);
+                                                                            }
+                                                                        }}
+                                                                    />
+                                                                    <label htmlFor={`is-qrcode-${el.id}`} className="text-[9px] text-purple-700 font-bold cursor-pointer uppercase">Karekod (QR) Olarak Yazdır</label>
+                                                                </div>
+                                                                {el.isQrCode && (
+                                                                    <div className="pl-5 grid grid-cols-2 gap-2">
+                                                                        <div>
+                                                                            <label className="text-[10px] text-gray-500 block font-bold">Karekod Genişlik (mm)</label>
+                                                                            <input
+                                                                                type="number"
+                                                                                className="border w-full p-1 text-xs"
+                                                                                value={el.width || el.qrSize || 25}
+                                                                                onChange={e => {
+                                                                                    const val = Number(e.target.value);
+                                                                                    handleElementChange(el.id, 'width', val);
+                                                                                    handleElementChange(el.id, 'qrSize', val);
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                        <div>
+                                                                            <label className="text-[10px] text-gray-500 block font-bold">Karekod Yükseklik (mm)</label>
+                                                                            <input
+                                                                                type="number"
+                                                                                className="border w-full p-1 text-xs"
+                                                                                value={el.height || el.qrSize || 25}
+                                                                                onChange={e => {
+                                                                                    const val = Number(e.target.value);
+                                                                                    handleElementChange(el.id, 'height', val);
+                                                                                }}
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+
                                                                 <div className="flex items-center gap-2">
                                                                     <input
                                                                         type="checkbox"

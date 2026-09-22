@@ -4322,11 +4322,13 @@ async function callN11SoapService(endpointUrl: string, bodyXml: string): Promise
 
 function parseXmlElements(xmlStr: string, tagName: string): Record<string, string>[] {
   const results: Record<string, string>[] = [];
-  const regex = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'gi');
+  // Namespace prefix'lerini destekle (örn: <ns2:productQuestion>, <sch:productQuestion>, <productQuestion>)
+  const regex = new RegExp(`<(?:[a-zA-Z0-9_]+:)?${tagName}[^>]*>([\\s\\S]*?)<\\/(?:[a-zA-Z0-9_]+:)?${tagName}>`, 'gi');
   let match;
   while ((match = regex.exec(xmlStr)) !== null) {
     const innerXml = match[1];
-    const fieldRegex = /<([a-zA-Z0-9_]+)[^>]*>([\s\S]*?)<\/\1>/g;
+    // Tag adındaki namespace prefix'ini temizleyip alan adını al (örn: <sch:id> -> id)
+    const fieldRegex = /<(?:[a-zA-Z0-9_]+:)?([a-zA-Z0-9_]+)[^>]*>([\s\S]*?)<\/(?:[a-zA-Z0-9_]+:)?\1>/g;
     let fieldMatch;
     const item: Record<string, string> = {};
     while ((fieldMatch = fieldRegex.exec(innerXml)) !== null) {
@@ -4357,20 +4359,30 @@ export async function syncN11Questions(config: ApiConfig, status?: QuestionStatu
       </sch:GetProductQuestionListRequest>`;
 
     const xmlResponse = await callN11SoapService('https://api.n11.com/ws/ProductService.wsdl', bodyXml);
+
+    // N11 SOAP Fault veya Error kontrolü
+    if (xmlResponse.includes('<faultstring>') || xmlResponse.includes('<soapenv:Fault>') || xmlResponse.includes('<errorCode>')) {
+      const faultMatch = xmlResponse.match(/<faultstring[^>]*>([\s\S]*?)<\/faultstring>/i) ||
+                         xmlResponse.match(/<errorMessage[^>]*>([\s\S]*?)<\/errorMessage>/i);
+      const errMsg = faultMatch ? faultMatch[1].trim() : 'N11 SOAP Servis Hatası';
+      console.error(`[QUESTION-SYNC-N11-ERROR] ${config.storeName}:`, errMsg);
+      throw new Error(`N11 Soru Çekme Hatası: ${errMsg}`);
+    }
+
     const parsedQuestions = parseXmlElements(xmlResponse, 'productQuestion');
 
     const questions: Question[] = parsedQuestions.map(item => {
-      const qId = item.id || Math.random().toString(36).substring(2);
-      const isAnswered = Boolean(item.answer);
+      const qId = item.id || item.productQuestionId || item.questionId || Math.random().toString(36).substring(2);
+      const isAnswered = Boolean(item.answer && item.answer.trim().length > 0);
       const productId = item.productId || '';
       const productTitle = item.productTitle || 'N11 Ürünü';
       return {
         id: `${config.storeName}_${qId}`,
-        marketplaceQuestionId: qId,
+        marketplaceQuestionId: String(qId),
         text: item.question || item.questionSubject || '',
         answer: item.answer || '',
         status: isAnswered ? QuestionStatus.ANSWERED : QuestionStatus.WAITING_FOR_ANSWER,
-        userName: item.buyerEmail || 'N11 Müşteri',
+        userName: item.buyerEmail || item.fullName || 'N11 Müşteri',
         createdDate: item.questionDate ? new Date(item.questionDate).toISOString() : new Date().toISOString(),
         productName: productTitle,
         productImageUrl: '',
@@ -4385,7 +4397,7 @@ export async function syncN11Questions(config: ApiConfig, status?: QuestionStatu
     return questions;
   } catch (err) {
     console.error(`[QUESTION-SYNC-N11-ERROR] ${config.storeName}:`, err);
-    return [];
+    throw err;
   }
 }
 

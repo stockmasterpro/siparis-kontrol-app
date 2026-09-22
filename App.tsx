@@ -555,33 +555,52 @@ const App: React.FC = () => {
     handleUpdateDB(prev => {
       const prevQuestions = prev.questions || [];
 
-      // Senkronizasyonu BAŞARISIZ olan mağazaların sorularını listede KORU (kaybolup tekrar gelmesin)
-      const keptQuestionsFromFailedStores = prevQuestions.filter(pq => !successfulStoreNames.has(pq.storeName));
-
-      const updatedQuestions = allLatestQuestions.map(newQ => {
-        // If we have THIS specific question answered locally, keep it as answered unless customer sent a new message
+      // 1. Yeni gelen soruları işle ve eşleştir
+      const newQuestionMap = new Map<string, Question>();
+      allLatestQuestions.forEach(newQ => {
+        // Eğer yerel DB'de bu soru daha önce cevaplanmışsa ve müşteriden yeni bir metin gelmediyse ANSWERED tut
         const localMatched = prevQuestions.find(pq =>
           pq.marketplaceQuestionId === newQ.marketplaceQuestionId &&
           pq.status === QuestionStatus.ANSWERED
         );
         if (localMatched) {
-          // Eğer müşteriden yeni bir takip mesajı gelmişse soru tekrar cevap bekliyor
           if (newQ.status === QuestionStatus.WAITING_FOR_ANSWER && newQ.text !== localMatched.text) {
-            return { ...newQ, status: QuestionStatus.WAITING_FOR_ANSWER };
+            newQuestionMap.set(newQ.marketplaceQuestionId, { ...newQ, status: QuestionStatus.WAITING_FOR_ANSWER });
+          } else {
+            newQuestionMap.set(newQ.marketplaceQuestionId, localMatched);
           }
-          return localMatched;
+          return;
         }
 
         const prevSame = prevQuestions.find(pq => pq.marketplaceQuestionId === newQ.marketplaceQuestionId);
-        // Önceki kayıtlı tarihi koru
         const mergedDate =
           (prevSame?.createdDate && String(prevSame.createdDate).trim()) ||
           (newQ.createdDate && String(newQ.createdDate).trim()) ||
           new Date().toISOString();
-        return { ...newQ, createdDate: mergedDate };
+        newQuestionMap.set(newQ.marketplaceQuestionId, { ...newQ, createdDate: mergedDate });
       });
 
-      return { ...prev, questions: [...keptQuestionsFromFailedStores, ...updatedQuestions] };
+      // 2. Önceki sorulardan:
+      // a) Başarısız olan mağazaların TÜM soruları korunur
+      // b) Başarılı olsa dahi, eğer yerelde cevap bekleyen (WAITING_FOR_ANSWER) bir soru varsa ve yeni listede yer almadıysa,
+      //    kullanıcı onu cevaplayana kadar KORUNUR (böylece N11 veya diğer pazaryeri soruları asla panelden kaybolup geri gelmez!)
+      const preservedQuestions = prevQuestions.filter(pq => {
+        if (newQuestionMap.has(pq.marketplaceQuestionId)) {
+          return false; // Yeni listede zaten var ve güncellendi
+        }
+        // Başarısız mağazanın sorusuysa kesinlikle koru
+        if (!successfulStoreNames.has(pq.storeName)) {
+          return true;
+        }
+        // Başarılı mağaza olsa bile, kullanıcı henüz bu soruyu cevaplamadıysa (WAITING_FOR_ANSWER) koru!
+        if (pq.status === QuestionStatus.WAITING_FOR_ANSWER) {
+          return true;
+        }
+        return false;
+      });
+
+      const finalQuestions = [...preservedQuestions, ...Array.from(newQuestionMap.values())];
+      return { ...prev, questions: finalQuestions };
     });
 
     // Find TRULY new questions (that weren't in the DB before)
